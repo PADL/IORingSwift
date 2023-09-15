@@ -1,0 +1,4 @@
+module CIOURing {
+    umbrella header "CIOURing.h"
+    link "uring"
+}
