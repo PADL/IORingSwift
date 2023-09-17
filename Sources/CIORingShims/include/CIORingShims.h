@@ -24,9 +24,6 @@ extern "C" {
 
 typedef void (^io_uring_cqe_block)(struct io_uring_cqe *_Nonnull);
 
-void io_uring_for_each_cqe_block(struct io_uring *_Nonnull,
-                                 _Nonnull io_uring_cqe_block);
-
 void io_uring_prep_rw_block(int op,
                             struct io_uring_sqe *_Nonnull,
                             int fd,

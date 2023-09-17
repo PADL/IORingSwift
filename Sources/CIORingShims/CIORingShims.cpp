@@ -40,7 +40,8 @@ static void notify_block(struct io_uring_cqe *cqe) {
     auto block =
         reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
     block(cqe);
-    _Block_release(block);
+    if ((cqe->flags & IORING_CQE_F_MORE) == 0)
+        _Block_release(block);
 }
 
 static void *io_uring_notify_thread(void *arg) {
