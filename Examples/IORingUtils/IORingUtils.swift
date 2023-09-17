@@ -14,11 +14,12 @@
 // limitations under the License.
 //
 
+import AsyncAlgorithms
 import Foundation
 import Glibc
 import IORing
 
-public class FileDescriptor {
+public class FileHandle {
     let fd: IORing.FileDescriptor
 
     public init(fd: IORing.FileDescriptor) throws {
@@ -61,5 +62,24 @@ public class FileDescriptor {
         } else {
             throw Errno(rawValue: EINVAL)
         }
+    }
+}
+
+public extension IORing {
+    func readChannel(_ chunkSize: Int, from fd: FileDescriptor) -> AsyncThrowingChannel<[UInt8], Error> {
+        let channel = AsyncThrowingChannel<[UInt8], Error>()
+
+        Task {
+            repeat {
+                do {
+                    let bytes = try await read(count: chunkSize, from: fd)
+                    await channel.send(bytes)
+                } catch {
+                    channel.fail(error)
+                }
+            } while true
+        }
+
+        return channel
     }
 }

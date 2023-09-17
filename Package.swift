@@ -13,6 +13,9 @@ let package = Package(
             targets: ["IORing"]
         ),
     ],
+    dependencies: [
+        .package(url: "https://github.com/apple/swift-async-algorithms", from: "0.1.0"),
+    ],
     targets: [
         .systemLibrary(
             name: "CIOURing"
@@ -32,7 +35,8 @@ let package = Package(
         ),
         .target(
             name: "IORingUtils",
-            dependencies: ["IORing"],
+            dependencies: ["IORing",
+                           .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")],
             path: "Examples/IORingUtils"
         ),
         .executableTarget(

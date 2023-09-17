@@ -21,7 +21,7 @@ import IORingUtils
 
 @main
 public struct IORingCat {
-    static let BlockSize = 64
+    private let blockSize: Int
     private let ring: IORing
 
     public static func main() async throws {
@@ -37,21 +37,22 @@ public struct IORingCat {
         }
     }
 
-    init() throws {
-        ring = try IORing()
+    init(blockSize: Int = 64) throws {
+        self.ring = try IORing()
+        self.blockSize = blockSize
     }
 
     func cat(_ file: String) async throws {
-        let fd = try FileDescriptor(fd: open(file, O_RDONLY))
+        let fd = try FileHandle(fd: open(file, O_RDONLY))
 
         let size = try fd.getSize()
-        var blocks = size % Self.BlockSize
+        var blocks = size % blockSize
         if size % blocks != 0 { blocks += 1 }
         var nremain = size
-        var buffer = [UInt8](repeating: 0, count: Self.BlockSize)
+        var buffer = [UInt8](repeating: 0, count: blockSize)
 
         while nremain != 0 {
-            let count = nremain > Self.BlockSize ? Self.BlockSize : nremain
+            let count = nremain > blockSize ? blockSize : nremain
             try await fd.withDescriptor { try await ring.read(
                 into: &buffer,
                 count: count,
