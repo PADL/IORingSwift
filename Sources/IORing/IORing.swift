@@ -53,7 +53,7 @@ public actor IORing {
         manager = try Manager(depth: CUnsignedInt(depth), flags: flags)
     }
 
-    private class Manager {
+    private final class Manager {
         private typealias Continuation = CheckedContinuation<(), Error>
 
         private var ring: io_uring

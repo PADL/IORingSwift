@@ -18,7 +18,7 @@ import Foundation
 import Glibc
 import IORing
 
-public class FileHandle: CustomStringConvertible {
+public final class FileHandle: CustomStringConvertible {
     let fd: IORing.FileDescriptor
 
     public init(fd: IORing.FileDescriptor) throws {
