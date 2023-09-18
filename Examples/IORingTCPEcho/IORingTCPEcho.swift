@@ -38,7 +38,7 @@ public struct IORingTCPEcho {
         try await echo.run()
     }
 
-    init(port: UInt16, bufferSize: Int = 1, backlog: Int = 128) throws {
+    init(port: UInt16, bufferSize: Int = 32, backlog: Int = 128) throws {
         self.bufferSize = bufferSize
         ring = try IORing(depth: backlog)
         socket = try Socket(domain: AF_INET, type: SOCK_STREAM.rawValue, protocol: 0)
@@ -79,9 +79,13 @@ public struct IORingTCPEcho {
     func run() async throws {
         let clients = try await socket.accept(ring: ring)
         for try await client in clients {
+            debugPrint("accepted client \(client)")
             Task {
-                debugPrint("accepted client \(client)")
-                try await sendRecvEcho(client: client)
+                if bufferSize == 1 {
+                    try await readWriteEcho(client: client)
+                } else {
+                    try await sendRecvEcho(client: client)
+                }
             }
         }
     }
