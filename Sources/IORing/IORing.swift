@@ -57,7 +57,7 @@ public actor IORing {
         private typealias Continuation = CheckedContinuation<(), Error>
 
         private var ring: io_uring
-        private var notifyThread = pthread_t()
+        private var notifyHandle: uintptr_t = 0
         private var pendingSubmissions = [Continuation]()
 
         init(depth: CUnsignedInt = 64, flags: CUnsignedInt = 0) throws {
@@ -68,13 +68,13 @@ public actor IORing {
             }
             self.ring = ring
             try Errno.throwingErrno {
-                io_uring_init_notify(&self.notifyThread, &self.ring)
+                io_uring_init_notify(&self.notifyHandle, &self.ring)
             }
         }
 
         deinit {
             cancelPendingSubmissions()
-            io_uring_deinit_notify(notifyThread, &ring) // calls pthread_join()
+            io_uring_deinit_notify(notifyHandle, &ring)
             // FIXME: where are unhandled completion blocks deallocated?
             io_uring_queue_exit(&ring)
         }

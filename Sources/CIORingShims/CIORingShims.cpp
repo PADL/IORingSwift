@@ -14,8 +14,9 @@
 // limitations under the License.
 //
 
-#include <pthread.h>
+#include <sys/eventfd.h>
 #include <liburing.h>
+#include <dispatch/dispatch.h>
 
 #include "CIORingShims.h"
 
@@ -44,81 +45,65 @@ static void notify_block(struct io_uring_cqe *cqe) {
         _Block_release(block);
 }
 
-static void *io_uring_notify_thread(void *arg) {
-    struct io_uring *ring = static_cast<io_uring *>(arg);
-
-    for (;;) {
-        struct io_uring_cqe *cqe;
-        unsigned head, i = 0;
-        int oldstate;
-
-        // FIXME: ideally we would use IORING_OP_MSG_RING or NOP to terminate
-        // the notify thread, but we need to cancel even if the queue is full
-
-        pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &oldstate);
-        pthread_testcancel();
-        auto err = io_uring_wait_cqe(ring, &cqe);
-        pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldstate);
-
-        if (err == -EINTR)
-            continue;
-        else if (err)
-            break;
-
-        io_uring_for_each_cqe(ring, head, cqe) {
-            notify_block(cqe);
-            i++;
-        }
-        io_uring_cq_advance(ring, i);
-    }
-
-    return nullptr;
-}
-
-int io_uring_init_notify(pthread_t *thread, struct io_uring *ring) {
-    pthread_attr_t attr;
+static void notify_event(dispatch_source_t source, struct io_uring *ring) {
+    struct io_uring_cqe *cqe;
+    eventfd_t value;
+    unsigned int head, i = 0;
     int err;
 
-    *thread = (pthread_t)0;
-
-    err = pthread_attr_init(&attr);
+    err = eventfd_read(dispatch_source_get_handle(source), &value);
     if (err)
-        return -err;
+        return;
 
-    err = pthread_create(thread, &attr, io_uring_notify_thread, ring);
-    if (err) {
-        pthread_attr_destroy(&attr);
-        return -err;
+    err = io_uring_wait_cqe(ring, &cqe);
+    if (err)
+        return;
+
+    io_uring_for_each_cqe(ring, head, cqe) {
+        notify_block(cqe);
+        i++;
+    }
+    io_uring_cq_advance(ring, i);
+}
+
+int io_uring_init_notify(uintptr_t *notifyHandle, struct io_uring *ring) {
+    // previously, we spun up a thread to wait on cqe notifications.
+    // however we can use eventfd to integrate this with libdispatch
+    auto fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (fd < 0)
+        return -errno;
+
+    if (io_uring_register_eventfd(ring, fd) != 0) {
+        close(fd);
+        return -errno;
     }
 
-    pthread_setname_np(*thread, "IORingSwift Notify Thread");
-    pthread_attr_destroy(&attr);
+    auto source = dispatch_source_create(
+        DISPATCH_SOURCE_TYPE_READ, fd, 0,
+        dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+    if (source == nullptr) {
+        io_uring_unregister_eventfd(ring);
+        close(fd);
+        return -errno;
+    }
+
+    dispatch_source_set_event_handler(source, ^{
+      notify_event(source, ring);
+    });
+
+    dispatch_source_set_cancel_handler(source, ^{
+      io_uring_unregister_eventfd(ring);
+      close(fd);
+    });
+
+    dispatch_resume(source);
+
+    *notifyHandle = reinterpret_cast<uintptr_t>(source);
 
     return 0;
 }
 
-int io_uring_deinit_notify(pthread_t thread, struct io_uring *ring) {
-    // FIXME: use IORING_OP_MSG_RING but needs newer kernel support
-    int err;
-    void *retval;
-
-#if 0
-    auto sqe = io_uring_get_sqe(ring);
-    // FIXME: what if the queue is full?
-    io_uring_prep_nop(sqe);
-
-    err = io_uring_submit(ring);
-    if (err)
-        return err;
-#else
-    err = pthread_cancel(thread);
-    if (err)
-        return -err;
-#endif
-
-    err = pthread_join(thread, &retval);
-    if (err)
-        return -err;
-
-    return 0;
+void io_uring_deinit_notify(uintptr_t notifyHandle, struct io_uring *ring) {
+    auto source = reinterpret_cast<dispatch_source_t>(notifyHandle);
+    dispatch_release(source);
 }

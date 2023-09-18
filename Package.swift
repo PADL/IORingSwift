@@ -3,6 +3,8 @@
 
 import PackageDescription
 
+let SwiftRoot = "/opt/swift"
+
 let package = Package(
     name: "IORingSwift",
     products: [
@@ -24,7 +26,13 @@ let package = Package(
         ),
         .target(
             name: "CIORingShims",
-            dependencies: ["CIOURing"]
+            dependencies: ["CIOURing"],
+            cSettings: [
+                .unsafeFlags(["-I", "\(SwiftRoot)/usr/lib/swift"]),
+            ],
+            cxxSettings: [
+                .unsafeFlags(["-I", "\(SwiftRoot)/usr/lib/swift"]),
+            ]
         ),
         .target(
             name: "IORing",
