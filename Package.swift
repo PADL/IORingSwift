@@ -4,7 +4,7 @@
 import Foundation
 import PackageDescription
 
-func tryGuessSwiftLibRoot() -> String? {
+func tryGuessSwiftLibRoot() -> String {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/bin/sh")
     task.arguments = ["-c", "which swift"]
@@ -15,11 +15,11 @@ func tryGuessSwiftLibRoot() -> String? {
         let path = URL(fileURLWithPath: String(decoding: outputData, as: UTF8.self))
         return path.deletingLastPathComponent().path + "/../lib/swift"
     } catch {
-        return nil
+        return "/usr/lib/swift"
     }
 }
 
-let SwiftLibRoot = tryGuessSwiftLibRoot() ?? "/usr/lib/swift"
+let SwiftLibRoot = tryGuessSwiftLibRoot()
 
 let package = Package(
     name: "IORingSwift",
