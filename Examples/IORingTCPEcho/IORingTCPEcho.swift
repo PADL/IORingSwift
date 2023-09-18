@@ -20,107 +20,6 @@ import Glibc
 import IORing
 import IORingUtils
 
-public struct Socket: CustomStringConvertible {
-    private let fd: IORingUtils.FileHandle
-
-    public init(fd: IORingUtils.FileHandle) {
-        self.fd = fd
-    }
-
-    public var description: String {
-        "\(type(of: self))(fd: \(fd))"
-    }
-
-    public init(domain: CInt, type: UInt32, protocol proto: CInt) throws {
-        let fd = socket(domain, Int32(type), proto)
-        self.fd = try FileHandle(fd: fd)
-    }
-
-    public func setNonBlocking() throws {
-        try fd.withDescriptor { fd in
-            let flags = try Errno.throwingErrno { fcntl(fd, F_GETFL, 0) }
-            try Errno.throwingErrno { fcntl(fd, F_SETFL, flags | O_NONBLOCK) }
-        }
-    }
-
-    public func setBooleanOption(level: CInt = SOL_SOCKET, option: CInt, to value: Bool) throws {
-        try fd.withDescriptor { fd in
-            var value: CInt = value ? 1 : 0
-            try Errno.throwingErrno { setsockopt(
-                fd,
-                level,
-                option,
-                &value,
-                socklen_t(MemoryLayout<CInt>.size)
-            ) }
-        }
-    }
-
-    public func setReuseAddr() throws {
-        try setBooleanOption(option: SO_REUSEADDR, to: true)
-    }
-
-    public func bind(to address: sockaddr, length: Int) throws {
-        var address = address
-        try fd.withDescriptor { fd in
-            try Errno.throwingErrno {
-                SwiftGlibc.bind(fd, &address, socklen_t(length))
-            }
-        }
-    }
-
-    public func bind(to address: sockaddr_in) throws {
-        try withUnsafePointer(to: address) {
-            try $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                try bind(to: $0.pointee, length: MemoryLayout<sockaddr_in>.size)
-            }
-        }
-    }
-
-    public func listen(backlog: Int = 128) throws {
-        try fd.withDescriptor { fd in
-            try Errno.throwingErrno {
-                SwiftGlibc.listen(fd, Int32(backlog))
-            }
-        }
-    }
-
-    public func accept(ring: IORing) async throws -> AnyAsyncSequence<Socket> {
-        try await fd.withDescriptor { fd in
-            try await ring.accept(from: fd).map { try Socket(fd: FileHandle(fd: $0)) }
-                .eraseToAnyAsyncSequence()
-        }
-    }
-
-    public func read(into buffer: inout [UInt8], count: Int, ring: IORing) async throws {
-        try await fd.withDescriptor { try await ring.read(
-            into: &buffer,
-            count: count,
-            offset: 0,
-            from: $0
-        ) }
-    }
-
-    public func write(_ buffer: [UInt8], count: Int, ring: IORing) async throws {
-        try await fd.withDescriptor { try await ring.write(
-            buffer,
-            count: count,
-            offset: 0,
-            to: $0
-        ) }
-    }
-}
-
-public extension sockaddr_in {
-    static func any(port: UInt16) -> Self {
-        var sin = Self()
-        sin.sin_family = sa_family_t(AF_INET)
-        sin.sin_port = port.bigEndian
-        sin.sin_addr = in_addr(s_addr: INADDR_ANY)
-        return sin
-    }
-}
-
 @main
 public struct IORingTCPEcho {
     private let socket: Socket
@@ -139,7 +38,7 @@ public struct IORingTCPEcho {
         try await echo.run()
     }
 
-    init(port: UInt16 = 10000, bufferSize: Int = 1, backlog: Int = 128) throws {
+    init(port: UInt16, bufferSize: Int = 1, backlog: Int = 128) throws {
         self.bufferSize = bufferSize
         ring = try IORing(depth: backlog)
         socket = try Socket(domain: AF_INET, type: SOCK_STREAM.rawValue, protocol: 0)
@@ -150,14 +49,24 @@ public struct IORingTCPEcho {
     }
 
     func run() async throws {
-        for try await client in try await socket.accept(ring: ring) {
-            debugPrint("accepted client FD \(client)")
+        let clients = try await socket.accept(ring: ring)
+        for try await client in clients {
+            debugPrint("accepted client \(client)")
             Task {
-                repeat {
-                    var buffer = [UInt8](repeating: 0, count: bufferSize)
-                    try await client.read(into: &buffer, count: bufferSize, ring: ring)
-                    try await client.write(buffer, count: bufferSize, ring: ring)
-                } while true
+                do {
+                    var more = false
+                    repeat {
+                        var buffer = [UInt8](repeating: 0, count: bufferSize)
+                        more = try await client.read(into: &buffer, count: bufferSize, ring: ring)
+                        if more {
+                            try await client.write(buffer, count: bufferSize, ring: ring)
+                        }
+                    } while more
+                } catch {
+                    debugPrint("closed client \(client): error \(error)")
+                    return
+                }
+                debugPrint("closed client \(client)")
             }
         }
     }

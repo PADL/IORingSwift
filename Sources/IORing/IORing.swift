@@ -174,7 +174,8 @@ public actor IORing {
                             return
                         }
                         do {
-                            try continuation.resume(returning: handler(cqe.pointee))
+                            let result = try handler(cqe.pointee)
+                            continuation.resume(returning: result)
                         } catch {
                             continuation.resume(throwing: error)
                         }
@@ -218,7 +219,9 @@ public actor IORing {
                     offset: offset
                 ) { cqe in
                     guard cqe.pointee.res >= 0 else {
-                        channel.fail(Errno(rawValue: cqe.pointee.res))
+                        if cqe.pointee.res != ECANCELED {
+                            channel.fail(Errno(rawValue: cqe.pointee.res))
+                        }
                         return
                     }
                     Task {
@@ -427,24 +430,32 @@ private extension IORing {
 // MARK: - public API
 
 public extension IORing {
+    @discardableResult
     func read(
         into buffer: inout [UInt8],
         count: Int? = nil,
         offset: Int = -1,
         from fd: FileDescriptor
-    ) async throws {
+    ) async throws -> Bool {
         var nread = 0
         let count = count ?? buffer.count
 
         // handle short reads; breaking reads into blocks should be done by caller
         repeat {
-            nread += try await io_uring_op_read(
+            let nbytes = try await io_uring_op_read(
                 fd: fd,
                 buffer: &buffer,
                 count: count - nread,
                 offset: offset == -1 ? -1 : offset + nread
             )
+            if nbytes == 0 {
+                // done reading
+                return false
+            }
+            nread += nbytes
         } while nread < count
+
+        return true
     }
 
     func read(count: Int, from fd: FileDescriptor) async throws -> [UInt8] {

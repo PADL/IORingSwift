@@ -47,7 +47,7 @@ static void notify_block(struct io_uring_cqe *cqe) {
 static void *io_uring_notify_thread(void *arg) {
     struct io_uring *ring = static_cast<io_uring *>(arg);
 
-    while (true) {
+    for (;;) {
         struct io_uring_cqe *cqe;
         unsigned head, i = 0;
         int oldstate;
@@ -79,15 +79,17 @@ int io_uring_init_notify(pthread_t *thread, struct io_uring *ring) {
     pthread_attr_t attr;
     int err;
 
-    *thread = 0;
+    *thread = (pthread_t)0;
 
     err = pthread_attr_init(&attr);
     if (err)
         return -err;
 
     err = pthread_create(thread, &attr, io_uring_notify_thread, ring);
-    if (err)
+    if (err) {
+        pthread_attr_destroy(&attr);
         return -err;
+    }
 
     pthread_setname_np(*thread, "IORingSwift Notify Thread");
     pthread_attr_destroy(&attr);
