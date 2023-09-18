@@ -40,7 +40,8 @@ static void event_handle_block(struct io_uring_cqe *cqe) {
         _Block_release(block);
 }
 
-static void event_handle(dispatch_source_t source, struct io_uring *ring) {
+static void event_handler(dispatch_source_t source) {
+    auto ring = static_cast<struct io_uring *>(dispatch_get_context(source));
     struct io_uring_cqe *cqe;
     eventfd_t value;
     unsigned int head, i = 0;
@@ -84,8 +85,10 @@ int io_uring_init_event(void **eventHandle, struct io_uring *ring) {
         return -errno;
     }
 
+    dispatch_set_context(source, ring);
+
     dispatch_source_set_event_handler(source, ^{
-      event_handle(source, ring);
+      event_handler(source);
     });
 
     dispatch_source_set_cancel_handler(source, ^{
