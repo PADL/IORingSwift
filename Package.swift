@@ -1,9 +1,25 @@
 // swift-tools-version: 5.8
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
+import Foundation
 import PackageDescription
 
-let SwiftRoot = "/opt/swift"
+func tryGuessSwiftLibRoot() -> String? {
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/bin/sh")
+    task.arguments = ["-c", "which swift"]
+    task.standardOutput = Pipe()
+    do {
+        try task.run()
+        let outputData = (task.standardOutput as! Pipe).fileHandleForReading.readDataToEndOfFile()
+        let path = URL(fileURLWithPath: String(decoding: outputData, as: UTF8.self))
+        return path.deletingLastPathComponent().path + "/../lib/swift"
+    } catch {
+        return nil
+    }
+}
+
+let SwiftLibRoot = tryGuessSwiftLibRoot() ?? "/usr/lib/swift"
 
 let package = Package(
     name: "IORingSwift",
@@ -28,10 +44,10 @@ let package = Package(
             name: "CIORingShims",
             dependencies: ["CIOURing"],
             cSettings: [
-                .unsafeFlags(["-I", "\(SwiftRoot)/usr/lib/swift"]),
+                .unsafeFlags(["-I", SwiftLibRoot]),
             ],
             cxxSettings: [
-                .unsafeFlags(["-I", "\(SwiftRoot)/usr/lib/swift"]),
+                .unsafeFlags(["-I", SwiftLibRoot]),
             ]
         ),
         .target(

@@ -17,14 +17,9 @@
 #include <sys/eventfd.h>
 #include <liburing.h>
 #include <dispatch/dispatch.h>
+#include <Block/Block.h>
 
 #include "CIORingShims.h"
-
-extern "C" {
-// avoids importing Block.h which is not in the default include path on Linux
-extern void *_Block_copy(const void *aBlock);
-extern void _Block_release(const void *aBlock);
-}
 
 void io_uring_prep_rw_block(int op,
                             struct io_uring_sqe *sqe,
