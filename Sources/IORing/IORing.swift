@@ -57,7 +57,7 @@ public actor IORing {
         private typealias Continuation = CheckedContinuation<(), Error>
 
         private var ring: io_uring
-        private var eventHandle: UnsafeMutableRawPointer? = nil
+        private var eventHandle: UnsafeMutableRawPointer?
         private var pendingSubmissions = [Continuation]()
 
         init(depth: CUnsignedInt = 64, flags: CUnsignedInt = 0) throws {
@@ -81,20 +81,33 @@ public actor IORing {
 
         private typealias BlockHandler = (UnsafePointer<io_uring_cqe>) -> ()
 
+        // FIXME: update kernel headers
         private func setSocketAddress(
             _ sqe: UnsafeMutablePointer<io_uring_sqe>,
             socketAddress: sockaddr_storage
-        ) {
+        ) throws {
             var socketAddress = socketAddress
-            withUnsafePointer(to: &socketAddress) { pointer in
-                pointer
+            try withUnsafePointer(to: &socketAddress) { pointer in
+                try pointer
                     .withMemoryRebound(to: sockaddr.self, capacity: 1) { pointer in
                         sqe.pointee.addr2 = UInt64(UInt(bitPattern: pointer))
-                        sqe.pointee
-                            .file_index = UInt32(
-                                MemoryLayout<sockaddr_storage>
-                                    .size << 16
-                            )
+                        let size: Int
+                        switch Int32(pointer.pointee.sa_family) {
+                        case AF_INET:
+                            size = MemoryLayout<sockaddr_in>.size
+                        case AF_INET6:
+                            size = MemoryLayout<sockaddr_in6>.size
+                        case AF_LOCAL:
+                            size = MemoryLayout<sockaddr_un>.size
+                        default:
+                            throw Errno(rawValue: EAFNOSUPPORT)
+                        }
+
+                        withUnsafeMutablePointer(to: &sqe.pointee.file_index) { pointer in
+                            pointer.withMemoryRebound(to: UInt16.self, capacity: 2) { pointer in
+                                pointer[0] = UInt16(size)
+                            }
+                        }
                     }
             }
         }
@@ -227,7 +240,7 @@ public actor IORing {
                         }
                         setFlags(sqe, flags: flags, ioprio: ioprio, moreFlags: moreFlags)
                         if let socketAddress {
-                            setSocketAddress(sqe, socketAddress: socketAddress)
+                            try setSocketAddress(sqe, socketAddress: socketAddress)
                         }
                         try submit()
                     } catch {
