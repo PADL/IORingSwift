@@ -27,7 +27,8 @@ let package = Package(
         ),
         .target(
             name: "IORing",
-            dependencies: ["CIORingShims"]
+            dependencies: ["CIORingShims",
+                           .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")]
         ),
         .testTarget(
             name: "IORingTests",
@@ -48,6 +49,11 @@ let package = Package(
             name: "IORingCopy",
             dependencies: ["IORing", "IORingUtils"],
             path: "Examples/IORingCopy"
+        ),
+        .executableTarget(
+            name: "IORingTCPEcho",
+            dependencies: ["IORing", "IORingUtils"],
+            path: "Examples/IORingTCPEcho"
         ),
     ],
     cLanguageStandard: .c18,

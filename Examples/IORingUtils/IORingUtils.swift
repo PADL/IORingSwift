@@ -35,12 +35,14 @@ public class FileHandle {
         }
     }
 
+    @discardableResult
     public func withDescriptor<T>(_ body: (_: IORing.FileDescriptor) throws -> T) rethrows
         -> T
     {
         try body(fd)
     }
 
+    @discardableResult
     public func withDescriptor<T>(
         _ body: (_: IORing.FileDescriptor) async throws
             -> T
@@ -66,7 +68,10 @@ public class FileHandle {
 }
 
 public extension IORing {
-    func readChannel(_ chunkSize: Int, from fd: FileDescriptor) -> AsyncThrowingChannel<[UInt8], Error> {
+    func readChannel(
+        _ chunkSize: Int,
+        from fd: FileDescriptor
+    ) -> AsyncThrowingChannel<[UInt8], Error> {
         let channel = AsyncThrowingChannel<[UInt8], Error>()
 
         Task {

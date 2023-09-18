@@ -38,7 +38,7 @@ public struct IORingCat {
     }
 
     init(blockSize: Int = 64) throws {
-        self.ring = try IORing()
+        ring = try IORing()
         self.blockSize = blockSize
     }
 

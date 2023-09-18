@@ -38,11 +38,13 @@ public struct Errno: Error, CustomStringConvertible, Equatable {
         stringError
     }
 
-    static func throwingErrno(_ body: @escaping () -> RawValue) throws {
-        let error = body()
-        if error < 0 {
-            throw Errno(rawValue: error)
+    @discardableResult
+    public static func throwingErrno(_ body: @escaping () -> RawValue) throws -> RawValue {
+        let result = body()
+        if result < 0 {
+            throw Errno(rawValue: result)
         }
+        return result
     }
 
     public static var lastError: Errno {
