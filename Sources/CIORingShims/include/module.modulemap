@@ -1,0 +1,3 @@
+module CIORingShims {
+    header "CIORingShims.h"
+}

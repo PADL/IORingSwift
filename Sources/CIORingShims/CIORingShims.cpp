@@ -25,8 +25,8 @@ void io_uring_prep_rw_block(int op,
                             struct io_uring_sqe *sqe,
                             int fd,
                             const void *addr,
-                            unsigned len,
-                            __u64 offset,
+                            unsigned int len,
+                            uint64_t offset,
                             io_uring_cqe_block block) {
     io_uring_prep_rw(op, sqe, fd, addr, len, offset);
     io_uring_sqe_set_data(sqe, _Block_copy(block));

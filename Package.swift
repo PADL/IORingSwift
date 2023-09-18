@@ -1,5 +1,4 @@
 // swift-tools-version: 5.8
-// The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import Foundation
 import PackageDescription
@@ -24,11 +23,13 @@ let SwiftLibRoot = tryGuessSwiftLibRoot()
 let package = Package(
     name: "IORingSwift",
     products: [
-        // Products define the executables and libraries a package produces, making them visible to
-        // other packages.
         .library(
             name: "IORing",
             targets: ["IORing"]
+        ),
+        .library(
+            name: "IORingUtils",
+            targets: ["IORingUtils"]
         ),
     ],
     dependencies: [
@@ -54,7 +55,13 @@ let package = Package(
             name: "IORing",
             dependencies: ["CIORingShims",
                            "AsyncExtensions",
-                           .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")]
+                           .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")],
+            cSettings: [
+                .define("_XOPEN_SOURCE=500")
+            ],
+            cxxSettings: [
+                .define("_XOPEN_SOURCE=500")
+            ]
         ),
         .testTarget(
             name: "IORingTests",

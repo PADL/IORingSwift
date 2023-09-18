@@ -24,12 +24,12 @@ extern "C" {
 
 typedef void (^io_uring_cqe_block)(struct io_uring_cqe *_Nonnull);
 
-void io_uring_prep_rw_block(int op,
+void io_uring_prep_rw_block(int,
                             struct io_uring_sqe *_Nonnull,
-                            int fd,
+                            int,
                             const void *_Nullable,
-                            unsigned,
-                            __u64,
+                            unsigned int,
+                            uint64_t,
                             _Nonnull io_uring_cqe_block);
 
 int io_uring_init_event(void *_Nullable *_Nonnull, struct io_uring *_Nonnull);
