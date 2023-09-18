@@ -20,11 +20,15 @@ import Glibc
 import IORing
 import IORingUtils
 
-public struct Socket {
+public struct Socket: CustomStringConvertible {
     private let fd: IORingUtils.FileHandle
 
     public init(fd: IORingUtils.FileHandle) {
         self.fd = fd
+    }
+
+    public var description: String {
+        "\(type(of: self))(fd: \(fd))"
     }
 
     public init(domain: CInt, type: UInt32, protocol proto: CInt) throws {
@@ -147,9 +151,14 @@ public struct IORingTCPEcho {
 
     func run() async throws {
         for try await client in try await socket.accept(ring: ring) {
-            var buffer = [UInt8](repeating: 0, count: bufferSize)
-            try await client.read(into: &buffer, count: bufferSize, ring: ring)
-            try await client.write(buffer, count: bufferSize, ring: ring)
+            debugPrint("accepted client FD \(client)")
+            Task {
+                repeat {
+                    var buffer = [UInt8](repeating: 0, count: bufferSize)
+                    try await client.read(into: &buffer, count: bufferSize, ring: ring)
+                    try await client.write(buffer, count: bufferSize, ring: ring)
+                } while true
+            }
         }
     }
 }

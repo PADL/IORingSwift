@@ -19,7 +19,7 @@ import Foundation
 import Glibc
 import IORing
 
-public class FileHandle {
+public class FileHandle: CustomStringConvertible {
     let fd: IORing.FileDescriptor
 
     public init(fd: IORing.FileDescriptor) throws {
@@ -27,6 +27,10 @@ public class FileHandle {
             throw Errno(rawValue: errno != 0 ? errno : EBADF)
         }
         self.fd = fd
+    }
+
+    public var description: String {
+        "\(type(of: self))(fd: \(fd))"
     }
 
     deinit {
