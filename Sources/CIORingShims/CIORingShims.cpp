@@ -32,7 +32,7 @@ void io_uring_prep_rw_block(int op,
     io_uring_sqe_set_data(sqe, _Block_copy(block));
 }
 
-static void notify_block(struct io_uring_cqe *cqe) {
+static void event_handle_block(struct io_uring_cqe *cqe) {
     auto block =
         reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
     block(cqe);
@@ -40,7 +40,7 @@ static void notify_block(struct io_uring_cqe *cqe) {
         _Block_release(block);
 }
 
-static void notify_event(dispatch_source_t source, struct io_uring *ring) {
+static void event_handle(dispatch_source_t source, struct io_uring *ring) {
     struct io_uring_cqe *cqe;
     eventfd_t value;
     unsigned int head, i = 0;
@@ -55,13 +55,15 @@ static void notify_event(dispatch_source_t source, struct io_uring *ring) {
         return;
 
     io_uring_for_each_cqe(ring, head, cqe) {
-        notify_block(cqe);
+        event_handle_block(cqe);
         i++;
     }
     io_uring_cq_advance(ring, i);
 }
 
-int io_uring_init_notify(uintptr_t *notifyHandle, struct io_uring *ring) {
+int io_uring_init_event(void **eventHandle, struct io_uring *ring) {
+    *eventHandle = nullptr;
+
     // previously, we spun up a thread to wait on cqe notifications.
     // however we can use eventfd to integrate this with libdispatch
     auto fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
@@ -83,7 +85,7 @@ int io_uring_init_notify(uintptr_t *notifyHandle, struct io_uring *ring) {
     }
 
     dispatch_source_set_event_handler(source, ^{
-      notify_event(source, ring);
+      event_handle(source, ring);
     });
 
     dispatch_source_set_cancel_handler(source, ^{
@@ -93,12 +95,15 @@ int io_uring_init_notify(uintptr_t *notifyHandle, struct io_uring *ring) {
 
     dispatch_resume(source);
 
-    *notifyHandle = reinterpret_cast<uintptr_t>(source);
+    *eventHandle = static_cast<void *>(source);
 
     return 0;
 }
 
-void io_uring_deinit_notify(uintptr_t notifyHandle, struct io_uring *ring) {
-    auto source = reinterpret_cast<dispatch_source_t>(notifyHandle);
-    dispatch_release(source);
+void io_uring_deinit_event(void *eventHandle, struct io_uring *ring) {
+    if (eventHandle) {
+        auto source = static_cast<dispatch_source_t>(eventHandle);
+        dispatch_cancel(source);
+        dispatch_release(source);
+    }
 }

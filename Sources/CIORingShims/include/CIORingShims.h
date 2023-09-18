@@ -32,8 +32,8 @@ void io_uring_prep_rw_block(int op,
                             __u64,
                             _Nonnull io_uring_cqe_block);
 
-int io_uring_init_notify(uintptr_t * _Nonnull, struct io_uring *_Nonnull);
-void io_uring_deinit_notify(uintptr_t, struct io_uring *_Nonnull);
+int io_uring_init_event(void *_Nullable *_Nonnull, struct io_uring *_Nonnull);
+void io_uring_deinit_event(void *_Nullable, struct io_uring *_Nonnull);
 
 #ifdef __cplusplus
 }
