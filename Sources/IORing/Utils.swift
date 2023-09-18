@@ -22,7 +22,7 @@ import Glibc
 
 // MARK: - iovec extensions
 
-private extension iovec {
+extension iovec {
     init(
         bufferPointer: UnsafeRawBufferPointer,
         offset: size_t? = nil,
