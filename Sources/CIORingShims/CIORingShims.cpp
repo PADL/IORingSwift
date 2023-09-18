@@ -32,7 +32,7 @@ void io_uring_prep_rw_block(int op,
     io_uring_sqe_set_data(sqe, _Block_copy(block));
 }
 
-static void event_handle_block(struct io_uring_cqe *cqe) {
+static void invoke_block(struct io_uring_cqe *cqe) {
     auto block =
         reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
     block(cqe);
@@ -56,7 +56,7 @@ static void event_handler(dispatch_source_t source) {
         return;
 
     io_uring_for_each_cqe(ring, head, cqe) {
-        event_handle_block(cqe);
+        invoke_block(cqe);
         i++;
     }
     io_uring_cq_advance(ring, i);
