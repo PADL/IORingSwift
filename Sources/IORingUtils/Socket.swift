@@ -28,7 +28,7 @@ public struct Socket: CustomStringConvertible {
     }
 
     public var description: String {
-        "\(type(of: self))(fd: \(fd))"
+        "\(type(of: self))(fd: \(fd), peerName: \((try? peerNameString) ?? "<unknown>"))"
     }
 
     public init(domain: CInt, type: UInt32, protocol proto: CInt) throws {
@@ -38,6 +38,51 @@ public struct Socket: CustomStringConvertible {
 
     public func setNonBlocking() throws {
         try fd.setNonBlocking()
+    }
+
+    func getName(_ body: @escaping (
+        _ fd: IORing.FileDescriptor,
+        UnsafeMutablePointer<sockaddr>,
+        UnsafeMutablePointer<socklen_t>
+    ) -> CInt) throws -> sockaddr_storage {
+        var ss = sockaddr_storage()
+        var length = socklen_t(MemoryLayout<sockaddr_storage>.size)
+
+        _ = try withUnsafeMutablePointer(to: &ss) { pointer in
+            try pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                try fd.withDescriptor { fd in
+                    try Errno.throwingErrno {
+                        body(fd, sa, &length)
+                    }
+                }
+            }
+        }
+
+        return ss
+    }
+
+    public var sockName: sockaddr_storage {
+        get throws {
+            try getName { getsockname($0, $1, $2) }
+        }
+    }
+
+    public var sockNameString: String {
+        get throws {
+            try sockName.presentationAddress
+        }
+    }
+
+    public var peerName: sockaddr_storage {
+        get throws {
+            try getName { getpeername($0, $1, $2) }
+        }
+    }
+
+    public var peerNameString: String {
+        get throws {
+            try peerName.presentationAddress
+        }
     }
 
     public func setBooleanOption(level: CInt = SOL_SOCKET, option: CInt, to value: Bool) throws {
@@ -55,6 +100,14 @@ public struct Socket: CustomStringConvertible {
 
     public func setReuseAddr() throws {
         try setBooleanOption(option: SO_REUSEADDR, to: true)
+    }
+
+    public func setReusePort() throws {
+        try setBooleanOption(option: SO_REUSEPORT, to: true)
+    }
+
+    public func setTcpNoDelay() throws {
+        try setBooleanOption(level: CInt(IPPROTO_TCP), option: TCP_NODELAY, to: true)
     }
 
     public func bind(to address: sockaddr, length: Int) throws {
@@ -115,5 +168,64 @@ public extension sockaddr_in {
         sin.sin_port = port.bigEndian
         sin.sin_addr = in_addr(s_addr: INADDR_ANY)
         return sin
+    }
+}
+
+public extension sockaddr_storage {
+    init(family: sa_family_t, presentationAddress: String, port: UInt16? = nil) throws {
+        self = sockaddr_storage()
+        _ = try withUnsafeMutablePointer(to: &self) { pointer in
+            switch Int32(family) {
+            case AF_INET:
+                try pointer.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sin in
+                    try Errno.throwingErrno {
+                        if let port { sin.pointee.sin_port = port.bigEndian }
+                        return inet_pton(AF_INET, presentationAddress, &sin.pointee.sin_addr)
+                    }
+                }
+            case AF_INET6:
+                try pointer.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { sin6 in
+                    try Errno.throwingErrno {
+                        if let port { sin6.pointee.sin6_port = port.bigEndian }
+                        return inet_pton(AF_INET, presentationAddress, &sin6.pointee.sin6_addr)
+                    }
+                }
+            default:
+                throw Errno(rawValue: EAFNOSUPPORT)
+            }
+        }
+    }
+
+    var presentationAddress: String {
+        get throws {
+            var ss = self
+            var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+            let size = socklen_t(buffer.count)
+            var result: UnsafePointer<CChar>?
+            var port: UInt16 = 0
+
+            _ = try withUnsafeMutablePointer(to: &ss) { pointer in
+                switch Int32(pointer.pointee.ss_family) {
+                case AF_INET:
+                    pointer.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sin in
+                        result = inet_ntop(AF_INET, &sin.pointee.sin_addr, &buffer, size)
+                        port = UInt16(bigEndian: sin.pointee.sin_port)
+                    }
+                case AF_INET6:
+                    pointer.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { sin6 in
+                        result = inet_ntop(AF_INET6, &sin6.pointee.sin6_addr, &buffer, size)
+                        port = UInt16(bigEndian: sin6.pointee.sin6_port)
+                    }
+                default:
+                    throw Errno(rawValue: EAFNOSUPPORT)
+                }
+            }
+
+            if result == nil {
+                throw Errno.lastError
+            }
+
+            return "\(String(cString: buffer)):\(port)"
+        }
     }
 }

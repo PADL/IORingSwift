@@ -44,6 +44,7 @@ public struct IORingTCPEcho {
         socket = try Socket(domain: AF_INET, type: SOCK_STREAM.rawValue, protocol: 0)
         try socket.setNonBlocking()
         try socket.setReuseAddr()
+        try socket.setTcpNoDelay()
         try socket.bind(to: sockaddr_in.any(port: port))
         try socket.listen(backlog: backlog)
     }
