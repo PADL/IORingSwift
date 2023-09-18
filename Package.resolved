@@ -1,6 +1,15 @@
 {
   "pins" : [
     {
+      "identity" : "asyncextensions",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/lhoward/AsyncExtensions",
+      "state" : {
+        "branch" : "linux",
+        "revision" : "2218eaa30dbdb39b063e92644fc28ed22e2cb942"
+      }
+    },
+    {
       "identity" : "swift-async-algorithms",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-async-algorithms",

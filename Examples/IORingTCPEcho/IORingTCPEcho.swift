@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import AsyncExtensions
 import Foundation
 import Glibc
 import IORing
@@ -21,6 +22,10 @@ import IORingUtils
 
 public struct Socket {
     private let fd: IORingUtils.FileHandle
+
+    public init(fd: IORingUtils.FileHandle) {
+        self.fd = fd
+    }
 
     public init(domain: CInt, type: UInt32, protocol proto: CInt) throws {
         let fd = socket(domain, Int32(type), proto)
@@ -75,6 +80,31 @@ public struct Socket {
             }
         }
     }
+
+    public func accept(ring: IORing) async throws -> AnyAsyncSequence<Socket> {
+        try await fd.withDescriptor { fd in
+            try await ring.accept(from: fd).map { try Socket(fd: FileHandle(fd: $0)) }
+                .eraseToAnyAsyncSequence()
+        }
+    }
+
+    public func read(into buffer: inout [UInt8], count: Int, ring: IORing) async throws {
+        try await fd.withDescriptor { try await ring.read(
+            into: &buffer,
+            count: count,
+            offset: 0,
+            from: $0
+        ) }
+    }
+
+    public func write(_ buffer: [UInt8], count: Int, ring: IORing) async throws {
+        try await fd.withDescriptor { try await ring.write(
+            buffer,
+            count: count,
+            offset: 0,
+            to: $0
+        ) }
+    }
 }
 
 public extension sockaddr_in {
@@ -105,7 +135,7 @@ public struct IORingTCPEcho {
         try await echo.run()
     }
 
-    init(port: UInt16 = 10000, bufferSize: Int = 1024, backlog: Int = 128) throws {
+    init(port: UInt16 = 10000, bufferSize: Int = 1, backlog: Int = 128) throws {
         self.bufferSize = bufferSize
         ring = try IORing(depth: backlog)
         socket = try Socket(domain: AF_INET, type: SOCK_STREAM.rawValue, protocol: 0)
@@ -116,10 +146,10 @@ public struct IORingTCPEcho {
     }
 
     func run() async throws {
-        repeat {
-            // accept
-            // recv
-            // send
-        } while true
+        for try await client in try await socket.accept(ring: ring) {
+            var buffer = [UInt8](repeating: 0, count: bufferSize)
+            try await client.read(into: &buffer, count: bufferSize, ring: ring)
+            try await client.write(buffer, count: bufferSize, ring: ring)
+        }
     }
 }

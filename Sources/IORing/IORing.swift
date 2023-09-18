@@ -14,7 +14,9 @@
 // limitations under the License.
 //
 
+@_implementationOnly
 import AsyncAlgorithms
+import AsyncExtensions
 @_implementationOnly
 import CIORingShims
 @_implementationOnly
@@ -472,8 +474,8 @@ public extension IORing {
     }
 
     func accept(from fd: FileDescriptor) async throws
-        -> AsyncThrowingChannel<FileDescriptor, Error>
+        -> AnyAsyncSequence<FileDescriptor>
     {
-        try await io_uring_op_multishot_accept(fd: fd)
+        try await io_uring_op_multishot_accept(fd: fd).eraseToAnyAsyncSequence()
     }
 }

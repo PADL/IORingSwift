@@ -15,6 +15,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-async-algorithms", from: "0.1.0"),
+        .package(url: "https://github.com/lhoward/AsyncExtensions", branch: "linux"),
     ],
     targets: [
         .systemLibrary(
@@ -28,6 +29,7 @@ let package = Package(
         .target(
             name: "IORing",
             dependencies: ["CIORingShims",
+                           "AsyncExtensions",
                            .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")]
         ),
         .testTarget(
@@ -37,6 +39,7 @@ let package = Package(
         .target(
             name: "IORingUtils",
             dependencies: ["IORing",
+                           "AsyncExtensions",
                            .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")],
             path: "Examples/IORingUtils"
         ),
