@@ -14,30 +14,43 @@
 // limitations under the License.
 //
 
-import AsyncAlgorithms
 import AsyncExtensions
 import Foundation
 import Glibc
 import IORing
 
 public extension IORing {
-    func readChannel(
-        _ chunkSize: Int,
-        from fd: FileDescriptor
-    ) -> AsyncThrowingChannel<[UInt8], Error> {
-        let channel = AsyncThrowingChannel<[UInt8], Error>()
+    struct AsyncByteSequence: AsyncSequence {
+        public typealias Element = UInt8
 
-        Task {
-            repeat {
-                do {
-                    let bytes = try await read(count: chunkSize, from: fd)
-                    await channel.send(bytes)
-                } catch {
-                    channel.fail(error)
+        let ring: IORing
+        let fd: IORing.FileDescriptor
+
+        public struct AsyncIterator: AsyncIteratorProtocol {
+            let ring: IORing
+            let fd: IORing.FileDescriptor
+
+            public mutating func next() async throws -> Element? {
+                guard !Task.isCancelled else {
+                    return nil
                 }
-            } while true
+
+                var buffer = [UInt8](repeating: 0, count: 1)
+                if try await ring.read(into: &buffer, count: 1, from: fd) == false {
+                    return nil
+                }
+                return buffer.first
+            }
         }
 
-        return channel
+        public func makeAsyncIterator() -> AsyncIterator {
+            AsyncIterator(ring: ring, fd: fd)
+        }
+    }
+
+    func asyncBytes(
+        from fd: FileDescriptor
+    ) -> AnyAsyncSequence<UInt8> {
+        AsyncByteSequence(ring: self, fd: fd).eraseToAnyAsyncSequence()
     }
 }
