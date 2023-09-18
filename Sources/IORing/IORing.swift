@@ -551,6 +551,10 @@ public extension IORing {
         } while nwritten < count
     }
 
+    func recv(count: Int, from fd: FileDescriptor) async throws -> AnyAsyncSequence<[UInt8]> {
+        try await io_uring_op_recv_multishot(fd: fd, count: count).eraseToAnyAsyncSequence()
+    }
+
     func recv(count: Int, from fd: FileDescriptor) async throws -> [UInt8] {
         var buffer = [UInt8](repeating: 0, count: count)
         try await io_uring_op_recv(fd: fd, buffer: &buffer)
