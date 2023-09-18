@@ -28,7 +28,11 @@ public struct Socket: CustomStringConvertible {
     }
 
     public var description: String {
-        "\(type(of: self))(fd: \(fd), peerName: \((try? peerNameString) ?? "<unknown>"))"
+        if let peerNameString = try? peerNameString {
+            return "\(type(of: self))(fd: \(fd), peerName: \(peerNameString))"
+        } else {
+            return "\(type(of: self))(fd: \(fd))"
+        }
     }
 
     public init(domain: CInt, type: UInt32, protocol proto: CInt) throws {
@@ -156,6 +160,20 @@ public struct Socket: CustomStringConvertible {
             buffer,
             count: count,
             offset: 0,
+            to: $0
+        ) }
+    }
+
+    public func recv(count: Int, ring: IORing) async throws -> [UInt8] {
+        try await fd.withDescriptor { try await ring.recv(
+            count: count,
+            from: $0
+        ) }
+    }
+
+    public func send(_ data: [UInt8], ring: IORing) async throws {
+        try await fd.withDescriptor { try await ring.send(
+            data,
             to: $0
         ) }
     }

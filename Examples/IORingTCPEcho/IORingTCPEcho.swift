@@ -49,25 +49,39 @@ public struct IORingTCPEcho {
         try socket.listen(backlog: backlog)
     }
 
+    func readWriteEcho(client: Socket) async throws {
+        do {
+            var more = false
+            repeat {
+                var buffer = [UInt8](repeating: 0, count: bufferSize)
+                more = try await client.read(into: &buffer, count: bufferSize, ring: ring)
+                if more {
+                    try await client.write(buffer, count: bufferSize, ring: ring)
+                }
+            } while more
+        } catch {
+            debugPrint("closed client \(client): error \(error)")
+        }
+        debugPrint("closed client \(client)")
+    }
+
+    func sendRecvEcho(client: Socket) async throws {
+        do {
+            repeat {
+                let data = try await client.recv(count: bufferSize, ring: ring)
+                try await client.send(data, ring: ring)
+            } while true
+        } catch {
+            debugPrint("closed client \(client)")
+        }
+    }
+
     func run() async throws {
         let clients = try await socket.accept(ring: ring)
         for try await client in clients {
-            debugPrint("accepted client \(client)")
             Task {
-                do {
-                    var more = false
-                    repeat {
-                        var buffer = [UInt8](repeating: 0, count: bufferSize)
-                        more = try await client.read(into: &buffer, count: bufferSize, ring: ring)
-                        if more {
-                            try await client.write(buffer, count: bufferSize, ring: ring)
-                        }
-                    } while more
-                } catch {
-                    debugPrint("closed client \(client): error \(error)")
-                    return
-                }
-                debugPrint("closed client \(client)")
+                debugPrint("accepted client \(client)")
+                try await sendRecvEcho(client: client)
             }
         }
     }

@@ -81,6 +81,24 @@ public actor IORing {
 
         private typealias BlockHandler = (UnsafePointer<io_uring_cqe>) -> ()
 
+        private func setSocketAddress(
+            _ sqe: UnsafeMutablePointer<io_uring_sqe>,
+            socketAddress: sockaddr_storage
+        ) {
+            var socketAddress = socketAddress
+            withUnsafePointer(to: &socketAddress) { pointer in
+                pointer
+                    .withMemoryRebound(to: sockaddr.self, capacity: 1) { pointer in
+                        sqe.pointee.addr2 = UInt64(UInt(bitPattern: pointer))
+                        sqe.pointee
+                            .file_index = UInt32(
+                                MemoryLayout<sockaddr_storage>
+                                    .size << 16
+                            )
+                    }
+            }
+        }
+
         private func setFlags(
             _ sqe: UnsafeMutablePointer<io_uring_sqe>,
             flags: UInt8,
@@ -96,6 +114,30 @@ public actor IORing {
             try Errno.throwingErrno {
                 io_uring_submit(&self.ring)
             }
+        }
+
+        private func submitRetryingIfInterrupted<T>(
+            body: @escaping (UnsafeMutablePointer<io_uring_sqe>) async throws -> T
+        ) async throws -> T {
+            repeat {
+                do {
+                    let sqe = io_uring_get_sqe(&ring)
+
+                    guard let sqe else {
+                        // queue is full, suspend
+                        try await suspendPendingSubmission()
+                        continue
+                    }
+
+                    let result = try await body(sqe)
+                    try submit()
+                    return result
+                } catch let error as Errno {
+                    if error.rawValue != EAGAIN {
+                        throw error
+                    }
+                }
+            } while true
         }
 
         private func suspendPendingSubmission() async throws {
@@ -115,7 +157,7 @@ public actor IORing {
 
         private func cancelPendingSubmissions() {
             for submission in pendingSubmissions {
-                submission.resume(throwing: Errno(rawValue: ECANCELED))
+                submission.resume(throwing: Errno(rawValue: -ECANCELED))
             }
         }
 
@@ -142,48 +184,55 @@ public actor IORing {
             }
         }
 
-        private func prepareAndSubmitOnce<T>(
+        func prepareAndSubmit<T>(
             _ opcode: UInt8,
-            sqe: UnsafeMutablePointer<io_uring_sqe>,
             fd: FileDescriptor,
-            address: UnsafeRawPointer?,
-            length: CUnsignedInt,
-            offset: UInt64,
-            flags: UInt8,
-            ioprio: UInt16,
-            moreFlags: UInt32,
+            address: UnsafeRawPointer? = nil,
+            length: CUnsignedInt = 0,
+            offset: Int = -1,
+            flags: UInt8 = 0,
+            ioprio: UInt16 = 0,
+            moreFlags: UInt32 = 0,
+            socketAddress: sockaddr_storage? = nil,
             handler: @escaping (io_uring_cqe) throws -> T
         ) async throws -> T {
-            try await withCheckedThrowingContinuation { (
-                continuation: CheckedContinuation<
-                    T,
-                    Error
-                >
-            ) in
-                do {
-                    prepare(
-                        opcode,
-                        sqe: sqe,
-                        fd: fd,
-                        address: address,
-                        length: length,
-                        offset: offset
-                    ) { cqe in
-                        guard cqe.pointee.res >= 0 else {
-                            continuation.resume(throwing: Errno(rawValue: cqe.pointee.res))
-                            return
+            try await submitRetryingIfInterrupted { [self] sqe in
+                try await withCheckedThrowingContinuation { (
+                    continuation: CheckedContinuation<
+                        T,
+                        Error
+                    >
+                ) in
+                    let offset = offset == -1 ? UInt64(bitPattern: -1) : UInt64(offset)
+
+                    do {
+                        prepare(
+                            opcode,
+                            sqe: sqe,
+                            fd: fd,
+                            address: address,
+                            length: length,
+                            offset: offset
+                        ) { cqe in
+                            guard cqe.pointee.res >= 0 else {
+                                continuation.resume(throwing: Errno(rawValue: cqe.pointee.res))
+                                return
+                            }
+                            do {
+                                let result = try handler(cqe.pointee)
+                                continuation.resume(returning: result)
+                            } catch {
+                                continuation.resume(throwing: error)
+                            }
                         }
-                        do {
-                            let result = try handler(cqe.pointee)
-                            continuation.resume(returning: result)
-                        } catch {
-                            continuation.resume(throwing: error)
+                        setFlags(sqe, flags: flags, ioprio: ioprio, moreFlags: moreFlags)
+                        if let socketAddress {
+                            setSocketAddress(sqe, socketAddress: socketAddress)
                         }
+                        try submit()
+                    } catch {
+                        continuation.resume(throwing: error)
                     }
-                    setFlags(sqe, flags: flags, ioprio: ioprio, moreFlags: moreFlags)
-                    try submit()
-                } catch {
-                    continuation.resume(throwing: error)
                 }
             }
         }
@@ -193,21 +242,12 @@ public actor IORing {
             fd: FileDescriptor,
             address: UnsafeRawPointer? = nil,
             length: CUnsignedInt = 0,
-            offset: UInt64 = 0,
             flags: UInt8 = 0,
             ioprio: UInt16 = 0,
             moreFlags: UInt32 = 0,
             handler: @escaping (io_uring_cqe) throws -> T
         ) async throws -> AsyncThrowingChannel<T, Error> {
-            repeat {
-                let sqe = io_uring_get_sqe(&ring)
-
-                guard let sqe else {
-                    // queue is full, suspend
-                    try await suspendPendingSubmission()
-                    continue
-                }
-
+            try await submitRetryingIfInterrupted { [self] sqe in
                 let channel = AsyncThrowingChannel<T, Error>()
 
                 prepare(
@@ -216,10 +256,10 @@ public actor IORing {
                     fd: fd,
                     address: address,
                     length: length,
-                    offset: offset
+                    offset: 0
                 ) { cqe in
                     guard cqe.pointee.res >= 0 else {
-                        if cqe.pointee.res != ECANCELED {
+                        if cqe.pointee.res != -ECANCELED {
                             channel.fail(Errno(rawValue: cqe.pointee.res))
                         }
                         return
@@ -236,55 +276,14 @@ public actor IORing {
                 setFlags(sqe, flags: flags, ioprio: ioprio, moreFlags: moreFlags)
                 try submit()
                 return channel
-            } while true
+            }
         }
 
-        func prepareAndSubmit<T>(
-            _ opcode: UInt8,
-            fd: FileDescriptor,
-            address: UnsafeRawPointer?,
-            length: CUnsignedInt,
-            offset: Int,
-            flags: UInt8 = 0,
-            ioprio: UInt16 = 0,
-            moreFlags: UInt32 = 0,
-            handler: @escaping (io_uring_cqe) throws -> T
-        ) async throws -> T {
-            repeat {
-                do {
-                    let sqe = io_uring_get_sqe(&ring)
-
-                    guard let sqe else {
-                        // queue is full, suspend
-                        try await suspendPendingSubmission()
-                        continue
-                    }
-
-                    return try await prepareAndSubmitOnce(
-                        opcode,
-                        sqe: sqe,
-                        fd: fd,
-                        address: address,
-                        length: length,
-                        offset: offset == -1 ? UInt64(bitPattern: -1) : UInt64(offset),
-                        flags: flags,
-                        ioprio: ioprio,
-                        moreFlags: moreFlags,
-                        handler: handler
-                    )
-                } catch let error as Errno {
-                    if error.rawValue != EAGAIN {
-                        throw error
-                    }
-                }
-            } while true
-        }
-
-        func prepareAndSubmit<T>(
+        func prepareAndSubmitIovec<T>(
             _ opcode: UInt8,
             fd: FileDescriptor,
             iovecs: [iovec]? = nil,
-            offset: Int,
+            offset: Int = -1,
             flags: UInt8 = 0,
             ioprio: UInt16 = 0,
             moreFlags: UInt32 = 0,
@@ -332,7 +331,7 @@ private extension IORing {
         iovecs: [iovec],
         offset: Int
     ) async throws -> Int {
-        try await manager.prepareAndSubmit(
+        try await manager.prepareAndSubmitIovec(
             UInt8(IORING_OP_READV),
             fd: fd,
             iovecs: iovecs,
@@ -348,7 +347,7 @@ private extension IORing {
         count: Int,
         offset: Int
     ) async throws -> Int {
-        try await manager.prepareAndSubmit(
+        try await manager.prepareAndSubmitIovec(
             UInt8(IORING_OP_WRITEV),
             fd: fd,
             iovecs: iovecs,
@@ -391,6 +390,61 @@ private extension IORing {
         ) { [buffer] cqe in
             _ = buffer
             return Int(cqe.res)
+        }
+    }
+
+    func io_uring_op_send(
+        fd: FileDescriptor,
+        buffer: [UInt8],
+        to socketAddress: sockaddr_storage? = nil,
+        flags: UInt32 = 0
+    ) async throws {
+        try await manager.prepareAndSubmit(
+            UInt8(IORING_OP_SEND),
+            fd: fd,
+            address: buffer,
+            length: CUnsignedInt(buffer.count),
+            offset: 0,
+            moreFlags: flags,
+            socketAddress: socketAddress
+        ) { [buffer] _ in
+            _ = buffer
+            return ()
+        }
+    }
+
+    func io_uring_op_recv(
+        fd: FileDescriptor,
+        buffer: inout [UInt8],
+        flags: UInt32 = 0
+    ) async throws {
+        try await manager.prepareAndSubmit(
+            UInt8(IORING_OP_RECV),
+            fd: fd,
+            address: buffer,
+            length: CUnsignedInt(buffer.count),
+            offset: 0,
+            moreFlags: flags
+        ) { [buffer] _ in
+            _ = buffer
+            return ()
+        }
+    }
+
+    func io_uring_op_recv_multishot(
+        fd: FileDescriptor,
+        count: Int
+    ) async throws -> AsyncThrowingChannel<[UInt8], Error> {
+        // FIXME: check this will be captured or do we need to
+        var buffer = [UInt8](repeating: 0, count: count)
+        return try await manager.prepareAndSubmitMultishot(
+            UInt8(IORING_OP_RECV),
+            fd: fd,
+            address: &buffer[0],
+            length: CUnsignedInt(count),
+            ioprio: RecvSendIoPrio.multishot
+        ) { [buffer] _ in
+            buffer
         }
     }
 
@@ -482,6 +536,16 @@ public extension IORing {
                 offset: offset == -1 ? -1 : offset + nwritten
             )
         } while nwritten < count
+    }
+
+    func recv(count: Int, from fd: FileDescriptor) async throws -> [UInt8] {
+        var buffer = [UInt8](repeating: 0, count: count)
+        try await io_uring_op_recv(fd: fd, buffer: &buffer)
+        return buffer
+    }
+
+    func send(_ data: [UInt8], to fd: FileDescriptor) async throws {
+        try await io_uring_op_send(fd: fd, buffer: data)
     }
 
     func accept(from fd: FileDescriptor) async throws
