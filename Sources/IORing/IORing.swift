@@ -258,6 +258,7 @@ public actor IORing {
             flags: UInt8,
             ioprio: UInt16,
             moreFlags: UInt32,
+            retryOnCancel: Bool,
             handler: @escaping (io_uring_cqe) throws -> T,
             channel: AsyncThrowingChannel<T, Error>
         ) async throws {
@@ -271,7 +272,7 @@ public actor IORing {
                     offset: 0
                 ) { cqe in
                     guard cqe.pointee.res >= 0 else {
-                        if cqe.pointee.res == -ECANCELED {
+                        if cqe.pointee.res == -ECANCELED, retryOnCancel {
                             // looks like we need to resubmit the entire request
                             Task {
                                 do {
@@ -283,6 +284,7 @@ public actor IORing {
                                         flags: flags,
                                         ioprio: ioprio,
                                         moreFlags: moreFlags,
+                                        retryOnCancel: retryOnCancel,
                                         handler: handler,
                                         channel: channel
                                     )
@@ -317,6 +319,7 @@ public actor IORing {
             flags: UInt8 = 0,
             ioprio: UInt16 = 0,
             moreFlags: UInt32 = 0,
+            retryOnCancel: Bool = false,
             handler: @escaping (io_uring_cqe) throws -> T
         ) async throws -> AsyncThrowingChannel<T, Error> {
             let channel = AsyncThrowingChannel<T, Error>()
@@ -328,6 +331,7 @@ public actor IORing {
                 flags: flags,
                 ioprio: ioprio,
                 moreFlags: moreFlags,
+                retryOnCancel: retryOnCancel,
                 handler: handler,
                 channel: channel
             )
@@ -702,7 +706,8 @@ private extension IORing {
             UInt8(IORING_OP_ACCEPT),
             fd: fd,
             ioprio: AcceptIoPrio.multishot,
-            moreFlags: flags
+            moreFlags: flags,
+            retryOnCancel: true
         ) { cqe in
             cqe.res
         }
