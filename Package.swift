@@ -88,6 +88,11 @@ let package = Package(
             dependencies: ["IORing", "IORingUtils"],
             path: "Examples/IORingTCPEcho"
         ),
+        .executableTarget(
+            name: "IORingUDPClient",
+            dependencies: ["IORing", "IORingUtils"],
+            path: "Examples/IORingUDPClient"
+        ),
     ],
     cLanguageStandard: .c18,
     cxxLanguageStandard: .cxx20

@@ -203,6 +203,20 @@ public struct Socket: CustomStringConvertible {
             to: $0
         ) }
     }
+
+    public func recvmsg(count: Int, ring: IORing) async throws -> AnyAsyncSequence<IORing.Message> {
+        try await fd.withDescriptor { try await ring.recvmsg(
+            count: count,
+            from: $0
+        ) }
+    }
+
+    public func sendmsg(_ message: IORing.Message, ring: IORing) async throws {
+        try await fd.withDescriptor { try await ring.sendmsg(
+            message,
+            to: $0
+        ) }
+    }
 }
 
 public extension sockaddr_in {
@@ -216,7 +230,7 @@ public extension sockaddr_in {
 }
 
 public extension sockaddr_storage {
-    init(family: sa_family_t, presentationAddress: String) throws {
+    init(family: Int32, presentationAddress: String) throws {
         self.init()
 
         var port: UInt16?
@@ -225,7 +239,7 @@ public extension sockaddr_storage {
             port = UInt16(addressPort[1])
         }
 
-        ss_family = family
+        ss_family = sa_family_t(family)
         try withUnsafeMutablePointer(to: &self) { pointer in
             switch Int32(family) {
             case AF_INET:

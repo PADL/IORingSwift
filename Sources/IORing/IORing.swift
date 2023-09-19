@@ -386,15 +386,35 @@ public actor IORing {
         private var __storage = msghdr()
         private var __iov_storage = iovec()
 
+        public var name: sockaddr_storage {
+            didSet {
+                Swift.withUnsafeMutablePointer(to: &name) { pointer in
+                    __storage.msg_name = UnsafeMutableRawPointer(pointer)
+                    __storage.msg_namelen = socklen_t(MemoryLayout<sockaddr_storage>.size)
+                }
+            }
+        }
+
+        public var buffer: [UInt8] {
+            didSet {
+                buffer.withUnsafeMutableBytes { bytes in
+                    __iov_storage.iov_base = bytes.baseAddress!
+                    __iov_storage.iov_len = bytes.count
+                }
+                Swift.withUnsafeMutablePointer(to: &__iov_storage) { pointer in
+                    __storage.msg_iov = pointer
+                    __storage.msg_iovlen = 1
+                }
+            }
+        }
+
         public struct Control {
             public var level: Int32
             public var type: Int32
             public var data: [UInt8]
         }
 
-        public var name: sockaddr_storage
-        public var buffer: [UInt8]
-        public var control: [Control]
+        public var control = [Control]()
         public var flags: Int32 {
             get {
                 __storage.msg_flags
@@ -402,22 +422,6 @@ public actor IORing {
             set {
                 __storage.msg_flags = newValue
             }
-        }
-
-        private mutating func __storage_init() {
-            Swift.withUnsafeMutablePointer(to: &name) { pointer in
-                __storage.msg_name = UnsafeMutableRawPointer(pointer)
-                __storage.msg_namelen = socklen_t(MemoryLayout<sockaddr_storage>.size)
-            }
-            buffer.withUnsafeMutableBytes { bytes in
-                __iov_storage.iov_base = bytes.baseAddress!
-                __iov_storage.iov_len = bytes.count
-            }
-            Swift.withUnsafeMutablePointer(to: &__iov_storage) { pointer in
-                __storage.msg_iov = pointer
-                __storage.msg_iovlen = 1
-            }
-            // FIXME: support control
         }
 
         mutating func withUnsafeMutablePointer<T>(
@@ -439,19 +443,22 @@ public actor IORing {
             return try await body(&storage)
         }
 
-        init(_ message: Message) {
+        public init(_ message: Message) {
             name = message.name
             buffer = message.buffer
-            control = message.control
-            __storage_init()
             flags = message.flags
         }
 
-        init(messageBufferSize: Int = 1024) {
+        public init(buffer: [UInt8]) {
             name = sockaddr_storage()
-            buffer = [UInt8](repeating: 0, count: messageBufferSize)
-            control = [Control]()
-            __storage_init()
+            self.buffer = buffer
+            flags = 0
+        }
+
+        public init(capacity: Int) {
+            name = sockaddr_storage()
+            buffer = [UInt8](repeating: 0, count: capacity)
+            flags = 0
         }
 
         init(_ msg: UnsafePointer<msghdr>) {
@@ -476,9 +483,8 @@ public actor IORing {
                     data: Array(data)
                 ))
             }
-            self.control = control
-            __storage_init()
             flags = msg.pointee.msg_flags
+            self.control = control
         }
     }
 }
@@ -647,9 +653,10 @@ private extension IORing {
 
     func io_uring_op_recvmsg_multishot(
         fd: FileDescriptor,
+        count: Int = Int(BUFSIZ), // FIXME: choose a better default buffer size
         flags: UInt32 = 0
     ) async throws -> AsyncThrowingChannel<Message, Error> {
-        var message = Message()
+        var message = Message(capacity: count)
         return try await message.withUnsafeMutablePointer { pointer in
             try await manager.prepareAndSubmitMultishot(
                 UInt8(IORING_OP_RECVMSG),
@@ -809,14 +816,13 @@ public extension IORing {
     }
 
     func recvmsg(count: Int, from fd: FileDescriptor) async throws -> Message {
-        var message = Message(messageBufferSize: count)
+        var message = Message(capacity: count)
         try await io_uring_op_recvmsg(fd: fd, message: &message)
         return message
     }
 
     func sendmsg(_ message: Message, to fd: FileDescriptor) async throws {
-        var message = message
-        try await io_uring_op_recvmsg(fd: fd, message: &message)
+        try await io_uring_op_sendmsg(fd: fd, message: message)
     }
 
     func accept(from fd: FileDescriptor) async throws
