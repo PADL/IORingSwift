@@ -336,10 +336,8 @@ public actor IORing {
     }
 
     public struct Message {
-        // by placing this at the start, hopefully it can be cast to a C structure of the same
-        // layout as the first element
-        private var __wrapped = msghdr()
-        private var __iov = iovec()
+        private var __storage = msghdr()
+        private var __iov_storage = iovec()
 
         public struct Control {
             public var level: Int32
@@ -352,25 +350,25 @@ public actor IORing {
         public var control: [Control]
         public var flags: Int32 {
             get {
-                __wrapped.msg_flags
+                __storage.msg_flags
             }
             set {
-                __wrapped.msg_flags = newValue
+                __storage.msg_flags = newValue
             }
         }
 
-        private mutating func __wrapped_init() {
+        private mutating func __storage_init() {
             withUnsafeMutablePointer(to: &name) { pointer in
-                __wrapped.msg_name = UnsafeMutableRawPointer(pointer)
-                __wrapped.msg_namelen = socklen_t(MemoryLayout<sockaddr_storage>.size)
+                __storage.msg_name = UnsafeMutableRawPointer(pointer)
+                __storage.msg_namelen = socklen_t(MemoryLayout<sockaddr_storage>.size)
             }
             buffer.withUnsafeMutableBytes { bytes in
-                __iov.iov_base = bytes.baseAddress!
-                __iov.iov_len = bytes.count
+                __iov_storage.iov_base = bytes.baseAddress!
+                __iov_storage.iov_len = bytes.count
             }
-            withUnsafeMutablePointer(to: &__iov) { pointer in
-                __wrapped.msg_iov = pointer
-                __wrapped.msg_iovlen = 1
+            withUnsafeMutablePointer(to: &__iov_storage) { pointer in
+                __storage.msg_iov = pointer
+                __storage.msg_iovlen = 1
             }
             // FIXME: support control
         }
@@ -381,7 +379,7 @@ public actor IORing {
         ) async rethrows
             -> T
         {
-            try await body(&__wrapped)
+            try await body(&__storage)
         }
 
         func withUnsafeRawPointer<T>(
@@ -390,15 +388,15 @@ public actor IORing {
         ) async rethrows
             -> T
         {
-            var wrapped = __wrapped
-            return try await body(&wrapped)
+            var storage = __storage
+            return try await body(&storage)
         }
 
         init(_ message: Message) {
             name = message.name
             buffer = message.buffer
             control = message.control
-            __wrapped_init()
+            __storage_init()
             flags = message.flags
         }
 
@@ -406,7 +404,7 @@ public actor IORing {
             name = sockaddr_storage()
             buffer = [UInt8](repeating: 0, count: messageBufferSize)
             control = [Control]()
-            __wrapped_init()
+            __storage_init()
         }
 
         init(_ msg: UnsafePointer<msghdr>) {
@@ -432,7 +430,7 @@ public actor IORing {
                 ))
             }
             self.control = control
-            __wrapped_init()
+            __storage_init()
             flags = msg.pointee.msg_flags
         }
     }
