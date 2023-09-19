@@ -129,7 +129,7 @@ public actor IORing {
             }
         }
 
-        private func submitRetryingIfInterrupted<T>(
+        private func submitRetrying<T>(
             body: @escaping (UnsafeMutablePointer<io_uring_sqe>) async throws -> T
         ) async throws -> T {
             repeat {
@@ -209,7 +209,7 @@ public actor IORing {
             socketAddress: sockaddr_storage? = nil,
             handler: @escaping (io_uring_cqe) throws -> T
         ) async throws -> T {
-            try await submitRetryingIfInterrupted { [self] sqe in
+            try await submitRetrying { [self] sqe in
                 try await withCheckedThrowingContinuation { (
                     continuation: CheckedContinuation<
                         T,
@@ -250,19 +250,18 @@ public actor IORing {
             }
         }
 
-        func prepareAndSubmitMultishot<T>(
+        private func prepareAndSubmitMultishot<T>(
             _ opcode: UInt8,
             fd: FileDescriptor,
-            address: UnsafeRawPointer? = nil,
-            length: CUnsignedInt = 0,
-            flags: UInt8 = 0,
-            ioprio: UInt16 = 0,
-            moreFlags: UInt32 = 0,
-            handler: @escaping (io_uring_cqe) throws -> T
-        ) async throws -> AsyncThrowingChannel<T, Error> {
-            try await submitRetryingIfInterrupted { [self] sqe in
-                let channel = AsyncThrowingChannel<T, Error>()
-
+            address: UnsafeRawPointer?,
+            length: CUnsignedInt,
+            flags: UInt8,
+            ioprio: UInt16,
+            moreFlags: UInt32,
+            handler: @escaping (io_uring_cqe) throws -> T,
+            channel: AsyncThrowingChannel<T, Error>
+        ) async throws {
+            try await submitRetrying { [self] sqe in
                 prepare(
                     opcode,
                     sqe: sqe,
@@ -272,7 +271,26 @@ public actor IORing {
                     offset: 0
                 ) { cqe in
                     guard cqe.pointee.res >= 0 else {
-                        if cqe.pointee.res != -ECANCELED {
+                        if cqe.pointee.res == -ECANCELED {
+                            // looks like we need to resubmit the entire request
+                            Task {
+                                do {
+                                    try await self.prepareAndSubmitMultishot(
+                                        opcode,
+                                        fd: fd,
+                                        address: address,
+                                        length: length,
+                                        flags: flags,
+                                        ioprio: ioprio,
+                                        moreFlags: moreFlags,
+                                        handler: handler,
+                                        channel: channel
+                                    )
+                                } catch {
+                                    channel.fail(error)
+                                }
+                            }
+                        } else {
                             channel.fail(Errno(rawValue: cqe.pointee.res))
                         }
                         return
@@ -288,8 +306,32 @@ public actor IORing {
 
                 setFlags(sqe, flags: flags, ioprio: ioprio, moreFlags: moreFlags)
                 try submit()
-                return channel
             }
+        }
+
+        func prepareAndSubmitMultishot<T>(
+            _ opcode: UInt8,
+            fd: FileDescriptor,
+            address: UnsafeRawPointer? = nil,
+            length: CUnsignedInt = 0,
+            flags: UInt8 = 0,
+            ioprio: UInt16 = 0,
+            moreFlags: UInt32 = 0,
+            handler: @escaping (io_uring_cqe) throws -> T
+        ) async throws -> AsyncThrowingChannel<T, Error> {
+            let channel = AsyncThrowingChannel<T, Error>()
+            try await prepareAndSubmitMultishot(
+                opcode,
+                fd: fd,
+                address: address,
+                length: length,
+                flags: flags,
+                ioprio: ioprio,
+                moreFlags: moreFlags,
+                handler: handler,
+                channel: channel
+            )
+            return channel
         }
 
         func prepareAndSubmitIovec<T>(
