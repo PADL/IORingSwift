@@ -188,7 +188,7 @@ public actor IORing {
             flags: UInt8 = 0,
             ioprio: UInt16 = 0,
             moreFlags: UInt32 = 0,
-            socketAddress: UnsafePointer<sockaddr>? = nil,
+            socketAddress: sockaddr_storage? = nil,
             handler: @escaping (io_uring_cqe) throws -> T
         ) async throws -> T {
             try await submitRetrying { [self] sqe in
@@ -222,7 +222,9 @@ public actor IORing {
                         }
                         setFlags(sqe, flags: flags, ioprio: ioprio, moreFlags: moreFlags)
                         if let socketAddress {
-                            try setSocketAddress(sqe, socketAddress: socketAddress)
+                            try socketAddress.withSockAddr { socketAddress in
+                                try setSocketAddress(sqe, socketAddress: socketAddress)
+                            }
                         }
                         try submit()
                     } catch {
@@ -573,7 +575,7 @@ private extension IORing {
     func io_uring_op_send(
         fd: FileDescriptor,
         buffer: [UInt8],
-        to socketAddress: UnsafePointer<sockaddr>? = nil,
+        to socketAddress: sockaddr_storage? = nil,
         flags: UInt32 = 0
     ) async throws {
         try await manager.prepareAndSubmit(
@@ -714,13 +716,14 @@ private extension IORing {
 
     func io_uring_op_connect(
         fd: FileDescriptor,
-        address: UnsafePointer<sockaddr>
+        address: sockaddr_storage
     ) async throws {
+        var address = address // FIXME: check lifetime
         try await manager.prepareAndSubmit(
             UInt8(IORING_OP_CONNECT),
             fd: fd,
-            address: address,
-            offset: address.pointee.size
+            address: &address,
+            offset: address.size
         ) { [address] _ in
             _ = address
         }
@@ -822,7 +825,7 @@ public extension IORing {
         try await io_uring_op_multishot_accept(fd: fd).eraseToAnyAsyncSequence()
     }
 
-    func connect(_ fd: FileDescriptor, to address: UnsafePointer<sockaddr>) async throws {
+    func connect(_ fd: FileDescriptor, to address: sockaddr_storage) async throws {
         try await io_uring_op_connect(fd: fd, address: address)
     }
 }

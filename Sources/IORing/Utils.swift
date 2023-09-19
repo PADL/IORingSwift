@@ -70,3 +70,23 @@ extension sockaddr {
         }
     }
 }
+
+// FIXME: DRY IORingUtils
+
+extension sockaddr_storage {
+    func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>) throws -> T) rethrows -> T {
+        try withUnsafePointer(to: self) {
+            try $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                try body($0)
+            }
+        }
+    }
+
+    var size: Int {
+        get throws {
+            try withSockAddr {
+                try $0.pointee.size
+            }
+        }
+    }
+}
