@@ -163,14 +163,14 @@ public struct Socket: CustomStringConvertible {
         }
     }
 
-/*
-    public func connect(to address: sockaddr_storage, ring: IORing) async throws {
-        var address = address
-        try await fd.withDescriptor { fd in
-            try await ring.connect(fd, to: address)
-        }
-    }
-*/
+    /*
+     public func connect(to address: sockaddr_storage, ring: IORing) async throws {
+         var address = address
+         try await fd.withDescriptor { fd in
+             try await ring.connect(fd, to: address)
+         }
+     }
+     */
 
     public func read(into buffer: inout [UInt8], count: Int, ring: IORing) async throws -> Bool {
         try await fd.withDescriptor { try await ring.read(
@@ -216,8 +216,15 @@ public extension sockaddr_in {
 }
 
 public extension sockaddr_storage {
-    init(family: sa_family_t, presentationAddress: String, port: UInt16? = nil) throws {
+    init(family: sa_family_t, presentationAddress: String) throws {
         self.init()
+
+        var port: UInt16?
+        let addressPort = presentationAddress.split(separator: ":", maxSplits: 2)
+        if addressPort.count > 1 {
+            port = UInt16(addressPort[1])
+        }
+
         ss_family = family
         try withUnsafeMutablePointer(to: &self) { pointer in
             switch Int32(family) {
@@ -225,14 +232,18 @@ public extension sockaddr_storage {
                 try pointer.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sin in
                     _ = try Errno.throwingErrno {
                         if let port { sin.pointee.sin_port = port.bigEndian }
-                        return inet_pton(AF_INET, presentationAddress, &sin.pointee.sin_addr)
+                        return inet_pton(AF_INET, String(addressPort.first!), &sin.pointee.sin_addr)
                     }
                 }
             case AF_INET6:
                 try pointer.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { sin6 in
                     _ = try Errno.throwingErrno {
                         if let port { sin6.pointee.sin6_port = port.bigEndian }
-                        return inet_pton(AF_INET, presentationAddress, &sin6.pointee.sin6_addr)
+                        return inet_pton(
+                            AF_INET,
+                            String(addressPort.first!),
+                            &sin6.pointee.sin6_addr
+                        )
                     }
                 }
             case AF_LOCAL:
@@ -240,14 +251,14 @@ public extension sockaddr_storage {
                     try withUnsafeMutablePointer(to: &sun.pointee.sun_path) { path in
                         let start = path.propertyBasePointer(to: \.0)!
                         let capacity = MemoryLayout.size(ofValue: path)
-                        if capacity <= presentationAddress.utf8.count {
+                        if capacity <= addressPort.first!.utf8.count {
                             throw Errno(rawValue: ERANGE)
                         }
                         start.withMemoryRebound(to: CChar.self, capacity: capacity) { dst in
                             _ = memcpy(
                                 UnsafeMutableRawPointer(mutating: dst),
-                                presentationAddress,
-                                presentationAddress.utf8.count + 1
+                                String(addressPort.first!),
+                                addressPort.first!.utf8.count + 1
                             )
                         }
                     }
