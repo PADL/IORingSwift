@@ -53,3 +53,20 @@ extension iovec {
         )
     }
 }
+
+extension sockaddr {
+    var size: Int {
+        get throws {
+            switch Int32(sa_family) {
+            case AF_INET:
+                return MemoryLayout<sockaddr_in>.size
+            case AF_INET6:
+                return MemoryLayout<sockaddr_in6>.size
+            case AF_LOCAL:
+                return MemoryLayout<sockaddr_un>.size
+            default:
+                throw Errno(rawValue: EAFNOSUPPORT)
+            }
+        }
+    }
+}

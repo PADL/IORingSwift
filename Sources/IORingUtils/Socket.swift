@@ -146,31 +146,15 @@ public struct Socket: CustomStringConvertible {
         }
     }
 
-    public func connect(to address: sockaddr, length: Int) throws {
-        var address = address
+    // FIXME: add async connect
+    public func connect(to address: UnsafePointer<sockaddr>) throws {
+        let size = try socklen_t(address.pointee.size)
         try fd.withDescriptor { fd in
             try Errno.throwingErrno {
-                SwiftGlibc.connect(fd, &address, socklen_t(length))
+                SwiftGlibc.connect(fd, address, size)
             }
         }
     }
-
-    public func connect(to address: sockaddr_in) throws {
-        try withUnsafePointer(to: address) {
-            try $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                try connect(to: $0.pointee, length: MemoryLayout<sockaddr_in>.size)
-            }
-        }
-    }
-
-    /*
-     public func connect(to address: sockaddr_storage, ring: IORing) async throws {
-         var address = address
-         try await fd.withDescriptor { fd in
-             try await ring.connect(fd, to: address)
-         }
-     }
-     */
 
     public func read(into buffer: inout [UInt8], count: Int, ring: IORing) async throws -> Bool {
         try await fd.withDescriptor { try await ring.read(
@@ -335,6 +319,31 @@ public extension sockaddr_storage {
                 return "\(address):\(port)"
             } else {
                 return address
+            }
+        }
+    }
+
+    func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>) throws -> T) rethrows -> T {
+        try withUnsafePointer(to: self) {
+            try $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                try body($0)
+            }
+        }
+    }
+}
+
+private extension sockaddr {
+    var size: Int {
+        get throws {
+            switch Int32(sa_family) {
+            case AF_INET:
+                return MemoryLayout<sockaddr_in>.size
+            case AF_INET6:
+                return MemoryLayout<sockaddr_in6>.size
+            case AF_LOCAL:
+                return MemoryLayout<sockaddr_un>.size
+            default:
+                throw Errno(rawValue: EAFNOSUPPORT)
             }
         }
     }

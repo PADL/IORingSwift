@@ -81,34 +81,16 @@ public actor IORing {
 
         private typealias BlockHandler = (UnsafePointer<io_uring_cqe>) -> ()
 
-        // FIXME: update kernel headers
         private func setSocketAddress(
             _ sqe: UnsafeMutablePointer<io_uring_sqe>,
-            socketAddress: sockaddr_storage
+            socketAddress: UnsafePointer<sockaddr>
         ) throws {
-            var socketAddress = socketAddress
-            try withUnsafePointer(to: &socketAddress) { pointer in
-                try pointer
-                    .withMemoryRebound(to: sockaddr.self, capacity: 1) { pointer in
-                        sqe.pointee.addr2 = UInt64(UInt(bitPattern: pointer))
-                        let size: Int
-                        switch Int32(pointer.pointee.sa_family) {
-                        case AF_INET:
-                            size = MemoryLayout<sockaddr_in>.size
-                        case AF_INET6:
-                            size = MemoryLayout<sockaddr_in6>.size
-                        case AF_LOCAL:
-                            size = MemoryLayout<sockaddr_un>.size
-                        default:
-                            throw Errno(rawValue: EAFNOSUPPORT)
-                        }
-
-                        withUnsafeMutablePointer(to: &sqe.pointee.file_index) { pointer in
-                            pointer.withMemoryRebound(to: UInt16.self, capacity: 2) { pointer in
-                                pointer[0] = UInt16(size)
-                            }
-                        }
-                    }
+            sqe.pointee.addr2 = UInt64(UInt(bitPattern: socketAddress))
+            // FIXME: update kernel headers to get size, pad structure definition
+            try withUnsafeMutablePointer(to: &sqe.pointee.file_index) { pointer in
+                try pointer.withMemoryRebound(to: UInt16.self, capacity: 2) { pointer in
+                    pointer[0] = try UInt16(socketAddress.pointee.size)
+                }
             }
         }
 
@@ -170,7 +152,7 @@ public actor IORing {
 
         private func cancelPendingSubmissions() {
             for submission in pendingSubmissions {
-                submission.resume(throwing: Errno(rawValue: -ECANCELED))
+                submission.resume(throwing: Errno(rawValue: ECANCELED))
             }
         }
 
@@ -206,7 +188,7 @@ public actor IORing {
             flags: UInt8 = 0,
             ioprio: UInt16 = 0,
             moreFlags: UInt32 = 0,
-            socketAddress: sockaddr_storage? = nil,
+            socketAddress: UnsafePointer<sockaddr>? = nil,
             handler: @escaping (io_uring_cqe) throws -> T
         ) async throws -> T {
             try await submitRetrying { [self] sqe in
@@ -443,29 +425,38 @@ public actor IORing {
             return try await body(&storage)
         }
 
-        public init(_ message: Message) {
-            name = message.name
-            buffer = message.buffer
-            flags = message.flags
+        public init(name: sockaddr_storage, buffer: [UInt8], flags: Int32 = 0) {
+            self.name = name
+            self.buffer = buffer
+            self.flags = flags
         }
 
-        public init(buffer: [UInt8]) {
-            name = sockaddr_storage()
-            self.buffer = buffer
-            flags = 0
+        public init(
+            name: UnsafePointer<sockaddr>? = nil,
+            buffer: [UInt8] = [],
+            flags: Int32 = 0
+        ) throws {
+            var nameBuf = sockaddr_storage()
+            if let name {
+                _ = try memcpy(&nameBuf, name, name.pointee.size)
+            }
+            self.init(name: nameBuf, buffer: buffer, flags: flags)
         }
 
         public init(capacity: Int) {
-            name = sockaddr_storage()
-            buffer = [UInt8](repeating: 0, count: capacity)
-            flags = 0
+            self.init(name: sockaddr_storage(), buffer: [UInt8](repeating: 0, count: capacity))
+        }
+
+        public init(
+            buffer: [UInt8],
+            flags: Int32 = 0
+        ) {
+            self.init(name: sockaddr_storage(), buffer: buffer, flags: flags)
         }
 
         init(_ msg: UnsafePointer<msghdr>) {
             name = sockaddr_storage()
-            Swift.withUnsafeMutablePointer(to: &name) { pointer in
-                _ = memcpy(pointer, msg.pointee.msg_name, Int(msg.pointee.msg_namelen))
-            }
+            _ = memcpy(&name, msg.pointee.msg_name, Int(msg.pointee.msg_namelen))
             var buffer = [UInt8]()
             let iov = UnsafeBufferPointer(start: msg.pointee.msg_iov, count: msg.pointee.msg_iovlen)
             for iovec in iov {
@@ -582,7 +573,7 @@ private extension IORing {
     func io_uring_op_send(
         fd: FileDescriptor,
         buffer: [UInt8],
-        to socketAddress: sockaddr_storage? = nil,
+        to socketAddress: UnsafePointer<sockaddr>? = nil,
         flags: UInt32 = 0
     ) async throws {
         try await manager.prepareAndSubmit(
@@ -723,13 +714,13 @@ private extension IORing {
 
     func io_uring_op_connect(
         fd: FileDescriptor,
-        address: inout sockaddr_storage
+        address: UnsafePointer<sockaddr>
     ) async throws {
         try await manager.prepareAndSubmit(
             UInt8(IORING_OP_CONNECT),
             fd: fd,
-            address: &address,
-            offset: MemoryLayout<sockaddr_storage>.size
+            address: address,
+            offset: address.pointee.size
         ) { [address] _ in
             _ = address
         }
@@ -831,8 +822,7 @@ public extension IORing {
         try await io_uring_op_multishot_accept(fd: fd).eraseToAnyAsyncSequence()
     }
 
-    func connect(_ fd: FileDescriptor, to address: sockaddr_storage) async throws {
-        var address = address
-        try await io_uring_op_connect(fd: fd, address: &address)
+    func connect(_ fd: FileDescriptor, to address: UnsafePointer<sockaddr>) async throws {
+        try await io_uring_op_connect(fd: fd, address: address)
     }
 }

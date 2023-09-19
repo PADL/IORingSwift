@@ -68,21 +68,21 @@ public struct IORingTCPEcho {
         }
     }
 
-/*
-    func readWriteEcho(client: Socket) async throws {
-        do {
-            var more = false
-            repeat {
-                var buffer = [UInt8](repeating: 0, count: bufferSize)
-                more = try await client.read(into: &buffer, count: bufferSize, ring: ring)
-                if more {
-                    try await client.write(buffer, count: bufferSize, ring: ring)
-                }
-            } while more
-        } catch {
-            debugPrint("closed client \(client): error \(error)")
-        }
-        debugPrint("closed client \(client)")
-    }
-*/
+    /*
+     func readWriteEcho(client: Socket) async throws {
+         do {
+             var more = false
+             repeat {
+                 var buffer = [UInt8](repeating: 0, count: bufferSize)
+                 more = try await client.read(into: &buffer, count: bufferSize, ring: ring)
+                 if more {
+                     try await client.write(buffer, count: bufferSize, ring: ring)
+                 }
+             } while more
+         } catch {
+             debugPrint("closed client \(client): error \(error)")
+         }
+         debugPrint("closed client \(client)")
+     }
+     */
 }
