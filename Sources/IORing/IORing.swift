@@ -202,7 +202,7 @@ public actor IORing {
             fd: FileDescriptor,
             address: UnsafeRawPointer? = nil,
             length: CUnsignedInt = 0,
-            offset: Int = -1,
+            offset: Int = 0,
             flags: UInt8 = 0,
             ioprio: UInt16 = 0,
             moreFlags: UInt32 = 0,
@@ -296,7 +296,7 @@ public actor IORing {
             _ opcode: UInt8,
             fd: FileDescriptor,
             iovecs: [iovec]? = nil,
-            offset: Int = -1,
+            offset: Int = 0,
             flags: UInt8 = 0,
             ioprio: UInt16 = 0,
             moreFlags: UInt32 = 0,
@@ -334,11 +334,114 @@ public actor IORing {
             }
         }
     }
+
+    public struct Message {
+        // by placing this at the start, hopefully it can be cast to a C structure of the same
+        // layout as the first element
+        private var __wrapped = msghdr()
+        private var __iov = iovec()
+
+        public struct Control {
+            public var level: Int32
+            public var type: Int32
+            public var data: [UInt8]
+        }
+
+        public var name: sockaddr_storage
+        public var buffer: [UInt8]
+        public var control: [Control]
+        public var flags: Int32 {
+            get {
+                __wrapped.msg_flags
+            }
+            set {
+                __wrapped.msg_flags = newValue
+            }
+        }
+
+        private mutating func __wrapped_init() {
+            withUnsafeMutablePointer(to: &name) { pointer in
+                __wrapped.msg_name = UnsafeMutableRawPointer(pointer)
+                __wrapped.msg_namelen = socklen_t(MemoryLayout<sockaddr_storage>.size)
+            }
+            buffer.withUnsafeMutableBytes { bytes in
+                __iov.iov_base = bytes.baseAddress!
+                __iov.iov_len = bytes.count
+            }
+            withUnsafeMutablePointer(to: &__iov) { pointer in
+                __wrapped.msg_iov = pointer
+                __wrapped.msg_iovlen = 1
+            }
+            // FIXME: support control
+        }
+
+        init(_ message: Message) {
+            name = message.name
+            buffer = message.buffer
+            control = message.control
+            __wrapped_init()
+            flags = message.flags
+        }
+
+        init(messageBufferSize: Int = 1024) {
+            name = sockaddr_storage()
+            buffer = [UInt8](repeating: 0, count: messageBufferSize)
+            control = [Control]()
+            __wrapped_init()
+        }
+
+        init(_ msg: UnsafePointer<msghdr>) {
+            name = sockaddr_storage()
+            withUnsafeMutablePointer(to: &name) { pointer in
+                _ = memcpy(pointer, msg.pointee.msg_name, Int(msg.pointee.msg_namelen))
+            }
+            var buffer = [UInt8]()
+            let iov = UnsafeBufferPointer(start: msg.pointee.msg_iov, count: msg.pointee.msg_iovlen)
+            for iovec in iov {
+                let ptr = unsafeBitCast(iovec.iov_base, to: UnsafePointer<UInt8>.self)
+                let data = UnsafeBufferPointer(start: ptr, count: iovec.iov_len)
+                buffer.append(contentsOf: data)
+            }
+            self.buffer = buffer
+            var control = [Control]()
+            CMSG_APPLY(msg) { cmsg, data, len in
+                let data = UnsafeBufferPointer(start: data, count: len)
+                control.append(Control(
+                    level: cmsg.pointee.cmsg_level,
+                    type: cmsg.pointee.cmsg_type,
+                    data: Array(data)
+                ))
+            }
+            self.control = control
+            __wrapped_init()
+            flags = msg.pointee.msg_flags
+        }
+    }
 }
 
 // MARK: - operation wrappers
 
 private extension IORing {
+    func io_uring_op_cancel(
+        fd: FileDescriptor,
+        flags: UInt32 = 0
+    ) async throws {
+        try await manager.prepareAndSubmit(
+            UInt8(IORING_OP_ASYNC_CANCEL),
+            fd: fd,
+            moreFlags: flags
+        ) { _ in }
+    }
+
+    func io_uring_op_close(
+        fd: FileDescriptor
+    ) async throws {
+        try await manager.prepareAndSubmit(
+            UInt8(IORING_OP_CLOSE),
+            fd: fd
+        ) { _ in }
+    }
+
     func io_uring_op_readv(
         fd: FileDescriptor,
         iovecs: [iovec],
@@ -461,6 +564,58 @@ private extension IORing {
         }
     }
 
+    func io_uring_op_recvmsg(
+        fd: FileDescriptor,
+        message: inout Message,
+        flags: UInt32 = 0
+    ) async throws {
+        try await manager.prepareAndSubmit(
+            UInt8(IORING_OP_RECVMSG),
+            fd: fd,
+            address: unsafeBitCast(message, to: UnsafeRawPointer.self),
+            length: 1,
+            offset: 0,
+            moreFlags: flags
+        ) { [message] _ in
+            _ = message
+            return ()
+        }
+    }
+
+    func io_uring_op_recvmsg_multishot(
+        fd: FileDescriptor,
+        flags: UInt32 = 0
+    ) async throws -> AsyncThrowingChannel<Message, Error> {
+        let message = Message()
+        return try await manager.prepareAndSubmitMultishot(
+            UInt8(IORING_OP_RECVMSG),
+            fd: fd,
+            address: unsafeBitCast(message, to: UnsafeRawPointer.self),
+            ioprio: AcceptIoPrio.multishot,
+            moreFlags: flags
+        ) { [message] _ in
+            message
+        }
+    }
+
+    func io_uring_op_sendmsg(
+        fd: FileDescriptor,
+        message: Message,
+        flags: UInt32 = 0
+    ) async throws {
+        try await manager.prepareAndSubmit(
+            UInt8(IORING_OP_SENDMSG),
+            fd: fd,
+            address: unsafeBitCast(message, to: UnsafeRawPointer.self),
+            length: 1,
+            offset: 0,
+            moreFlags: flags
+        ) { [message] _ in
+            _ = message
+            return ()
+        }
+    }
+
     func io_uring_op_accept(
         fd: FileDescriptor,
         flags: UInt32 = 0
@@ -497,6 +652,10 @@ private extension IORing {
 // MARK: - public API
 
 public extension IORing {
+    func close(_ fd: FileDescriptor) async throws {
+        try await io_uring_op_close(fd: fd)
+    }
+
     @discardableResult
     func read(
         into buffer: inout [UInt8],
@@ -563,6 +722,21 @@ public extension IORing {
 
     func send(_ data: [UInt8], to fd: FileDescriptor) async throws {
         try await io_uring_op_send(fd: fd, buffer: data)
+    }
+
+    func recvmsg(count: Int, from fd: FileDescriptor) async throws -> AnyAsyncSequence<Message> {
+        try await io_uring_op_recvmsg_multishot(fd: fd).eraseToAnyAsyncSequence()
+    }
+
+    func recvmsg(count: Int, from fd: FileDescriptor) async throws -> Message {
+        var message = Message(messageBufferSize: count)
+        try await io_uring_op_recvmsg(fd: fd, message: &message)
+        return message
+    }
+
+    func sendmsg(_ message: Message, to fd: FileDescriptor) async throws {
+        var message = message
+        try await io_uring_op_recvmsg(fd: fd, message: &message)
     }
 
     func accept(from fd: FileDescriptor) async throws
