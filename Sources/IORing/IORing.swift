@@ -712,6 +712,20 @@ private extension IORing {
             cqe.res
         }
     }
+
+    func io_uring_op_connect(
+        fd: FileDescriptor,
+        address: inout sockaddr_storage
+    ) async throws {
+        try await manager.prepareAndSubmit(
+            UInt8(IORING_OP_CONNECT),
+            fd: fd,
+            address: &address,
+            offset: MemoryLayout<sockaddr_storage>.size
+        ) { [address] _ in
+            _ = address
+        }
+    }
 }
 
 // MARK: - public API
@@ -808,5 +822,10 @@ public extension IORing {
         -> AnyAsyncSequence<FileDescriptor>
     {
         try await io_uring_op_multishot_accept(fd: fd).eraseToAnyAsyncSequence()
+    }
+
+    func connect(_ fd: FileDescriptor, to address: sockaddr_storage) async throws {
+        var address = address
+        try await io_uring_op_connect(fd: fd, address: &address)
     }
 }

@@ -146,6 +146,32 @@ public struct Socket: CustomStringConvertible {
         }
     }
 
+    public func connect(to address: sockaddr, length: Int) throws {
+        var address = address
+        try fd.withDescriptor { fd in
+            try Errno.throwingErrno {
+                SwiftGlibc.connect(fd, &address, socklen_t(length))
+            }
+        }
+    }
+
+    public func connect(to address: sockaddr_in) throws {
+        try withUnsafePointer(to: address) {
+            try $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                try connect(to: $0.pointee, length: MemoryLayout<sockaddr_in>.size)
+            }
+        }
+    }
+
+/*
+    public func connect(to address: sockaddr_storage, ring: IORing) async throws {
+        var address = address
+        try await fd.withDescriptor { fd in
+            try await ring.connect(fd, to: address)
+        }
+    }
+*/
+
     public func read(into buffer: inout [UInt8], count: Int, ring: IORing) async throws -> Bool {
         try await fd.withDescriptor { try await ring.read(
             into: &buffer,
