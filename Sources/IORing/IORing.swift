@@ -358,7 +358,7 @@ public actor IORing {
         }
 
         private mutating func __storage_init() {
-            withUnsafeMutablePointer(to: &name) { pointer in
+            Swift.withUnsafeMutablePointer(to: &name) { pointer in
                 __storage.msg_name = UnsafeMutableRawPointer(pointer)
                 __storage.msg_namelen = socklen_t(MemoryLayout<sockaddr_storage>.size)
             }
@@ -366,15 +366,15 @@ public actor IORing {
                 __iov_storage.iov_base = bytes.baseAddress!
                 __iov_storage.iov_len = bytes.count
             }
-            withUnsafeMutablePointer(to: &__iov_storage) { pointer in
+            Swift.withUnsafeMutablePointer(to: &__iov_storage) { pointer in
                 __storage.msg_iov = pointer
                 __storage.msg_iovlen = 1
             }
             // FIXME: support control
         }
 
-        mutating func withUnsafeMutableRawPointer<T>(
-            _ body: (UnsafeMutableRawPointer) async throws
+        mutating func withUnsafeMutablePointer<T>(
+            _ body: (UnsafeMutablePointer<msghdr>) async throws
                 -> T
         ) async rethrows
             -> T
@@ -382,8 +382,8 @@ public actor IORing {
             try await body(&__storage)
         }
 
-        func withUnsafeRawPointer<T>(
-            _ body: (UnsafeRawPointer) async throws
+        func withUnsafePointer<T>(
+            _ body: (UnsafePointer<msghdr>) async throws
                 -> T
         ) async rethrows
             -> T
@@ -409,7 +409,7 @@ public actor IORing {
 
         init(_ msg: UnsafePointer<msghdr>) {
             name = sockaddr_storage()
-            withUnsafeMutablePointer(to: &name) { pointer in
+            Swift.withUnsafeMutablePointer(to: &name) { pointer in
                 _ = memcpy(pointer, msg.pointee.msg_name, Int(msg.pointee.msg_namelen))
             }
             var buffer = [UInt8]()
@@ -586,7 +586,7 @@ private extension IORing {
         message: inout Message,
         flags: UInt32 = 0
     ) async throws {
-        try await message.withUnsafeMutableRawPointer { pointer in
+        try await message.withUnsafeMutablePointer { pointer in
             try await manager.prepareAndSubmit(
                 UInt8(IORING_OP_RECVMSG),
                 fd: fd,
@@ -603,7 +603,7 @@ private extension IORing {
         flags: UInt32 = 0
     ) async throws -> AsyncThrowingChannel<Message, Error> {
         var message = Message()
-        return try await message.withUnsafeMutableRawPointer { pointer in
+        return try await message.withUnsafeMutablePointer { pointer in
             try await manager.prepareAndSubmitMultishot(
                 UInt8(IORING_OP_RECVMSG),
                 fd: fd,
@@ -611,9 +611,8 @@ private extension IORing {
                 ioprio: AcceptIoPrio.multishot,
                 moreFlags: flags
             ) { [pointer] _ in
-                pointer.withMemoryRebound(to: Message.self, capacity: 1) { pointer in
-                    pointer.pointee
-                }
+                _ = pointer
+                return message
             }
         }
     }
@@ -623,7 +622,7 @@ private extension IORing {
         message: Message,
         flags: UInt32 = 0
     ) async throws {
-        try await message.withUnsafeRawPointer { pointer in
+        try await message.withUnsafePointer { pointer in
             try await manager.prepareAndSubmit(
                 UInt8(IORING_OP_SENDMSG),
                 fd: fd,
