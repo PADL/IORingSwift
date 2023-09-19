@@ -110,3 +110,12 @@ void io_uring_deinit_event(void *eventHandle, struct io_uring *ring) {
         dispatch_release(source);
     }
 }
+
+// private helpers
+void CMSG_APPLY(const struct msghdr *msgh, void (^block)(struct cmsghdr *, const uint8_t *, size_t)) {
+    for (auto cmsg = CMSG_FIRSTHDR(msgh);
+        cmsg != nullptr;
+        cmsg = CMSG_NXTHDR(const_cast<struct msghdr *>(msgh), cmsg)) {
+            block(cmsg, CMSG_DATA(cmsg), cmsg->cmsg_len - CMSG_LEN(0));
+    }
+}

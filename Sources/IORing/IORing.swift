@@ -375,6 +375,25 @@ public actor IORing {
             // FIXME: support control
         }
 
+        mutating func withUnsafeMutableRawPointer<T>(
+            _ body: (UnsafeMutableRawPointer) async throws
+                -> T
+        ) async rethrows
+            -> T
+        {
+            try await body(&__wrapped)
+        }
+
+        func withUnsafeRawPointer<T>(
+            _ body: (UnsafeRawPointer) async throws
+                -> T
+        ) async rethrows
+            -> T
+        {
+            var wrapped = __wrapped
+            return try await body(&wrapped)
+        }
+
         init(_ message: Message) {
             name = message.name
             buffer = message.buffer
@@ -569,16 +588,15 @@ private extension IORing {
         message: inout Message,
         flags: UInt32 = 0
     ) async throws {
-        try await manager.prepareAndSubmit(
-            UInt8(IORING_OP_RECVMSG),
-            fd: fd,
-            address: unsafeBitCast(message, to: UnsafeRawPointer.self),
-            length: 1,
-            offset: 0,
-            moreFlags: flags
-        ) { [message] _ in
-            _ = message
-            return ()
+        try await message.withUnsafeMutableRawPointer { pointer in
+            try await manager.prepareAndSubmit(
+                UInt8(IORING_OP_RECVMSG),
+                fd: fd,
+                address: pointer,
+                length: 1,
+                offset: 0,
+                moreFlags: flags
+            ) { _ in }
         }
     }
 
@@ -586,15 +604,19 @@ private extension IORing {
         fd: FileDescriptor,
         flags: UInt32 = 0
     ) async throws -> AsyncThrowingChannel<Message, Error> {
-        let message = Message()
-        return try await manager.prepareAndSubmitMultishot(
-            UInt8(IORING_OP_RECVMSG),
-            fd: fd,
-            address: unsafeBitCast(message, to: UnsafeRawPointer.self),
-            ioprio: AcceptIoPrio.multishot,
-            moreFlags: flags
-        ) { [message] _ in
-            message
+        var message = Message()
+        return try await message.withUnsafeMutableRawPointer { pointer in
+            try await manager.prepareAndSubmitMultishot(
+                UInt8(IORING_OP_RECVMSG),
+                fd: fd,
+                address: pointer,
+                ioprio: AcceptIoPrio.multishot,
+                moreFlags: flags
+            ) { [pointer] _ in
+                pointer.withMemoryRebound(to: Message.self, capacity: 1) { pointer in
+                    pointer.pointee
+                }
+            }
         }
     }
 
@@ -603,16 +625,15 @@ private extension IORing {
         message: Message,
         flags: UInt32 = 0
     ) async throws {
-        try await manager.prepareAndSubmit(
-            UInt8(IORING_OP_SENDMSG),
-            fd: fd,
-            address: unsafeBitCast(message, to: UnsafeRawPointer.self),
-            length: 1,
-            offset: 0,
-            moreFlags: flags
-        ) { [message] _ in
-            _ = message
-            return ()
+        try await message.withUnsafeRawPointer { pointer in
+            try await manager.prepareAndSubmit(
+                UInt8(IORING_OP_SENDMSG),
+                fd: fd,
+                address: pointer,
+                length: 1,
+                offset: 0,
+                moreFlags: flags
+            ) { _ in }
         }
     }
 

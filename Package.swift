@@ -57,10 +57,10 @@ let package = Package(
                            "AsyncExtensions",
                            .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")],
             cSettings: [
-                .define("_XOPEN_SOURCE=500")
+                .define("_XOPEN_SOURCE=500"),
             ],
             cxxSettings: [
-                .define("_XOPEN_SOURCE=500")
+                .define("_XOPEN_SOURCE=500"),
             ]
         ),
         .testTarget(
