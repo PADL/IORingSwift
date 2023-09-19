@@ -297,12 +297,13 @@ public actor IORing {
                         }
                         return
                     }
-                    Task {
-                        do {
-                            try await channel.send(handler(cqe.pointee))
-                        } catch {
-                            channel.fail(error)
+                    do {
+                        let result = try handler(cqe.pointee)
+                        Task {
+                            await channel.send(result)
                         }
+                    } catch {
+                        channel.fail(error)
                     }
                 }
 
