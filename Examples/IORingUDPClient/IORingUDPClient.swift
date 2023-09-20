@@ -28,7 +28,7 @@ public struct IORingUDPClient {
     public static func main() async throws {
         guard CommandLine.arguments.count == 3,
               let address = try? sockaddr_storage(
-                  family: AF_INET,
+                  family: sa_family_t(AF_INET),
                   presentationAddress: CommandLine.arguments[1]
               )
         else {

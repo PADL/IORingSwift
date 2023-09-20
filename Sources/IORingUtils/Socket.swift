@@ -50,7 +50,7 @@ public struct Socket: CustomStringConvertible {
         UnsafeMutablePointer<socklen_t>
     ) -> CInt) throws -> sockaddr_storage {
         var ss = sockaddr_storage()
-        var length = socklen_t(MemoryLayout<sockaddr_storage>.size)
+        var length = ss.size
 
         _ = try withUnsafeMutablePointer(to: &ss) { pointer in
             try pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
@@ -148,7 +148,7 @@ public struct Socket: CustomStringConvertible {
 
     // FIXME: add async connect
     public func connect(to address: UnsafePointer<sockaddr>) throws {
-        let size = try socklen_t(address.pointee.size)
+        let size = address.pointee.size
         try fd.withDescriptor { fd in
             try Errno.throwingErrno {
                 SwiftGlibc.connect(fd, address, size)
@@ -203,8 +203,12 @@ public struct Socket: CustomStringConvertible {
     }
 }
 
-public extension sockaddr_in {
-    static func any(port: UInt16) -> Self {
+public protocol InternetSocketAddress {
+    static func any(port: UInt16) -> Self
+}
+
+extension sockaddr_in: InternetSocketAddress {
+    public static func any(port: UInt16) -> Self {
         var sin = Self()
         sin.sin_family = sa_family_t(AF_INET)
         sin.sin_port = port.bigEndian
@@ -213,52 +217,82 @@ public extension sockaddr_in {
     }
 }
 
-public extension sockaddr_storage {
-    init(family: Int32, presentationAddress: String) throws {
-        self.init()
+extension sockaddr_in6: InternetSocketAddress {
+    public static func any(port: UInt16) -> Self {
+        var sin6 = Self()
+        sin6.sin6_family = sa_family_t(AF_INET6)
+        sin6.sin6_port = port.bigEndian
+        sin6.sin6_addr = in6_addr()
+        return sin6
+    }
+}
 
-        var port: UInt16?
-        let addressPort = presentationAddress.split(separator: ":", maxSplits: 2)
-        if addressPort.count > 1 {
-            port = UInt16(addressPort[1])
+private func parsePresentationAddress(_ presentationAddress: String) -> (String, UInt16?) {
+    var port: UInt16?
+    let addressPort = presentationAddress.split(separator: ":", maxSplits: 2)
+    if addressPort.count > 1 {
+        port = UInt16(addressPort[1])
+    }
+
+    return (String(addressPort.first!), port)
+}
+
+public protocol SocketAddress {
+    static var family: sa_family_t { get }
+
+    init(family: sa_family_t, presentationAddress: String) throws
+    func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>) throws -> T) rethrows -> T
+    var presentationAddress: String { get throws }
+    var size: socklen_t { get }
+}
+
+public extension SocketAddress {
+    var family: sa_family_t {
+        withSockAddr { $0.pointee.sa_family }
+    }
+}
+
+extension sockaddr: SocketAddress {
+    public static var family: sa_family_t {
+        sa_family_t(AF_UNSPEC)
+    }
+
+    public init(family: sa_family_t, presentationAddress: String) throws {
+        throw Errno(rawValue: EINVAL)
+    }
+
+    public var size: socklen_t {
+        switch Int32(sa_family) {
+        case AF_INET:
+            return socklen_t(MemoryLayout<sockaddr_in>.size)
+        case AF_INET6:
+            return socklen_t(MemoryLayout<sockaddr_in6>.size)
+        case AF_LOCAL:
+            return socklen_t(MemoryLayout<sockaddr_un>.size)
+        default:
+            return 0
         }
+    }
 
-        ss_family = sa_family_t(family)
-        try withUnsafeMutablePointer(to: &self) { pointer in
-            switch Int32(family) {
+    public var presentationAddress: String {
+        get throws {
+            switch Int32(sa_family) {
             case AF_INET:
-                try pointer.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sin in
-                    _ = try Errno.throwingErrno {
-                        if let port { sin.pointee.sin_port = port.bigEndian }
-                        return inet_pton(AF_INET, String(addressPort.first!), &sin.pointee.sin_addr)
+                return try withUnsafePointer(to: self) {
+                    try $0.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+                        try $0.pointee.presentationAddress
                     }
                 }
             case AF_INET6:
-                try pointer.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { sin6 in
-                    _ = try Errno.throwingErrno {
-                        if let port { sin6.pointee.sin6_port = port.bigEndian }
-                        return inet_pton(
-                            AF_INET,
-                            String(addressPort.first!),
-                            &sin6.pointee.sin6_addr
-                        )
+                return try withUnsafePointer(to: self) {
+                    try $0.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
+                        try $0.pointee.presentationAddress
                     }
                 }
             case AF_LOCAL:
-                try pointer.withMemoryRebound(to: sockaddr_un.self, capacity: 1) { sun in
-                    try withUnsafeMutablePointer(to: &sun.pointee.sun_path) { path in
-                        let start = path.propertyBasePointer(to: \.0)!
-                        let capacity = MemoryLayout.size(ofValue: path)
-                        if capacity <= addressPort.first!.utf8.count {
-                            throw Errno(rawValue: ERANGE)
-                        }
-                        start.withMemoryRebound(to: CChar.self, capacity: capacity) { dst in
-                            _ = memcpy(
-                                UnsafeMutableRawPointer(mutating: dst),
-                                String(addressPort.first!),
-                                addressPort.first!.utf8.count + 1
-                            )
-                        }
+                return try withUnsafePointer(to: self) {
+                    try $0.withMemoryRebound(to: sockaddr_un.self, capacity: 1) {
+                        try $0.pointee.presentationAddress
                     }
                 }
             default:
@@ -267,83 +301,194 @@ public extension sockaddr_storage {
         }
     }
 
-    var presentationAddress: String {
+    public func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>) throws -> T) rethrows -> T {
+        try withUnsafePointer(to: self) { sa in
+            try body(sa)
+        }
+    }
+}
+
+extension sockaddr_in: SocketAddress {
+    public static var family: sa_family_t {
+        sa_family_t(AF_INET)
+    }
+
+    public init(family: sa_family_t, presentationAddress: String) throws {
+        self = sockaddr_in()
+        let (address, port) = parsePresentationAddress(presentationAddress)
+        var sin_port = UInt16()
+        var sin_addr = in_addr()
+        _ = try Errno.throwingErrno {
+            if let port { sin_port = port.bigEndian }
+            return inet_pton(AF_INET, address, &sin_addr)
+        }
+        self.sin_port = sin_port
+        self.sin_addr = sin_addr
+    }
+
+    public var size: socklen_t {
+        socklen_t(MemoryLayout<Self>.size)
+    }
+
+    public var presentationAddress: String {
         get throws {
-            var ss = self
-            var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+            var sin = self
+            var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
             let size = socklen_t(buffer.count)
-            var port: UInt16 = 0
-
-            let address = try withUnsafeMutablePointer(to: &ss) { pointer in
-                switch Int32(pointer.pointee.ss_family) {
-                case AF_INET:
-                    return try pointer.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sin in
-                        guard let result = inet_ntop(AF_INET, &sin.pointee.sin_addr, &buffer, size)
-                        else {
-                            throw Errno.lastError
-                        }
-                        port = UInt16(bigEndian: sin.pointee.sin_port)
-                        return String(cString: result)
-                    }
-                case AF_INET6:
-                    return try pointer
-                        .withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { sin6 in
-                            guard let result = inet_ntop(
-                                AF_INET6,
-                                &sin6.pointee.sin6_addr,
-                                &buffer,
-                                size
-                            ) else {
-                                throw Errno.lastError
-                            }
-                            port = UInt16(bigEndian: sin6.pointee.sin6_port)
-                            return String(cString: result)
-                        }
-                case AF_LOCAL:
-                    return pointer.withMemoryRebound(to: sockaddr_un.self, capacity: 1) { sun in
-                        withUnsafeMutablePointer(to: &sun.pointee.sun_path) { path in
-                            let start = path.propertyBasePointer(to: \.0)!
-                            let capacity = MemoryLayout.size(ofValue: path)
-                            return start
-                                .withMemoryRebound(to: CChar.self, capacity: capacity) { dst in
-                                    String(cString: dst)
-                                }
-                        }
-                    }
-                default:
-                    throw Errno(rawValue: EAFNOSUPPORT)
-                }
+            guard let result = inet_ntop(AF_INET, &sin.sin_addr, &buffer, size) else {
+                throw Errno.lastError
             }
-
-            if port != 0 {
-                return "\(address):\(port)"
-            } else {
-                return address
-            }
+            let port = UInt16(bigEndian: sin.sin_port)
+            return "\(String(cString: result)):\(port)"
         }
     }
 
-    func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>) throws -> T) rethrows -> T {
-        try withUnsafePointer(to: self) {
-            try $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                try body($0)
+    public func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>) throws -> T) rethrows -> T {
+        try withUnsafePointer(to: self) { sin in
+            try sin.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                try body(sa)
             }
         }
     }
 }
 
-private extension sockaddr {
-    var size: Int {
+extension sockaddr_in6: SocketAddress {
+    public static var family: sa_family_t {
+        sa_family_t(AF_INET6)
+    }
+
+    public init(family: sa_family_t, presentationAddress: String) throws {
+        self = sockaddr_in6()
+        let (address, port) = parsePresentationAddress(presentationAddress)
+        var sin6_port = UInt16()
+        var sin6_addr = in6_addr()
+        _ = try Errno.throwingErrno {
+            if let port { sin6_port = port.bigEndian }
+            return inet_pton(AF_INET6, address, &sin6_addr)
+        }
+        self.sin6_port = sin6_port
+        self.sin6_addr = sin6_addr
+    }
+
+    public var size: socklen_t {
+        socklen_t(MemoryLayout<Self>.size)
+    }
+
+    public var presentationAddress: String {
         get throws {
-            switch Int32(sa_family) {
-            case AF_INET:
-                return MemoryLayout<sockaddr_in>.size
-            case AF_INET6:
-                return MemoryLayout<sockaddr_in6>.size
-            case AF_LOCAL:
-                return MemoryLayout<sockaddr_un>.size
-            default:
-                throw Errno(rawValue: EAFNOSUPPORT)
+            var sin6 = self
+            var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+            let size = socklen_t(buffer.count)
+            guard let result = inet_ntop(AF_INET, &sin6.sin6_addr, &buffer, size) else {
+                throw Errno.lastError
+            }
+            let port = UInt16(bigEndian: sin6.sin6_port)
+            return "\(String(cString: result)):\(port)"
+        }
+    }
+
+    public func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>) throws -> T) rethrows -> T {
+        try withUnsafePointer(to: self) { sin6 in
+            try sin6.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                try body(sa)
+            }
+        }
+    }
+}
+
+extension sockaddr_un: SocketAddress {
+    public static var family: sa_family_t {
+        sa_family_t(AF_LOCAL)
+    }
+
+    public init(family: sa_family_t, presentationAddress: String) throws {
+        self = sockaddr_un()
+        var sun = self
+
+        try withUnsafeMutablePointer(to: &sun.sun_path) { path in
+            let start = path.propertyBasePointer(to: \.0)!
+            let capacity = MemoryLayout.size(ofValue: path)
+            if capacity <= presentationAddress.utf8.count {
+                throw Errno(rawValue: ERANGE)
+            }
+            start.withMemoryRebound(to: CChar.self, capacity: capacity) { dst in
+                _ = memcpy(
+                    UnsafeMutableRawPointer(mutating: dst),
+                    presentationAddress,
+                    presentationAddress.utf8.count + 1
+                )
+            }
+        }
+
+        self = sun
+    }
+
+    public var size: socklen_t {
+        socklen_t(MemoryLayout<Self>.size)
+    }
+
+    public var presentationAddress: String {
+        get throws {
+            var sun = self
+            return withUnsafeMutablePointer(to: &sun.sun_path) { path in
+                let start = path.propertyBasePointer(to: \.0)!
+                let capacity = MemoryLayout.size(ofValue: path)
+                return start
+                    .withMemoryRebound(to: CChar.self, capacity: capacity) { dst in
+                        String(cString: dst)
+                    }
+            }
+        }
+    }
+
+    public func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>) throws -> T) rethrows -> T {
+        try withUnsafePointer(to: self) { sun in
+            try sun.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                try body(sa)
+            }
+        }
+    }
+}
+
+extension sockaddr_storage: SocketAddress {
+    public static var family: sa_family_t {
+        sa_family_t(AF_UNSPEC)
+    }
+
+    public init(family: sa_family_t, presentationAddress: String) throws {
+        var ss = Self()
+        switch Int32(family) {
+        case AF_INET:
+            var sin = try sockaddr_in(family: family, presentationAddress: presentationAddress)
+            _ = memcpy(&ss, &sin, Int(sin.size))
+        case AF_INET6:
+            var sin6 = try sockaddr_in6(family: family, presentationAddress: presentationAddress)
+            _ = memcpy(&ss, &sin6, Int(sin6.size))
+        case AF_LOCAL:
+            var sun = try sockaddr_un(family: family, presentationAddress: presentationAddress)
+            _ = memcpy(&ss, &sun, Int(sun.size))
+        default:
+            throw Errno(rawValue: EAFNOSUPPORT)
+        }
+        self = ss
+    }
+
+    public var size: socklen_t {
+        socklen_t(MemoryLayout<Self>.size)
+    }
+
+    public var presentationAddress: String {
+        get throws {
+            try withSockAddr { sa in
+                try sa.pointee.presentationAddress
+            }
+        }
+    }
+
+    public func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>) throws -> T) rethrows -> T {
+        try withUnsafePointer(to: self) { ss in
+            try ss.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                try body(sa)
             }
         }
     }
