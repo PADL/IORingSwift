@@ -100,6 +100,10 @@ public final class Message {
         __init_storage()
     }
 
+    func copy() -> Self {
+        Self(address: address, buffer: buffer, flags: flags)
+    }
+
     // FIXME: see note below about _XOPEN_SOURCE=500 sockaddr clang importer issues
     public convenience init(
         name: [UInt8]? = nil,

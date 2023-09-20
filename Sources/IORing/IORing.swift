@@ -549,7 +549,7 @@ private extension IORing {
                 ioprio: AcceptIoPrio.multishot,
                 moreFlags: flags
             ) { [message] _ in
-                message
+                message.copy()
             }
         }
     }
