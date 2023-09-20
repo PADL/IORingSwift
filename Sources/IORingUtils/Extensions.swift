@@ -25,16 +25,16 @@ private func hexDescription(_ bytes: [UInt8]) -> String {
 
 extension Message: CustomStringConvertible {
     public convenience init(
-        name: any SocketAddress,
+        address: any SocketAddress,
         buffer: [UInt8],
         flags: Int32 = 0
     ) throws {
-        var nameBuffer = [UInt8](repeating: 0, count: Int(name.size))
-        nameBuffer.withUnsafeMutableBytes { bytes in
-            var storage = name.asStorage()
+        var addressBuffer = [UInt8](repeating: 0, count: Int(address.size))
+        addressBuffer.withUnsafeMutableBytes { bytes in
+            var storage = address.asStorage()
             _ = memcpy(bytes.baseAddress!, &storage, bytes.count)
         }
-        try self.init(name: nameBuffer, buffer: buffer, flags: flags)
+        try self.init(name: addressBuffer, buffer: buffer, flags: flags)
     }
 
     public var description: String {
