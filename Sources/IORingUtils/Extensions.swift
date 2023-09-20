@@ -24,6 +24,19 @@ private func hexDescription(_ bytes: [UInt8]) -> String {
 }
 
 extension Message: CustomStringConvertible {
+    public convenience init(
+        name: any SocketAddress,
+        buffer: [UInt8],
+        flags: Int32 = 0
+    ) throws {
+        var nameBuffer = [UInt8](repeating: 0, count: Int(name.size))
+        nameBuffer.withUnsafeMutableBytes { bytes in
+            var storage = name.asStorage()
+            _ = memcpy(bytes.baseAddress!, &storage, bytes.count)
+        }
+        try self.init(name: nameBuffer, buffer: buffer, flags: flags)
+    }
+
     public var description: String {
         let address = (try? sockaddr(bytes: name).presentationAddress) ?? "<unknown>"
         return "\(type(of: self))(address: \(address), buffer: \(hexDescription(buffer)), flags: \(flags))"
