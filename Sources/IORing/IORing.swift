@@ -26,6 +26,8 @@ import Glibc
 // MARK: - actor
 
 public actor IORing {
+    public static let shared = try? IORing()
+
     public typealias FileDescriptor = CInt
 
     private let manager: Manager

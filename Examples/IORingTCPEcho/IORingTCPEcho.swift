@@ -66,7 +66,7 @@ public struct IORingTCPEcho {
     }
 
     func run() async throws {
-        let clients = try await socket.accept(ring: ring)
+        let clients = try await socket.accept()
         for try await client in clients {
             debugPrint("accepted client \(client)")
             Task { await echo(client: client) }

@@ -163,7 +163,7 @@ public struct Socket: CustomStringConvertible {
         }
     }
 
-    public func accept(ring: IORing) async throws -> AnyAsyncSequence<Socket> {
+    public func accept() async throws -> AnyAsyncSequence<Socket> {
         try await fd.withDescriptor { fd in
             try await ring.accept(from: fd).map { try Socket(ring: ring, fd: FileHandle(fd: $0)) }
                 .eraseToAnyAsyncSequence()
@@ -232,7 +232,7 @@ public struct Socket: CustomStringConvertible {
         ) }
     }
 
-    public func close(ring: IORing) async throws {
+    public func close() async throws {
         try await fd.withDescriptor { try await ring.close($0) }
         fd.invalidate()
     }
