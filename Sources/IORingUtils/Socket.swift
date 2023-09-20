@@ -23,8 +23,10 @@ import IORing
 public struct Socket: CustomStringConvertible {
     private let fd: IORingUtils.FileHandle
     private let domain: sa_family_t
+    private let ring: IORing
 
-    public init(fd: IORingUtils.FileHandle) {
+    public init(ring: IORing, fd: IORingUtils.FileHandle) {
+        self.ring = ring
         self.fd = fd
         domain = sa_family_t(AF_UNSPEC)
     }
@@ -37,7 +39,13 @@ public struct Socket: CustomStringConvertible {
         }
     }
 
-    public init(domain: sa_family_t, type: __socket_type, protocol proto: CInt) throws {
+    public init(
+        ring: IORing,
+        domain: sa_family_t,
+        type: __socket_type,
+        protocol proto: CInt
+    ) throws {
+        self.ring = ring
         let fd = socket(CInt(domain), Int32(type.rawValue), proto)
         self.fd = try FileHandle(fd: fd)
         self.domain = sa_family_t(domain)
@@ -157,7 +165,7 @@ public struct Socket: CustomStringConvertible {
 
     public func accept(ring: IORing) async throws -> AnyAsyncSequence<Socket> {
         try await fd.withDescriptor { fd in
-            try await ring.accept(from: fd).map { try Socket(fd: FileHandle(fd: $0)) }
+            try await ring.accept(from: fd).map { try Socket(ring: ring, fd: FileHandle(fd: $0)) }
                 .eraseToAnyAsyncSequence()
         }
     }
@@ -172,13 +180,13 @@ public struct Socket: CustomStringConvertible {
         }
     }
 
-    public func connect(to address: any SocketAddress, ring: IORing) async throws {
+    public func connect(to address: any SocketAddress) async throws {
         try await fd.withDescriptor { fd in
             try await ring.connect(fd, to: address)
         }
     }
 
-    public func read(into buffer: inout [UInt8], count: Int, ring: IORing) async throws -> Bool {
+    public func read(into buffer: inout [UInt8], count: Int) async throws -> Bool {
         try await fd.withDescriptor { try await ring.read(
             into: &buffer,
             count: count,
@@ -187,7 +195,7 @@ public struct Socket: CustomStringConvertible {
         ) }
     }
 
-    public func write(_ buffer: [UInt8], count: Int, ring: IORing) async throws {
+    public func write(_ buffer: [UInt8], count: Int) async throws {
         try await fd.withDescriptor { try await ring.write(
             buffer,
             count: count,
@@ -196,28 +204,28 @@ public struct Socket: CustomStringConvertible {
         ) }
     }
 
-    public func recv(count: Int, ring: IORing) async throws -> [UInt8] {
+    public func recv(count: Int) async throws -> [UInt8] {
         try await fd.withDescriptor { try await ring.recv(
             count: count,
             from: $0
         ) }
     }
 
-    public func send(_ data: [UInt8], ring: IORing) async throws {
+    public func send(_ data: [UInt8]) async throws {
         try await fd.withDescriptor { try await ring.send(
             data,
             to: $0
         ) }
     }
 
-    public func recvmsg(count: Int, ring: IORing) async throws -> AnyAsyncSequence<Message> {
+    public func recvmsg(count: Int) async throws -> AnyAsyncSequence<Message> {
         try await fd.withDescriptor { try await ring.recvmsg(
             count: count,
             from: $0
         ) }
     }
 
-    public func sendmsg(_ message: Message, ring: IORing) async throws {
+    public func sendmsg(_ message: Message) async throws {
         try await fd.withDescriptor { try await ring.sendmsg(
             message,
             to: $0

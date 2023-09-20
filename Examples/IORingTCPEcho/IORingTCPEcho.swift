@@ -41,7 +41,12 @@ public struct IORingTCPEcho {
     init(port: UInt16, bufferSize: Int = 32, backlog: Int = 128) throws {
         self.bufferSize = bufferSize
         ring = try IORing(depth: backlog)
-        socket = try Socket(domain: sa_family_t(AF_INET), type: SOCK_STREAM, protocol: 0)
+        socket = try Socket(
+            ring: ring,
+            domain: sa_family_t(AF_INET),
+            type: SOCK_STREAM,
+            protocol: 0
+        )
         try socket.setNonBlocking()
         try socket.setReuseAddr()
         try socket.setTcpNoDelay()
@@ -52,8 +57,8 @@ public struct IORingTCPEcho {
     func echo(client: Socket) async {
         do {
             repeat {
-                let data = try await client.recv(count: bufferSize, ring: ring)
-                try await client.send(data, ring: ring)
+                let data = try await client.recv(count: bufferSize)
+                try await client.send(data)
             } while true
         } catch {
             debugPrint("closed client \(client)")
@@ -74,9 +79,9 @@ public struct IORingTCPEcho {
              var more = false
              repeat {
                  var buffer = [UInt8](repeating: 0, count: bufferSize)
-                 more = try await client.read(into: &buffer, count: bufferSize, ring: ring)
+                 more = try await client.read(into: &buffer, count: bufferSize)
                  if more {
-                     try await client.write(buffer, count: bufferSize, ring: ring)
+                     try await client.write(buffer, count: bufferSize)
                  }
              } while more
          } catch {

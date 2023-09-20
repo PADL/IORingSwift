@@ -84,10 +84,10 @@ public final class FileHandle: CustomStringConvertible {
     }
 
     func invalidate() {
-        self.fd = -1
+        fd = -1
     }
 
     var isValid: Bool {
-        self.fd != -1
+        fd != -1
     }
 }

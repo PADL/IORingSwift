@@ -40,7 +40,7 @@ public struct IORingUDPServer {
 
     init() throws {
         ring = try IORing()
-        socket = try Socket(domain: sa_family_t(AF_INET), type: SOCK_DGRAM, protocol: 0)
+        socket = try Socket(ring: ring, domain: sa_family_t(AF_INET), type: SOCK_DGRAM, protocol: 0)
     }
 
     func bind(port: UInt16) async throws {
@@ -48,7 +48,7 @@ public struct IORingUDPServer {
     }
 
     func run() async throws {
-        let channel = try await socket.recvmsg(count: 1500, ring: ring)
+        let channel = try await socket.recvmsg(count: 1500)
         for try await message in channel {
             print(message)
         }

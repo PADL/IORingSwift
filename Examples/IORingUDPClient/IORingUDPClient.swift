@@ -44,12 +44,12 @@ public struct IORingUDPClient {
 
     init() throws {
         ring = try IORing()
-        socket = try Socket(domain: sa_family_t(AF_INET), type: SOCK_DGRAM, protocol: 0)
+        socket = try Socket(ring: ring, domain: sa_family_t(AF_INET), type: SOCK_DGRAM, protocol: 0)
     }
 
     func connect(to address: any SocketAddress) async throws {
         debugPrint("connecting to address \(String(describing: try? address.presentationAddress))")
-        try await socket.connect(to: address, ring: ring)
+        try await socket.connect(to: address)
     }
 
     func send(message: String) async throws {
@@ -57,6 +57,6 @@ public struct IORingUDPClient {
             throw Errno(rawValue: EINVAL)
         }
         let message = try Message(buffer: [UInt8](messageData + [0]))
-        try await socket.sendmsg(message, ring: ring)
+        try await socket.sendmsg(message)
     }
 }
