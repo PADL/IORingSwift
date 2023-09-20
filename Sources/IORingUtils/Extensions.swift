@@ -19,6 +19,17 @@ import Foundation
 import Glibc
 import IORing
 
+private func hexDescription(_ bytes: [UInt8]) -> String {
+    bytes.reduce("") { $0 + String(format: "%02x", $1) }
+}
+
+extension IORing.Message: CustomStringConvertible {
+    public var description: String {
+        let address = try! sockaddr(bytes: name).presentationAddress
+        return "\(type(of: self))(address: \(address), buffer: \(hexDescription(buffer)), flags: \(flags))"
+    }
+}
+
 public extension IORing {
     struct AsyncByteSequence: AsyncSequence {
         public typealias Element = UInt8

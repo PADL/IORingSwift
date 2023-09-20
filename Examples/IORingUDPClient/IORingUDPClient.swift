@@ -38,7 +38,7 @@ public struct IORingUDPClient {
 
         let message = CommandLine.arguments[2]
         let client = try IORingUDPClient()
-        try address.withSockAddr { try client.connect(to: $0) }
+        try await client.connect(to: address)
         try await client.send(message: message)
     }
 
@@ -47,8 +47,8 @@ public struct IORingUDPClient {
         socket = try Socket(domain: sa_family_t(AF_INET), type: SOCK_DGRAM, protocol: 0)
     }
 
-    func connect(to address: UnsafePointer<sockaddr>) throws {
-        try socket.connect(to: address)
+    func connect(to address: any SocketAddress) async throws {
+        try await socket.connect(to: address, ring: ring)
     }
 
     func send(message: String) async throws {

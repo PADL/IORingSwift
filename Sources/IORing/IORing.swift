@@ -370,9 +370,21 @@ public actor IORing {
         private var __storage = msghdr()
         private var __iov_storage = iovec()
 
-        public var name: sockaddr_storage {
+        // FIXME: again, this is a workaround for _XOPEN_SOURCE=500 clang importer issues
+        public var name: [UInt8] {
+            get {
+                withUnsafeBytes(of: address) {
+                    Array($0)
+                }
+            }
+            set {
+                address = try! sockaddr_storage(bytes: newValue)
+            }
+        }
+
+        public var address: sockaddr_storage {
             didSet {
-                Swift.withUnsafeMutablePointer(to: &name) { pointer in
+                Swift.withUnsafeMutablePointer(to: &address) { pointer in
                     __storage.msg_name = UnsafeMutableRawPointer(pointer)
                     __storage.msg_namelen = socklen_t(MemoryLayout<sockaddr_storage>.size)
                 }
@@ -427,38 +439,53 @@ public actor IORing {
             return try await body(&storage)
         }
 
-        public init(name: sockaddr_storage, buffer: [UInt8], flags: Int32 = 0) {
-            self.name = name
+        public init(address: sockaddr_storage, buffer: [UInt8], flags: Int32 = 0) {
+            self.address = address
             self.buffer = buffer
             self.flags = flags
         }
 
+        // FIXME: see note below about _XOPEN_SOURCE=500 sockaddr clang importer issues
+        public init(name: [UInt8], buffer: [UInt8], flags: Int32 = 0) throws {
+            let ss = try sockaddr_storage(bytes: name)
+            self.init(address: ss, buffer: buffer, flags: 0)
+        }
+
         public init(
-            name: UnsafePointer<sockaddr>? = nil,
+            address: UnsafePointer<sockaddr>? = nil,
             buffer: [UInt8] = [],
             flags: Int32 = 0
         ) throws {
-            var nameBuf = sockaddr_storage()
-            if let name {
-                _ = try memcpy(&nameBuf, name, name.pointee.size)
+            var ss = sockaddr_storage()
+
+            // cast to [UInt8] as helper constructor will copy correct number of bytes for address
+            // family
+            if let address {
+                try withUnsafeBytes(of: address) { bytes in
+                    ss = try sockaddr_storage(bytes: Array(bytes))
+                }
             }
-            self.init(name: nameBuf, buffer: buffer, flags: flags)
+
+            self.init(address: ss, buffer: buffer, flags: flags)
         }
 
         public init(capacity: Int) {
-            self.init(name: sockaddr_storage(), buffer: [UInt8](repeating: 0, count: capacity))
+            self.init(address: sockaddr_storage(), buffer: [UInt8](repeating: 0, count: capacity))
         }
 
         public init(
             buffer: [UInt8],
             flags: Int32 = 0
         ) {
-            self.init(name: sockaddr_storage(), buffer: buffer, flags: flags)
+            self.init(address: sockaddr_storage(), buffer: buffer, flags: flags)
         }
 
-        init(_ msg: UnsafePointer<msghdr>) {
-            name = sockaddr_storage()
-            _ = memcpy(&name, msg.pointee.msg_name, Int(msg.pointee.msg_namelen))
+        init(_ msg: UnsafePointer<msghdr>) throws {
+            let name = UnsafeRawBufferPointer(
+                start: msg.pointee.msg_name,
+                count: Int(msg.pointee.msg_namelen)
+            )
+            address = try sockaddr_storage(bytes: Array(name))
             var buffer = [UInt8]()
             let iov = UnsafeBufferPointer(start: msg.pointee.msg_iov, count: msg.pointee.msg_iovlen)
             for iovec in iov {
@@ -825,6 +852,10 @@ public extension IORing {
         try await io_uring_op_multishot_accept(fd: fd).eraseToAnyAsyncSequence()
     }
 
+    func connect(_ fd: FileDescriptor, to address: sockaddr_storage) async throws {
+        try await io_uring_op_connect(fd: fd, address: address)
+    }
+
     // FIXME: _XOPEN_SOURCE=500 is implictly defined by liburing.h and is also defined
     // when building IORing (so we can import CIORingShims). However we can't expect
     // depending packages to also define this, and in not doing so we lose the ability
@@ -834,16 +865,8 @@ public extension IORing {
     // Provide an escape hatch by encoding sockaddr_storage into [UInt8]. We can provide
     // wrapper APIs in IORingUtils that take the non-X/Open sockaddr layout.
 
-    func connect(_ fd: FileDescriptor, to address: sockaddr_storage) async throws {
-        try await io_uring_op_connect(fd: fd, address: address)
-    }
-
     func connect(_ fd: FileDescriptor, to address: [UInt8]) async throws {
-        var ss = sockaddr_storage()
-        guard address.count >= MemoryLayout<sockaddr_storage>.size else {
-            throw Errno(rawValue: ERANGE)
-        }
-        _ = memcpy(&ss, address, MemoryLayout<sockaddr_storage>.size)
+        let ss = try sockaddr_storage(bytes: address)
         try await io_uring_op_connect(fd: fd, address: ss)
     }
 }
