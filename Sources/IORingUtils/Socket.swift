@@ -32,8 +32,8 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
     }
 
     public var description: String {
-        if let sockName = try? sockName, let peerName = try? peerName {
-            return "\(type(of: self))(fd: \(fd), sockName: \(sockName), peerName: \(peerName))"
+        if let localName = try? localName, let peerName = try? peerName {
+            return "\(type(of: self))(fd: \(fd), localName: \(localName), peerName: \(peerName))"
         } else {
             return "\(type(of: self))(fd: \(fd))"
         }
@@ -76,15 +76,15 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
         return ss
     }
 
-    public var sockAddress: any SocketAddress {
+    public var localAddress: any SocketAddress {
         get throws {
             try getName { getsockname($0, $1, $2) }
         }
     }
 
-    public var sockName: String {
+    public var localName: String {
         get throws {
-            try sockAddress.presentationAddress
+            try localAddress.presentationAddress
         }
     }
 
