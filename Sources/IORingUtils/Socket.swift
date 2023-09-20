@@ -43,7 +43,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
         ring: IORing,
         domain: sa_family_t,
         type: __socket_type,
-        protocol proto: CInt
+        `protocol` proto: CInt = 0
     ) throws {
         self.ring = ring
         let fd = socket(CInt(domain), Int32(type.rawValue), proto)
