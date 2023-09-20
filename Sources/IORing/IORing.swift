@@ -369,148 +369,6 @@ public actor IORing {
             }
         }
     }
-
-    public struct Message {
-        private var __storage = msghdr()
-        private var __iov_storage = iovec()
-
-        // FIXME: again, this is a workaround for _XOPEN_SOURCE=500 clang importer issues
-        public var name: [UInt8] {
-            get {
-                withUnsafeBytes(of: address) {
-                    Array($0)
-                }
-            }
-            set {
-                address = try! sockaddr_storage(bytes: newValue)
-            }
-        }
-
-        public var address: sockaddr_storage {
-            didSet {
-                Swift.withUnsafeMutablePointer(to: &address) { pointer in
-                    __storage.msg_name = UnsafeMutableRawPointer(pointer)
-                    __storage.msg_namelen = socklen_t(MemoryLayout<sockaddr_storage>.size)
-                }
-            }
-        }
-
-        public var buffer: [UInt8] {
-            didSet {
-                buffer.withUnsafeMutableBytes { bytes in
-                    __iov_storage.iov_base = bytes.baseAddress!
-                    __iov_storage.iov_len = bytes.count
-                }
-                Swift.withUnsafeMutablePointer(to: &__iov_storage) { pointer in
-                    __storage.msg_iov = pointer
-                    __storage.msg_iovlen = 1
-                }
-            }
-        }
-
-        public struct Control {
-            public var level: Int32
-            public var type: Int32
-            public var data: [UInt8]
-        }
-
-        public var control = [Control]()
-        public var flags: Int32 {
-            get {
-                __storage.msg_flags
-            }
-            set {
-                __storage.msg_flags = newValue
-            }
-        }
-
-        mutating func withUnsafeMutablePointer<T>(
-            _ body: (UnsafeMutablePointer<msghdr>) async throws
-                -> T
-        ) async rethrows
-            -> T
-        {
-            try await body(&__storage)
-        }
-
-        func withUnsafePointer<T>(
-            _ body: (UnsafePointer<msghdr>) async throws
-                -> T
-        ) async rethrows
-            -> T
-        {
-            var storage = __storage
-            return try await body(&storage)
-        }
-
-        public init(address: sockaddr_storage, buffer: [UInt8], flags: Int32 = 0) {
-            self.address = address
-            self.buffer = buffer
-            self.flags = flags
-        }
-
-        // FIXME: see note below about _XOPEN_SOURCE=500 sockaddr clang importer issues
-        public init(name: [UInt8], buffer: [UInt8], flags: Int32 = 0) throws {
-            let ss = try sockaddr_storage(bytes: name)
-            self.init(address: ss, buffer: buffer, flags: 0)
-        }
-
-        public init(
-            address: UnsafePointer<sockaddr>? = nil,
-            buffer: [UInt8] = [],
-            flags: Int32 = 0
-        ) throws {
-            var ss = sockaddr_storage()
-
-            // cast to [UInt8] as helper constructor will copy correct number of bytes for address
-            // family
-            if let address {
-                try withUnsafeBytes(of: address) { bytes in
-                    ss = try sockaddr_storage(bytes: Array(bytes))
-                }
-            }
-
-            self.init(address: ss, buffer: buffer, flags: flags)
-        }
-
-        public init(capacity: Int) {
-            self.init(address: sockaddr_storage(), buffer: [UInt8](repeating: 0, count: capacity))
-        }
-
-        public init(
-            buffer: [UInt8],
-            flags: Int32 = 0
-        ) {
-            self.init(address: sockaddr_storage(), buffer: buffer, flags: flags)
-        }
-
-        init(_ msg: UnsafePointer<msghdr>) throws {
-            let name = UnsafeRawBufferPointer(
-                start: msg.pointee.msg_name,
-                count: Int(msg.pointee.msg_namelen)
-            )
-            address = try sockaddr_storage(bytes: Array(name))
-            var buffer = [UInt8]()
-            let iov = UnsafeBufferPointer(start: msg.pointee.msg_iov, count: msg.pointee.msg_iovlen)
-            for iovec in iov {
-                let ptr = unsafeBitCast(iovec.iov_base, to: UnsafePointer<UInt8>.self)
-                let data = UnsafeBufferPointer(start: ptr, count: iovec.iov_len)
-                buffer.append(contentsOf: data)
-            }
-            self.buffer = buffer
-            var control = [Control]()
-            CMSG_APPLY(msg) { cmsg, data, len in
-                let data = UnsafeBufferPointer(start: data, count: len)
-                control.append(Control(
-                    level: cmsg.pointee.cmsg_level,
-                    type: cmsg.pointee.cmsg_type,
-                    data: Array(data)
-                ))
-            }
-            flags = msg.pointee.msg_flags
-            self.control = control
-        }
-    }
 }
 
 // MARK: - operation wrappers
@@ -677,10 +535,10 @@ private extension IORing {
 
     func io_uring_op_recvmsg_multishot(
         fd: FileDescriptor,
-        count: Int = Int(BUFSIZ), // FIXME: choose a better default buffer size
+        count: Int,
         flags: UInt32 = 0
     ) async throws -> AsyncThrowingChannel<Message, Error> {
-        var message = Message(capacity: count)
+        let message = Message(capacity: count)
         return try await message.withUnsafeMutablePointer { pointer in
             try await manager.prepareAndSubmitMultishot(
                 UInt8(IORING_OP_RECVMSG),
@@ -688,9 +546,8 @@ private extension IORing {
                 address: pointer,
                 ioprio: AcceptIoPrio.multishot,
                 moreFlags: flags
-            ) { [pointer] _ in
-                _ = pointer
-                return message
+            ) { [message] _ in
+                message
             }
         }
     }
@@ -754,7 +611,7 @@ private extension IORing {
             UInt8(IORING_OP_CONNECT),
             fd: fd,
             address: &address,
-            offset: address.size
+            offset: Int(address.size)
         ) { [address] _ in
             _ = address
         }
@@ -837,7 +694,7 @@ public extension IORing {
     }
 
     func recvmsg(count: Int, from fd: FileDescriptor) async throws -> AnyAsyncSequence<Message> {
-        try await io_uring_op_recvmsg_multishot(fd: fd).eraseToAnyAsyncSequence()
+        try await io_uring_op_recvmsg_multishot(fd: fd, count: count).eraseToAnyAsyncSequence()
     }
 
     func recvmsg(count: Int, from fd: FileDescriptor) async throws -> Message {

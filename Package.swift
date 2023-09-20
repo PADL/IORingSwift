@@ -93,6 +93,11 @@ let package = Package(
             dependencies: ["IORing", "IORingUtils"],
             path: "Examples/IORingUDPClient"
         ),
+        .executableTarget(
+            name: "IORingUDPServer",
+            dependencies: ["IORing", "IORingUtils"],
+            path: "Examples/IORingUDPServer"
+        ),
     ],
     cLanguageStandard: .c18,
     cxxLanguageStandard: .cxx20

@@ -21,25 +21,21 @@ import IORing
 import IORingUtils
 
 @main
-public struct IORingUDPClient {
+public struct IORingUDPServer {
     private let socket: Socket
     private let ring: IORing
 
     public static func main() async throws {
-        guard CommandLine.arguments.count == 3,
-              let address = try? sockaddr_storage(
-                  family: sa_family_t(AF_INET),
-                  presentationAddress: CommandLine.arguments[1]
-              )
+        guard CommandLine.arguments.count == 2,
+              let port = UInt16(CommandLine.arguments[1])
         else {
-            print("Usage: \(CommandLine.arguments[0]) [address:port] [message]")
+            print("Usage: \(CommandLine.arguments[0]) [port]")
             exit(1)
         }
 
-        let message = CommandLine.arguments[2]
-        let client = try IORingUDPClient()
-        try await client.connect(to: address)
-        try await client.send(message: message)
+        let server = try IORingUDPServer()
+        try await server.bind(port: port)
+        try await server.run()
     }
 
     init() throws {
@@ -47,16 +43,14 @@ public struct IORingUDPClient {
         socket = try Socket(domain: sa_family_t(AF_INET), type: SOCK_DGRAM, protocol: 0)
     }
 
-    func connect(to address: any SocketAddress) async throws {
-        debugPrint("connecting to address \(String(describing: try? address.presentationAddress))")
-        try await socket.connect(to: address, ring: ring)
+    func bind(port: UInt16) async throws {
+        try socket.bind(port: port)
     }
 
-    func send(message: String) async throws {
-        guard let messageData = message.data(using: .utf8) else {
-            throw Errno(rawValue: EINVAL)
+    func run() async throws {
+        let channel = try await socket.recvmsg(count: 1500, ring: ring)
+        for try await message in channel {
+            print(message)
         }
-        let message = try Message(buffer: [UInt8](messageData + [0]))
-        try await socket.sendmsg(message, ring: ring)
     }
 }

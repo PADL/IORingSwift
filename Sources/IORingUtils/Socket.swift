@@ -210,14 +210,14 @@ public struct Socket: CustomStringConvertible {
         ) }
     }
 
-    public func recvmsg(count: Int, ring: IORing) async throws -> AnyAsyncSequence<IORing.Message> {
+    public func recvmsg(count: Int, ring: IORing) async throws -> AnyAsyncSequence<Message> {
         try await fd.withDescriptor { try await ring.recvmsg(
             count: count,
             from: $0
         ) }
     }
 
-    public func sendmsg(_ message: IORing.Message, ring: IORing) async throws {
+    public func sendmsg(_ message: Message, ring: IORing) async throws {
         try await fd.withDescriptor { try await ring.sendmsg(
             message,
             to: $0
@@ -346,6 +346,7 @@ extension sockaddr_in: SocketAddress {
     }
 
     public init(family: sa_family_t, presentationAddress: String) throws {
+        guard family == AF_INET else { throw Errno(rawValue: EINVAL) }
         self = sockaddr_in()
         let (address, port) = parsePresentationAddress(presentationAddress)
         var sin_port = UInt16()
@@ -354,6 +355,7 @@ extension sockaddr_in: SocketAddress {
             if let port { sin_port = port.bigEndian }
             return inet_pton(AF_INET, address, &sin_addr)
         }
+        sin_family = family
         self.sin_port = sin_port
         self.sin_addr = sin_addr
     }
@@ -390,6 +392,7 @@ extension sockaddr_in6: SocketAddress {
     }
 
     public init(family: sa_family_t, presentationAddress: String) throws {
+        guard family == AF_INET6 else { throw Errno(rawValue: EINVAL) }
         self = sockaddr_in6()
         let (address, port) = parsePresentationAddress(presentationAddress)
         var sin6_port = UInt16()
@@ -398,6 +401,7 @@ extension sockaddr_in6: SocketAddress {
             if let port { sin6_port = port.bigEndian }
             return inet_pton(AF_INET6, address, &sin6_addr)
         }
+        sin6_family = family
         self.sin6_port = sin6_port
         self.sin6_addr = sin6_addr
     }
@@ -434,8 +438,11 @@ extension sockaddr_un: SocketAddress {
     }
 
     public init(family: sa_family_t, presentationAddress: String) throws {
+        guard family == AF_LOCAL else { throw Errno(rawValue: EINVAL) }
+
         self = sockaddr_un()
         var sun = self
+        sun.sun_family = family
 
         try withUnsafeMutablePointer(to: &sun.sun_path) { path in
             let start = path.propertyBasePointer(to: \.0)!

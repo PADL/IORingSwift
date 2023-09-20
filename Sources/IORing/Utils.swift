@@ -54,16 +54,18 @@ extension iovec {
     }
 }
 
+// MARK: - sockaddr extensions
+
 extension sockaddr {
-    var size: Int {
+    var size: socklen_t {
         get throws {
             switch Int32(sa_family) {
             case AF_INET:
-                return MemoryLayout<sockaddr_in>.size
+                return socklen_t(MemoryLayout<sockaddr_in>.size)
             case AF_INET6:
-                return MemoryLayout<sockaddr_in6>.size
+                return socklen_t(MemoryLayout<sockaddr_in6>.size)
             case AF_LOCAL:
-                return MemoryLayout<sockaddr_un>.size
+                return socklen_t(MemoryLayout<sockaddr_un>.size)
             default:
                 throw Errno(rawValue: EAFNOSUPPORT)
             }
@@ -71,9 +73,8 @@ extension sockaddr {
     }
 }
 
-// FIXME: DRY IORingUtils
-
 extension sockaddr_storage {
+    // FIXME: DRY IORingUtils
     func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>) throws -> T) rethrows -> T {
         try withUnsafePointer(to: self) {
             try $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
@@ -82,7 +83,7 @@ extension sockaddr_storage {
         }
     }
 
-    var size: Int {
+    var size: socklen_t {
         get throws {
             try withSockAddr {
                 try $0.pointee.size

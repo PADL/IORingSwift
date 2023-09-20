@@ -23,9 +23,9 @@ private func hexDescription(_ bytes: [UInt8]) -> String {
     bytes.reduce("") { $0 + String(format: "%02x", $1) }
 }
 
-extension IORing.Message: CustomStringConvertible {
+extension Message: CustomStringConvertible {
     public var description: String {
-        let address = try! sockaddr(bytes: name).presentationAddress
+        let address = (try? sockaddr(bytes: name).presentationAddress) ?? "<unknown>"
         return "\(type(of: self))(address: \(address), buffer: \(hexDescription(buffer)), flags: \(flags))"
     }
 }
