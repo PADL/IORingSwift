@@ -1,9 +1,9 @@
 IORingSwift
 ===========
 
-This is a lightweight Swift wrapper for `io_uring` designed for use cases where performance is more important than portability.
+`IORingSwift` is a lightweight Swift wrapper for `io_uring` designed for use cases where performance is more important than portability. It is not intended to be a replacement for `libdispatch` or `SwiftNIO`; indeed, it presently requires the former, and it is somewhat less abstracted than the latter.
 
-It is not a replacement for `libdispatch` or `SwiftNIO`; indeed, it uses the former to wake on completion (although it is also possible to implement this using a dedicated notification thread).
+It was originally designed to support [SPI](https://en.wikipedia.org/wiki/Serial_Peripheral_Interface) in an embedded application, as the Linux SPI user space driver is synchronous, however it is equally adept at sockets. A discussion which led to its development can be found [here](https://forums.swift.org/t/blocking-i-o-and-concurrency/67276).
 
 The package consists of two libraries:
 
@@ -13,8 +13,3 @@ The package consists of two libraries:
 Not all system calls are yet supported and tests are yet to be written, so caveat emptor. Pull requests welcome.
 
 The intention is that this will also eventually support the real-time I/O subsystem in Zephyr, for use with SwiftIO.
-
---
-Luke Howard
-PADL Software
-September 2023
