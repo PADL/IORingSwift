@@ -238,7 +238,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
     }
 
     public var isClosed: Bool {
-        fd.isValid
+        !fd.isValid
     }
 }
 
