@@ -22,6 +22,9 @@ let SwiftLibRoot = tryGuessSwiftLibRoot()
 
 let package = Package(
     name: "IORingSwift",
+    platforms: [
+        .macOS(.v10_15),
+    ],
     products: [
         .library(
             name: "IORing",
