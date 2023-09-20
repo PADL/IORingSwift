@@ -586,7 +586,7 @@ public extension Data {
 }
 
 extension sockaddr {
-    init(bytes: [UInt8]) throws {
+    public init(bytes: [UInt8]) throws {
         guard bytes.count >= MemoryLayout<Self>.size else {
             throw Errno(rawValue: ERANGE)
         }
@@ -597,7 +597,7 @@ extension sockaddr {
 }
 
 extension sockaddr_storage {
-    init(bytes: [UInt8]) throws {
+    public init(bytes: [UInt8]) throws {
         let sa = try sockaddr(bytes: bytes)
         var ss = Self()
         let bytesRequired: Int
