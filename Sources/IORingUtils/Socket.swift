@@ -236,6 +236,10 @@ public struct Socket: CustomStringConvertible {
         try await fd.withDescriptor { try await ring.close($0) }
         fd.invalidate()
     }
+
+    public var isClosed: Bool {
+        fd.isValid
+    }
 }
 
 public protocol InternetSocketAddress {
