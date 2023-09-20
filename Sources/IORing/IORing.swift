@@ -128,7 +128,13 @@ public actor IORing {
                     try submit()
                     return result
                 } catch let error as Errno {
-                    if error.rawValue != EAGAIN {
+                    switch error.rawValue {
+                    case EAGAIN:
+                        fallthrough
+                    // FIXME: should we always retry on cancel?
+                    case ECANCELED:
+                        break
+                    default:
                         throw error
                     }
                 }
@@ -198,8 +204,6 @@ public actor IORing {
                         Error
                     >
                 ) in
-                    let offset = offset == -1 ? UInt64(bitPattern: -1) : UInt64(offset)
-
                     do {
                         prepare(
                             opcode,
@@ -207,7 +211,7 @@ public actor IORing {
                             fd: fd,
                             address: address,
                             length: length,
-                            offset: offset
+                            offset: offset == -1 ? UInt64(bitPattern: -1) : UInt64(offset)
                         ) { cqe in
                             guard cqe.pointee.res >= 0 else {
                                 continuation.resume(throwing: Errno(rawValue: cqe.pointee.res))
