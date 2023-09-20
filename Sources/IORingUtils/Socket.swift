@@ -32,8 +32,8 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
     }
 
     public var description: String {
-        if let peerNameString = try? peerNameString {
-            return "\(type(of: self))(fd: \(fd), peerName: \(peerNameString))"
+        if let sockName = try? sockName, let peerName = try? peerName {
+            return "\(type(of: self))(fd: \(fd), sockName: \(sockName), peerName: \(peerName))"
         } else {
             return "\(type(of: self))(fd: \(fd))"
         }
@@ -76,27 +76,27 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
         return ss
     }
 
-    public var sockName: sockaddr_storage {
+    public var sockAddress: any SocketAddress {
         get throws {
             try getName { getsockname($0, $1, $2) }
         }
     }
 
-    public var sockNameString: String {
+    public var sockName: String {
         get throws {
-            try sockName.presentationAddress
+            try sockAddress.presentationAddress
         }
     }
 
-    public var peerName: sockaddr_storage {
+    public var peerAddress: any SocketAddress {
         get throws {
             try getName { getpeername($0, $1, $2) }
         }
     }
 
-    public var peerNameString: String {
+    public var peerName: String {
         get throws {
-            try peerName.presentationAddress
+            try peerAddress.presentationAddress
         }
     }
 
@@ -585,8 +585,8 @@ public extension Data {
     }
 }
 
-extension sockaddr {
-    public init(bytes: [UInt8]) throws {
+public extension sockaddr {
+    init(bytes: [UInt8]) throws {
         guard bytes.count >= MemoryLayout<Self>.size else {
             throw Errno(rawValue: ERANGE)
         }
@@ -596,8 +596,8 @@ extension sockaddr {
     }
 }
 
-extension sockaddr_storage {
-    public init(bytes: [UInt8]) throws {
+public extension sockaddr_storage {
+    init(bytes: [UInt8]) throws {
         let sa = try sockaddr(bytes: bytes)
         var ss = Self()
         let bytesRequired: Int
