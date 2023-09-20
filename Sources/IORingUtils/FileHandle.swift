@@ -91,3 +91,15 @@ public final class FileHandle: CustomStringConvertible {
         fd != -1
     }
 }
+
+extension FileHandle: Equatable {
+    public static func == (lhs: FileHandle, rhs: FileHandle) -> Bool {
+        lhs.fd == rhs.fd
+    }
+}
+
+extension FileHandle: Hashable {
+    public func hash(into hasher: inout Hasher) {
+        fd.hash(into: &hasher)
+    }
+}

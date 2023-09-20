@@ -20,7 +20,7 @@ import Foundation
 import Glibc
 import IORing
 
-public struct Socket: CustomStringConvertible {
+public struct Socket: CustomStringConvertible, Equatable, Hashable {
     private let fd: IORingUtils.FileHandle
     private let domain: sa_family_t
     private let ring: IORing

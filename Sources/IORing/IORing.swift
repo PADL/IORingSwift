@@ -733,3 +733,15 @@ public extension IORing {
         try await io_uring_op_connect(fd: fd, address: ss)
     }
 }
+
+extension IORing: Equatable {
+    public static func == (lhs: IORing, rhs: IORing) -> Bool {
+        ObjectIdentifier(lhs) == ObjectIdentifier(rhs)
+    }
+}
+
+extension IORing: Hashable {
+    public nonisolated func hash(into hasher: inout Hasher) {
+        ObjectIdentifier(self).hash(into: &hasher)
+    }
+}
