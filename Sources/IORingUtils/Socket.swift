@@ -22,9 +22,11 @@ import IORing
 
 public struct Socket: CustomStringConvertible {
     private let fd: IORingUtils.FileHandle
+    private let domain: sa_family_t
 
     public init(fd: IORingUtils.FileHandle) {
         self.fd = fd
+        domain = sa_family_t(AF_UNSPEC)
     }
 
     public var description: String {
@@ -35,16 +37,17 @@ public struct Socket: CustomStringConvertible {
         }
     }
 
-    public init(domain: CInt, type: UInt32, protocol proto: CInt) throws {
-        let fd = socket(domain, Int32(type), proto)
+    public init(domain: sa_family_t, type: __socket_type, protocol proto: CInt) throws {
+        let fd = socket(CInt(domain), Int32(type.rawValue), proto)
         self.fd = try FileHandle(fd: fd)
+        self.domain = sa_family_t(domain)
     }
 
     public func setNonBlocking() throws {
         try fd.setNonBlocking()
     }
 
-    func getName(_ body: @escaping (
+    private func getName(_ body: @escaping (
         _ fd: IORing.FileDescriptor,
         UnsafeMutablePointer<sockaddr>,
         UnsafeMutablePointer<socklen_t>
@@ -114,19 +117,32 @@ public struct Socket: CustomStringConvertible {
         try setBooleanOption(level: CInt(IPPROTO_TCP), option: TCP_NODELAY, to: true)
     }
 
-    public func bind(to address: sockaddr, length: Int) throws {
-        var address = address
-        try fd.withDescriptor { fd in
-            try Errno.throwingErrno {
-                SwiftGlibc.bind(fd, &address, socklen_t(length))
-            }
+    public func bind(port: UInt16) throws {
+        switch Int32(domain) {
+        case AF_INET:
+            var sin = sockaddr_in()
+            sin.sin_port = port.bigEndian
+            try bind(to: sin)
+        case AF_INET6:
+            var sin6 = sockaddr_in6()
+            sin6.sin6_port = port.bigEndian
+            try bind(to: sin6)
+        default:
+            throw Errno(rawValue: EAFNOSUPPORT)
         }
     }
 
-    public func bind(to address: sockaddr_in) throws {
-        try withUnsafePointer(to: address) {
-            try $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                try bind(to: $0.pointee, length: MemoryLayout<sockaddr_in>.size)
+    public func bind(path: String) throws {
+        let sun = try sockaddr_un(family: sa_family_t(AF_LOCAL), presentationAddress: path)
+        try bind(to: sun)
+    }
+
+    public func bind(to address: any SocketAddress) throws {
+        try fd.withDescriptor { fd in
+            try address.withSockAddr { sa in
+                try Errno.throwingErrno {
+                    SwiftGlibc.bind(fd, sa, address.size)
+                }
             }
         }
     }
@@ -249,6 +265,16 @@ public protocol SocketAddress {
 public extension SocketAddress {
     var family: sa_family_t {
         withSockAddr { $0.pointee.sa_family }
+    }
+}
+
+extension SocketAddress {
+    func asStorage() -> sockaddr_storage {
+        var ss = sockaddr_storage()
+        withSockAddr {
+            _ = memcpy(&ss, $0, Int(size))
+        }
+        return ss
     }
 }
 
@@ -489,6 +515,41 @@ extension sockaddr_storage: SocketAddress {
         try withUnsafePointer(to: self) { ss in
             try ss.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
                 try body(sa)
+            }
+        }
+    }
+}
+
+public extension Data {
+    var socketAddress: any SocketAddress {
+        get throws {
+            try withUnsafeBytes { data -> (any SocketAddress) in
+                var family = sa_family_t(AF_UNSPEC)
+
+                try data.withMemoryRebound(to: sockaddr.self) {
+                    let sa = $0.baseAddress!.pointee
+                    family = sa.sa_family
+                    guard sa.size <= self.count else { // ignores trailing bytes
+                        throw Errno(rawValue: EAFNOSUPPORT)
+                    }
+                }
+
+                switch Int32(family) {
+                case AF_INET:
+                    var sin = sockaddr_in()
+                    memcpy(&sin, data.baseAddress!, Int(sin.size))
+                    return sin
+                case AF_INET6:
+                    var sin6 = sockaddr_in6()
+                    memcpy(&sin6, data.baseAddress!, Int(sin6.size))
+                    return sin6
+                case AF_LOCAL:
+                    var sun = sockaddr_un()
+                    memcpy(&sun, data.baseAddress!, Int(sun.size))
+                    return sun
+                default:
+                    throw Errno(rawValue: EAFNOSUPPORT)
+                }
             }
         }
     }

@@ -41,11 +41,11 @@ public struct IORingTCPEcho {
     init(port: UInt16, bufferSize: Int = 32, backlog: Int = 128) throws {
         self.bufferSize = bufferSize
         ring = try IORing(depth: backlog)
-        socket = try Socket(domain: AF_INET, type: SOCK_STREAM.rawValue, protocol: 0)
+        socket = try Socket(domain: sa_family_t(AF_INET), type: SOCK_STREAM, protocol: 0)
         try socket.setNonBlocking()
         try socket.setReuseAddr()
         try socket.setTcpNoDelay()
-        try socket.bind(to: sockaddr_in.any(port: port))
+        try socket.bind(port: port)
         try socket.listen(backlog: backlog)
     }
 

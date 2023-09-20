@@ -63,3 +63,13 @@ extension UnsafeMutablePointer {
         return (UnsafeRawPointer(self) + offset).assumingMemoryBound(to: Property.self)
     }
 }
+
+extension IORing {
+    func connect(_ fd: FileDescriptor, to address: any SocketAddress) async throws {
+        var addressBuffer = [UInt8]()
+        withUnsafeBytes(of: address.asStorage()) {
+            addressBuffer = [UInt8]($0)
+        }
+        try await connect(fd, to: addressBuffer)
+    }
+}

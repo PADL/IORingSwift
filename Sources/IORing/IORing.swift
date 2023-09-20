@@ -825,7 +825,25 @@ public extension IORing {
         try await io_uring_op_multishot_accept(fd: fd).eraseToAnyAsyncSequence()
     }
 
+    // FIXME: _XOPEN_SOURCE=500 is implictly defined by liburing.h and is also defined
+    // when building IORing (so we can import CIORingShims). However we can't expect
+    // depending packages to also define this, and in not doing so we lose the ability
+    // to define APIs with `sockaddr_storage` and friends as the clang importer does
+    // not know the types defined with and without _XOPEN_SOURCE=500 are equivalent.
+    //
+    // Provide an escape hatch by encoding sockaddr_storage into [UInt8]. We can provide
+    // wrapper APIs in IORingUtils that take the non-X/Open sockaddr layout.
+
     func connect(_ fd: FileDescriptor, to address: sockaddr_storage) async throws {
         try await io_uring_op_connect(fd: fd, address: address)
+    }
+
+    func connect(_ fd: FileDescriptor, to address: [UInt8]) async throws {
+        var ss = sockaddr_storage()
+        guard address.count >= MemoryLayout<sockaddr_storage>.size else {
+            throw Errno(rawValue: ERANGE)
+        }
+        _ = memcpy(&ss, address, MemoryLayout<sockaddr_storage>.size)
+        try await io_uring_op_connect(fd: fd, address: ss)
     }
 }
