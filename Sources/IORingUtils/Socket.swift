@@ -223,6 +223,11 @@ public struct Socket: CustomStringConvertible {
             to: $0
         ) }
     }
+
+    public func close(ring: IORing) async throws {
+        try await fd.withDescriptor { try await ring.close($0) }
+        fd.invalidate()
+    }
 }
 
 public protocol InternetSocketAddress {

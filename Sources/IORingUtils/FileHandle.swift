@@ -19,7 +19,7 @@ import Glibc
 import IORing
 
 public final class FileHandle: CustomStringConvertible {
-    let fd: IORing.FileDescriptor
+    private var fd: IORing.FileDescriptor
 
     public init(fd: IORing.FileDescriptor) throws {
         if fd < 0 {
@@ -40,8 +40,8 @@ public final class FileHandle: CustomStringConvertible {
     }
 
     deinit {
-        if fd != -1 {
-            close(fd)
+        if isValid {
+            try? close()
         }
     }
 
@@ -74,5 +74,20 @@ public final class FileHandle: CustomStringConvertible {
         } else {
             throw Errno(rawValue: EINVAL)
         }
+    }
+
+    public func close() throws {
+        try Errno.throwingErrno {
+            SwiftGlibc.close(self.fd)
+        }
+        invalidate()
+    }
+
+    func invalidate() {
+        self.fd = -1
+    }
+
+    var isValid: Bool {
+        self.fd != -1
     }
 }
