@@ -657,7 +657,9 @@ public extension IORing {
 
     func read(count: Int, from fd: FileDescriptor) async throws -> [UInt8] {
         var buffer = [UInt8](repeating: 0, count: count)
-        try await read(into: &buffer, count: count, from: fd)
+        guard try await read(into: &buffer, count: count, from: fd) else {
+            return []
+        }
         return buffer
     }
 
