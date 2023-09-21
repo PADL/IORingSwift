@@ -625,6 +625,10 @@ public struct AnySocketAddress {
     public init(_ sa: any SocketAddress) {
         storage = sa.asStorage()
     }
+
+    public init(bytes: [UInt8]) throws {
+        storage = try sockaddr_storage(bytes: bytes)
+    }
 }
 
 extension AnySocketAddress: Equatable {
