@@ -43,7 +43,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
         ring: IORing,
         domain: sa_family_t,
         type: __socket_type,
-        `protocol` proto: CInt = 0
+        protocol proto: CInt = 0
     ) throws {
         self.ring = ring
         let fd = socket(CInt(domain), Int32(type.rawValue), proto)
@@ -616,5 +616,54 @@ public extension sockaddr_storage {
         }
         memcpy(&ss, bytes, bytesRequired)
         self = ss
+    }
+}
+
+public struct AnySocketAddress {
+    private var storage: sockaddr_storage
+
+    public init(_ sa: any SocketAddress) {
+        storage = sa.asStorage()
+    }
+}
+
+extension AnySocketAddress: Equatable {
+    public static func == (lhs: AnySocketAddress, rhs: AnySocketAddress) -> Bool {
+        var lhs = lhs
+        var rhs = rhs
+        return lhs.storage.size == rhs.storage.size &&
+            memcmp(&lhs.storage, &rhs.storage, Int(lhs.storage.size)) == 0
+    }
+}
+
+extension AnySocketAddress: SocketAddress {
+    public static var family: sa_family_t {
+        sa_family_t(AF_UNSPEC)
+    }
+
+    public init(family: sa_family_t, presentationAddress: String) throws {
+        storage = try sockaddr_storage(family: family, presentationAddress: presentationAddress)
+    }
+
+    public func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>) throws -> T) rethrows -> T {
+        try storage.withSockAddr(body)
+    }
+
+    public var presentationAddress: String {
+        get throws {
+            try storage.presentationAddress
+        }
+    }
+
+    public var size: socklen_t {
+        storage.size
+    }
+}
+
+extension AnySocketAddress: Hashable {
+    public func hash(into hasher: inout Hasher) {
+        withUnsafeBytes(of: storage) {
+            hasher.combine(bytes: $0)
+        }
     }
 }
