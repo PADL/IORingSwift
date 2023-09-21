@@ -195,6 +195,13 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
         ) }
     }
 
+    public func read(count: Int) async throws -> [UInt8] {
+        try await fd.withDescriptor { try await ring.read(
+            count: count,
+            from: $0
+        ) }
+    }
+
     public func write(_ buffer: [UInt8], count: Int) async throws {
         try await fd.withDescriptor { try await ring.write(
             buffer,
