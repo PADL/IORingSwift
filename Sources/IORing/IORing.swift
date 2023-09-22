@@ -101,11 +101,15 @@ public actor IORing {
             _ sqe: UnsafeMutablePointer<io_uring_sqe>,
             flags: UInt8,
             ioprio: UInt16,
-            moreFlags: UInt32
+            moreFlags: UInt32,
+            bufferIndex: UInt16,
+            bufferGroup: UInt16
         ) {
             io_uring_sqe_set_flags(sqe, UInt32(flags))
             sqe.pointee.ioprio = ioprio
             sqe.pointee.fsync_flags = moreFlags
+            sqe.pointee.buf_index = bufferIndex
+            sqe.pointee.buf_group = bufferGroup
         }
 
         private func submit() throws {
@@ -197,6 +201,8 @@ public actor IORing {
             flags: UInt8 = 0,
             ioprio: UInt16 = 0,
             moreFlags: UInt32 = 0,
+            bufferIndex: UInt16 = 0,
+            bufferGroup: UInt16 = 0,
             socketAddress: sockaddr_storage? = nil,
             handler: @escaping (io_uring_cqe) throws -> T
         ) async throws -> T {
@@ -227,7 +233,14 @@ public actor IORing {
                                 continuation.resume(throwing: error)
                             }
                         }
-                        setFlags(sqe, flags: flags, ioprio: ioprio, moreFlags: moreFlags)
+                        setFlags(
+                            sqe,
+                            flags: flags,
+                            ioprio: ioprio,
+                            moreFlags: moreFlags,
+                            bufferIndex: bufferIndex,
+                            bufferGroup: bufferGroup
+                        )
                         if let socketAddress {
                             try socketAddress.withSockAddr { socketAddress in
                                 try setSocketAddress(sqe, socketAddress: socketAddress)
@@ -249,6 +262,8 @@ public actor IORing {
             flags: UInt8,
             ioprio: UInt16,
             moreFlags: UInt32,
+            bufferIndex: UInt16,
+            bufferGroup: UInt16,
             retryOnCancel: Bool,
             handler: @escaping (io_uring_cqe) throws -> T,
             channel: AsyncThrowingChannel<T, Error>
@@ -275,6 +290,8 @@ public actor IORing {
                                         flags: flags,
                                         ioprio: ioprio,
                                         moreFlags: moreFlags,
+                                        bufferIndex: bufferIndex,
+                                        bufferGroup: bufferGroup,
                                         retryOnCancel: retryOnCancel,
                                         handler: handler,
                                         channel: channel
@@ -298,7 +315,14 @@ public actor IORing {
                     }
                 }
 
-                setFlags(sqe, flags: flags, ioprio: ioprio, moreFlags: moreFlags)
+                setFlags(
+                    sqe,
+                    flags: flags,
+                    ioprio: ioprio,
+                    moreFlags: moreFlags,
+                    bufferIndex: bufferIndex,
+                    bufferGroup: bufferGroup
+                )
                 try submit()
             }
         }
@@ -311,6 +335,8 @@ public actor IORing {
             flags: UInt8 = 0,
             ioprio: UInt16 = 0,
             moreFlags: UInt32 = 0,
+            bufferIndex: UInt16 = 0,
+            bufferGroup: UInt16 = 0,
             retryOnCancel: Bool = false,
             handler: @escaping (io_uring_cqe) throws -> T
         ) async throws -> AsyncThrowingChannel<T, Error> {
@@ -323,6 +349,8 @@ public actor IORing {
                 flags: flags,
                 ioprio: ioprio,
                 moreFlags: moreFlags,
+                bufferIndex: bufferIndex,
+                bufferGroup: bufferGroup,
                 retryOnCancel: retryOnCancel,
                 handler: handler,
                 channel: channel
@@ -460,6 +488,40 @@ private extension IORing {
             offset: offset
         ) { [buffer] cqe in
             _ = buffer
+            return Int(cqe.res)
+        }
+    }
+
+    func io_uring_read_fixed(
+        fd: FileDescriptor,
+        count: Int,
+        offset: Int,
+        bufferIndex: UInt16
+    ) async throws -> Int {
+        try await manager.prepareAndSubmit(
+            UInt8(IORING_OP_READ_FIXED),
+            fd: fd,
+            length: CUnsignedInt(count),
+            offset: offset,
+            bufferIndex: bufferIndex
+        ) { cqe in
+            return Int(cqe.res)
+        }
+    }
+
+    func io_uring_write_fixed(
+        fd: FileDescriptor,
+        count: Int,
+        offset: Int,
+        bufferIndex: UInt16
+    ) async throws -> Int {
+        try await manager.prepareAndSubmit(
+            UInt8(IORING_OP_WRITE_FIXED),
+            fd: fd,
+            length: CUnsignedInt(count),
+            offset: offset,
+            bufferIndex: bufferIndex
+        ) { cqe in
             return Int(cqe.res)
         }
     }
