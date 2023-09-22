@@ -399,6 +399,80 @@ public actor IORing {
                 return ()
             }
         }
+
+        // MARK: - fixed buffer support
+
+        private typealias FixedBuffer = [UInt8]
+        private var buffers: [FixedBuffer]?
+        private var iov: [iovec]?
+
+        // FIXME: currently only supporting a single buffer size
+        func registerFixedBuffers(count: Int, size: Int) throws {
+            guard buffers == nil else {
+                throw ErrNo.EEXIST
+            }
+
+            guard count > 0, size > 0 else {
+                throw ErrNo.EINVAL
+            }
+
+            var buffers = [FixedBuffer](repeating: [UInt8](repeating: 0, count: size), count: count)
+            var iov = [iovec](repeating: iovec(), count: count)
+
+            for i in 0..<count {
+                buffers[i].withUnsafeMutableBufferPointer { pointer in
+                    iov[i].iov_base = UnsafeMutableRawPointer(pointer.baseAddress)
+                    iov[i].iov_len = size
+                }
+            }
+
+            try ErrNo.throwingErrNo {
+                io_uring_register_buffers(&self.ring, iov, UInt32(iov.count))
+            }
+
+            self.buffers = buffers
+            self.iov = iov
+        }
+
+        func unregisterFixedBuffers() throws {
+            try ErrNo.throwingErrNo {
+                io_uring_unregister_buffers(&self.ring)
+            }
+
+            buffers = nil
+            iov = nil
+        }
+
+        private func validateFixedBufferIndex(_ index: UInt16) throws {
+            guard let iov else {
+                throw ErrNo.EINVAL
+            }
+
+            guard index < iov.count else {
+                throw ErrNo.ERANGE
+            }
+        }
+
+        private func validateFixedBufferLength(_ length: Int) throws {
+            guard let iov = iov?.first else {
+                throw ErrNo.EINVAL
+            }
+
+            guard length < iov.iov_len else {
+                throw ErrNo.ERANGE
+            }
+        }
+
+        func validateFixedBuffer(index: UInt16, length: Int) throws {
+            try validateFixedBufferIndex(index)
+            try validateFixedBufferLength(length)
+        }
+
+        func unsafePointerForFixedBuffer(at index: UInt16) -> UnsafeMutableRawPointer {
+            precondition(iov != nil)
+            precondition(index < iov!.count)
+            return iov![Int(index)].iov_base!
+        }
     }
 }
 
@@ -498,14 +572,17 @@ private extension IORing {
         offset: Int,
         bufferIndex: UInt16
     ) async throws -> Int {
-        try await manager.prepareAndSubmit(
+        try manager.validateFixedBuffer(index: bufferIndex, length: count)
+
+        return try await manager.prepareAndSubmit(
             UInt8(IORING_OP_READ_FIXED),
             fd: fd,
+            address: manager.unsafePointerForFixedBuffer(at: bufferIndex),
             length: CUnsignedInt(count),
             offset: offset,
             bufferIndex: bufferIndex
         ) { cqe in
-            return Int(cqe.res)
+            Int(cqe.res)
         }
     }
 
@@ -515,14 +592,17 @@ private extension IORing {
         offset: Int,
         bufferIndex: UInt16
     ) async throws -> Int {
-        try await manager.prepareAndSubmit(
+        try manager.validateFixedBuffer(index: bufferIndex, length: count)
+
+        return try await manager.prepareAndSubmit(
             UInt8(IORING_OP_WRITE_FIXED),
             fd: fd,
+            address: manager.unsafePointerForFixedBuffer(at: bufferIndex),
             length: CUnsignedInt(count),
             offset: offset,
             bufferIndex: bufferIndex
         ) { cqe in
-            return Int(cqe.res)
+            Int(cqe.res)
         }
     }
 
