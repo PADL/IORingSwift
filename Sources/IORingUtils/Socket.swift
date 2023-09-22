@@ -332,50 +332,55 @@ extension sockaddr: SocketAddress {
         }
     }
 
+    private var _storage: sockaddr_storage {
+        var storage = sockaddr_storage()
+        let size = Int(size)
+        withUnsafePointer(to: self) { _ = memcpy(&storage, $0, size) }
+        return storage
+    }
+
     public var presentationAddress: String {
         get throws {
-            switch Int32(sa_family) {
-            case AF_INET:
-                return try withUnsafePointer(to: self) {
-                    try $0.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+            let storage = _storage
+
+            return try withUnsafePointer(to: storage) {
+                switch Int32(sa_family) {
+                case AF_INET:
+                    return try $0.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
                         try $0.pointee.presentationAddress
                     }
-                }
-            case AF_INET6:
-                return try withUnsafePointer(to: self) {
-                    try $0.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
+                case AF_INET6:
+                    return try $0.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
                         try $0.pointee.presentationAddress
                     }
-                }
-            case AF_LOCAL:
-                return try withUnsafePointer(to: self) {
-                    try $0.withMemoryRebound(to: sockaddr_un.self, capacity: 1) {
+                case AF_LOCAL:
+                    return try $0.withMemoryRebound(to: sockaddr_un.self, capacity: 1) {
                         try $0.pointee.presentationAddress
                     }
+                default:
+                    throw ErrNo.EAFNOSUPPORT
                 }
-            default:
-                throw ErrNo.EAFNOSUPPORT
             }
         }
     }
 
     public var port: UInt16 {
         get throws {
-            switch Int32(sa_family) {
-            case AF_INET:
-                return try withUnsafePointer(to: self) {
-                    try $0.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+            let storage = _storage
+
+            return try withUnsafePointer(to: storage) {
+                switch Int32(sa_family) {
+                case AF_INET:
+                    return try $0.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
                         try $0.pointee.port
                     }
-                }
-            case AF_INET6:
-                return try withUnsafePointer(to: self) {
-                    try $0.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
+                case AF_INET6:
+                    return try $0.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
                         try $0.pointee.port
                     }
+                default:
+                    throw ErrNo.EAFNOSUPPORT
                 }
-            default:
-                throw ErrNo.EAFNOSUPPORT
             }
         }
     }
