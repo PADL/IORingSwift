@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import ErrNo
 import Foundation
 import Glibc
 import IORing
@@ -23,7 +24,12 @@ public final class FileHandle: CustomStringConvertible {
 
     public init(fd: IORing.FileDescriptor) throws {
         if fd < 0 {
-            throw Errno(rawValue: errno != 0 ? errno : EBADF)
+            let lastError = ErrNo.lastError
+            if lastError.rawValue == 0 {
+                throw ErrNo.EBADF
+            } else {
+                throw lastError
+            }
         }
         self.fd = fd
     }
@@ -34,8 +40,8 @@ public final class FileHandle: CustomStringConvertible {
 
     public func setNonBlocking() throws {
         try withDescriptor { fd in
-            let flags = try Errno.throwingErrno { fcntl(fd, F_GETFL, 0) }
-            try Errno.throwingErrno { fcntl(fd, F_SETFL, flags | O_NONBLOCK) }
+            let flags = try ErrNo.throwingErrNo { fcntl(fd, F_GETFL, 0) }
+            try ErrNo.throwingErrNo { fcntl(fd, F_SETFL, flags | O_NONBLOCK) }
         }
     }
 
@@ -66,18 +72,18 @@ public final class FileHandle: CustomStringConvertible {
         var st = stat()
 
         if fstat(fd, &st) < 0 {
-            throw Errno.lastError
+            throw ErrNo.lastError
         }
 
         if st.st_mode & S_IFMT == S_IFREG {
             return st.st_size
         } else {
-            throw Errno(rawValue: EINVAL)
+            throw ErrNo.EINVAL
         }
     }
 
     public func close() throws {
-        try Errno.throwingErrno {
+        try ErrNo.throwingErrNo {
             SwiftGlibc.close(self.fd)
         }
         invalidate()

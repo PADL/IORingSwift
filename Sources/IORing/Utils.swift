@@ -18,6 +18,7 @@
 import CIORingShims
 @_implementationOnly
 import CIOURing
+import ErrNo
 import Glibc
 
 // MARK: - iovec extensions
@@ -44,7 +45,7 @@ extension iovec {
         let count = count ?? mutableBufferPointer.count
 
         if offset + count > mutableBufferPointer.count {
-            throw Errno(rawValue: ERANGE)
+            throw ErrNo.ERANGE
         }
 
         self.init(
@@ -67,7 +68,7 @@ extension sockaddr {
             case AF_LOCAL:
                 return socklen_t(MemoryLayout<sockaddr_un>.size)
             default:
-                throw Errno(rawValue: EAFNOSUPPORT)
+                throw ErrNo.EAFNOSUPPORT
             }
         }
     }
@@ -95,7 +96,7 @@ extension sockaddr_storage {
 extension sockaddr {
     init(bytes: [UInt8]) throws {
         guard bytes.count >= MemoryLayout<Self>.size else {
-            throw Errno(rawValue: ERANGE)
+            throw ErrNo.ERANGE
         }
         var sa = sockaddr()
         memcpy(&sa, bytes, MemoryLayout<Self>.size)
@@ -116,12 +117,23 @@ extension sockaddr_storage {
         case AF_LOCAL:
             bytesRequired = MemoryLayout<sockaddr_un>.size
         default:
-            throw Errno(rawValue: EAFNOSUPPORT)
+            throw ErrNo.EAFNOSUPPORT
         }
         guard bytes.count >= bytesRequired else {
-            throw Errno(rawValue: ERANGE)
+            throw ErrNo.ERANGE
         }
         memcpy(&ss, bytes, bytesRequired)
         self = ss
+    }
+}
+
+public extension ErrNo {
+    @discardableResult
+    static func throwingErrNo(_ body: @escaping () -> RawValue) throws -> RawValue {
+        let result = body()
+        if result < 0 {
+            throw ErrNo(rawValue: result)
+        }
+        return result
     }
 }

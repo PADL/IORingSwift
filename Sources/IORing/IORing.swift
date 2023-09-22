@@ -21,6 +21,7 @@ import AsyncExtensions
 import CIORingShims
 @_implementationOnly
 import CIOURing
+import ErrNo
 import Glibc
 
 // MARK: - actor
@@ -65,11 +66,11 @@ public actor IORing {
         init(depth: CUnsignedInt = 64, flags: CUnsignedInt = 0) throws {
             var ring = io_uring()
 
-            try Errno.throwingErrno {
+            try ErrNo.throwingErrNo {
                 io_uring_queue_init(depth, &ring, flags)
             }
             self.ring = ring
-            try Errno.throwingErrno {
+            try ErrNo.throwingErrNo {
                 io_uring_init_event(&self.eventHandle, &self.ring)
             }
         }
@@ -108,7 +109,7 @@ public actor IORing {
         }
 
         private func submit() throws {
-            try Errno.throwingErrno {
+            try ErrNo.throwingErrNo {
                 io_uring_submit(&self.ring)
             }
         }
@@ -129,12 +130,12 @@ public actor IORing {
                     let result = try await body(sqe)
                     try submit()
                     return result
-                } catch let error as Errno {
-                    switch error.rawValue {
-                    case EAGAIN:
+                } catch let error as ErrNo {
+                    switch error {
+                    case .EAGAIN:
                         fallthrough
                     // FIXME: should we always retry on cancel?
-                    case ECANCELED:
+                    case .ECANCELED:
                         break
                     default:
                         throw error
@@ -160,7 +161,7 @@ public actor IORing {
 
         private func cancelPendingSubmissions() {
             for submission in pendingSubmissions {
-                submission.resume(throwing: Errno(rawValue: ECANCELED))
+                submission.resume(throwing: ErrNo(rawValue: ECANCELED))
             }
         }
 
@@ -216,7 +217,7 @@ public actor IORing {
                             offset: offset == -1 ? UInt64(bitPattern: -1) : UInt64(offset)
                         ) { cqe in
                             guard cqe.pointee.res >= 0 else {
-                                continuation.resume(throwing: Errno(rawValue: cqe.pointee.res))
+                                continuation.resume(throwing: ErrNo(rawValue: cqe.pointee.res))
                                 return
                             }
                             do {
@@ -283,7 +284,7 @@ public actor IORing {
                                 }
                             }
                         } else {
-                            channel.fail(Errno(rawValue: cqe.pointee.res))
+                            channel.fail(ErrNo(rawValue: cqe.pointee.res))
                         }
                         return
                     }

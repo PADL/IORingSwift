@@ -38,6 +38,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-async-algorithms", from: "0.1.0"),
         .package(url: "https://github.com/lhoward/AsyncExtensions", branch: "linux"),
+        .package(url: "https://github.com/Ponyboy47/ErrNo", .upToNextMinor(from: "0.5.2")),
     ],
     targets: [
         .systemLibrary(
@@ -57,6 +58,7 @@ let package = Package(
         .target(
             name: "IORing",
             dependencies: ["CIORingShims",
+                           "ErrNo",
                            "AsyncExtensions",
                            .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")],
             cSettings: [
