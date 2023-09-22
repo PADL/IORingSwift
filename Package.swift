@@ -42,8 +42,8 @@ let package = Package(
     ],
     targets: [
         .systemLibrary(
-            name: "CIOURing"
-            // providers: .apt(["liburing-dev"])
+            name: "CIOURing",
+            providers: [.apt(["liburing-dev"])]
         ),
         .target(
             name: "CIORingShims",
