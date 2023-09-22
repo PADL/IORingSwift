@@ -290,6 +290,7 @@ public protocol SocketAddress {
     init(family: sa_family_t, presentationAddress: String) throws
     func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>) throws -> T) rethrows -> T
     var presentationAddress: String { get throws }
+    var port: UInt16 { get throws }
     var size: socklen_t { get }
 }
 
@@ -358,6 +359,27 @@ extension sockaddr: SocketAddress {
         }
     }
 
+    public var port: UInt16 {
+        get throws {
+            switch Int32(sa_family) {
+            case AF_INET:
+                return try withUnsafePointer(to: self) {
+                    try $0.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+                        try $0.pointee.port
+                    }
+                }
+            case AF_INET6:
+                return try withUnsafePointer(to: self) {
+                    try $0.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
+                        try $0.pointee.port
+                    }
+                }
+            default:
+                throw ErrNo.EAFNOSUPPORT
+            }
+        }
+    }
+
     public func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>) throws -> T) rethrows -> T {
         try withUnsafePointer(to: self) { sa in
             try body(sa)
@@ -399,6 +421,12 @@ extension sockaddr_in: SocketAddress {
             }
             let port = UInt16(bigEndian: sin.sin_port)
             return "\(String(cString: result)):\(port)"
+        }
+    }
+
+    public var port: UInt16 {
+        get throws {
+            UInt16(bigEndian: sin_port)
         }
     }
 
@@ -445,6 +473,12 @@ extension sockaddr_in6: SocketAddress {
             }
             let port = UInt16(bigEndian: sin6.sin6_port)
             return "\(String(cString: result)):\(port)"
+        }
+    }
+
+    public var port: UInt16 {
+        get throws {
+            UInt16(bigEndian: sin6_port)
         }
     }
 
@@ -505,6 +539,12 @@ extension sockaddr_un: SocketAddress {
         }
     }
 
+    public var port: UInt16 {
+        get throws {
+            throw ErrNo.EAFNOSUPPORT
+        }
+    }
+
     public func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>) throws -> T) rethrows -> T {
         try withUnsafePointer(to: self) { sun in
             try sun.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
@@ -545,6 +585,14 @@ extension sockaddr_storage: SocketAddress {
         get throws {
             try withSockAddr { sa in
                 try sa.pointee.presentationAddress
+            }
+        }
+    }
+
+    public var port: UInt16 {
+        get throws {
+            try withSockAddr { sa in
+                try sa.pointee.port
             }
         }
     }
@@ -664,6 +712,12 @@ extension AnySocketAddress: SocketAddress {
     public var presentationAddress: String {
         get throws {
             try storage.presentationAddress
+        }
+    }
+
+    public var port: UInt16 {
+        get throws {
+            try storage.port
         }
     }
 
