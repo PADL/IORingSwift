@@ -61,7 +61,7 @@ public actor IORing {
 
         private var ring: io_uring
         private var eventHandle: UnsafeMutableRawPointer?
-        private var pendingSubmissions = [Continuation]()
+        private var pendingSubmissions = Queue<Continuation>()
 
         init(depth: CUnsignedInt = 64, flags: CUnsignedInt = 0) throws {
             var ring = io_uring()
@@ -146,13 +146,13 @@ public actor IORing {
 
         private func suspendPendingSubmission() async throws {
             try await withCheckedThrowingContinuation { continuation in
-                pendingSubmissions.insert(continuation, at: 0)
+                pendingSubmissions.enqueue(continuation)
             }
         }
 
         private func resumePendingSubmission() {
             Task {
-                guard let continuation = pendingSubmissions.popLast() else {
+                guard let continuation = pendingSubmissions.dequeue() else {
                     return
                 }
                 continuation.resume()
@@ -160,8 +160,8 @@ public actor IORing {
         }
 
         private func cancelPendingSubmissions() {
-            for submission in pendingSubmissions {
-                submission.resume(throwing: ErrNo(rawValue: ECANCELED))
+            while let continuation = pendingSubmissions.dequeue() {
+                continuation.resume(throwing: ErrNo(rawValue: ECANCELED))
             }
         }
 
@@ -182,9 +182,9 @@ public actor IORing {
                 length,
                 offset
             ) {
-                // FIXME: this could race before io_uring_cqe_seen() is called
-                defer { self.resumePendingSubmission() }
+                // FIXME: this could race before io_uring_cqe_seen() is called, although shouldn't happen if on same actor
                 handler($0)
+                self.resumePendingSubmission()
             }
         }
 
