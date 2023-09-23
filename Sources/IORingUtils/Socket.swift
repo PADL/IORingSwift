@@ -16,7 +16,7 @@
 
 import AsyncAlgorithms
 import AsyncExtensions
-import ErrNo
+import Errno
 import Foundation
 import Glibc
 import IORing
@@ -67,7 +67,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
         _ = try withUnsafeMutablePointer(to: &ss) { pointer in
             try pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
                 try fd.withDescriptor { fd in
-                    try ErrNo.throwingErrNo {
+                    try Errno.throwingErrno {
                         body(fd, sa, &length)
                     }
                 }
@@ -104,7 +104,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
     public func setBooleanOption(level: CInt = SOL_SOCKET, option: CInt, to value: Bool) throws {
         try fd.withDescriptor { fd in
             var value: CInt = value ? 1 : 0
-            try ErrNo.throwingErrNo { setsockopt(
+            try Errno.throwingErrno { setsockopt(
                 fd,
                 level,
                 option,
@@ -137,7 +137,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
             sin6.sin6_port = port.bigEndian
             try bind(to: sin6)
         default:
-            throw ErrNo.EAFNOSUPPORT
+            throw Errno.addressFamilyNotSupported
         }
     }
 
@@ -149,7 +149,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
     public func bind(to address: any SocketAddress) throws {
         try fd.withDescriptor { fd in
             try address.withSockAddr { sa in
-                try ErrNo.throwingErrNo {
+                try Errno.throwingErrno {
                     SwiftGlibc.bind(fd, sa, address.size)
                 }
             }
@@ -158,7 +158,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
 
     public func listen(backlog: Int = 128) throws {
         try fd.withDescriptor { fd in
-            try ErrNo.throwingErrNo {
+            try Errno.throwingErrno {
                 SwiftGlibc.listen(fd, Int32(backlog))
             }
         }
@@ -174,7 +174,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
     public func connect(to address: any SocketAddress) throws {
         try fd.withDescriptor { fd in
             try address.withSockAddr { sa in
-                try ErrNo.throwingErrNo {
+                try Errno.throwingErrno {
                     SwiftGlibc.connect(fd, sa, address.size)
                 }
             }
@@ -316,7 +316,7 @@ extension sockaddr: SocketAddress {
     }
 
     public init(family: sa_family_t, presentationAddress: String) throws {
-        throw ErrNo.EINVAL
+        throw Errno.invalidArgument
     }
 
     public var size: socklen_t {
@@ -358,7 +358,7 @@ extension sockaddr: SocketAddress {
                         try $0.pointee.presentationAddress
                     }
                 default:
-                    throw ErrNo.EAFNOSUPPORT
+                    throw Errno.addressFamilyNotSupported
                 }
             }
         }
@@ -379,7 +379,7 @@ extension sockaddr: SocketAddress {
                         try $0.pointee.port
                     }
                 default:
-                    throw ErrNo.EAFNOSUPPORT
+                    throw Errno.addressFamilyNotSupported
                 }
             }
         }
@@ -398,12 +398,12 @@ extension sockaddr_in: SocketAddress {
     }
 
     public init(family: sa_family_t, presentationAddress: String) throws {
-        guard family == AF_INET else { throw ErrNo.EINVAL }
+        guard family == AF_INET else { throw Errno.invalidArgument }
         self = sockaddr_in()
         let (address, port) = parsePresentationAddress(presentationAddress)
         var sin_port = UInt16()
         var sin_addr = in_addr()
-        _ = try ErrNo.throwingErrNo {
+        _ = try Errno.throwingErrno {
             if let port { sin_port = port.bigEndian }
             return inet_pton(AF_INET, address, &sin_addr)
         }
@@ -422,7 +422,7 @@ extension sockaddr_in: SocketAddress {
             var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
             let size = socklen_t(buffer.count)
             guard let result = inet_ntop(AF_INET, &sin.sin_addr, &buffer, size) else {
-                throw ErrNo.lastError
+                throw Errno.lastError
             }
             let port = UInt16(bigEndian: sin.sin_port)
             return "\(String(cString: result)):\(port)"
@@ -450,12 +450,12 @@ extension sockaddr_in6: SocketAddress {
     }
 
     public init(family: sa_family_t, presentationAddress: String) throws {
-        guard family == AF_INET6 else { throw ErrNo.EINVAL }
+        guard family == AF_INET6 else { throw Errno.invalidArgument }
         self = sockaddr_in6()
         let (address, port) = parsePresentationAddress(presentationAddress)
         var sin6_port = UInt16()
         var sin6_addr = in6_addr()
-        _ = try ErrNo.throwingErrNo {
+        _ = try Errno.throwingErrno {
             if let port { sin6_port = port.bigEndian }
             return inet_pton(AF_INET6, address, &sin6_addr)
         }
@@ -474,7 +474,7 @@ extension sockaddr_in6: SocketAddress {
             var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
             let size = socklen_t(buffer.count)
             guard let result = inet_ntop(AF_INET, &sin6.sin6_addr, &buffer, size) else {
-                throw ErrNo.lastError
+                throw Errno.lastError
             }
             let port = UInt16(bigEndian: sin6.sin6_port)
             return "\(String(cString: result)):\(port)"
@@ -502,7 +502,7 @@ extension sockaddr_un: SocketAddress {
     }
 
     public init(family: sa_family_t, presentationAddress: String) throws {
-        guard family == AF_LOCAL else { throw ErrNo.EINVAL }
+        guard family == AF_LOCAL else { throw Errno.invalidArgument }
 
         self = sockaddr_un()
         var sun = self
@@ -512,7 +512,7 @@ extension sockaddr_un: SocketAddress {
             let start = path.propertyBasePointer(to: \.0)!
             let capacity = MemoryLayout.size(ofValue: path)
             if capacity <= presentationAddress.utf8.count {
-                throw ErrNo.ERANGE
+                throw Errno.outOfRange
             }
             start.withMemoryRebound(to: CChar.self, capacity: capacity) { dst in
                 _ = memcpy(
@@ -546,7 +546,7 @@ extension sockaddr_un: SocketAddress {
 
     public var port: UInt16 {
         get throws {
-            throw ErrNo.EAFNOSUPPORT
+            throw Errno.addressFamilyNotSupported
         }
     }
 
@@ -577,7 +577,7 @@ extension sockaddr_storage: SocketAddress {
             var sun = try sockaddr_un(family: family, presentationAddress: presentationAddress)
             _ = memcpy(&ss, &sun, Int(sun.size))
         default:
-            throw ErrNo.EAFNOSUPPORT
+            throw Errno.addressFamilyNotSupported
         }
         self = ss
     }
@@ -621,7 +621,7 @@ public extension Data {
                     let sa = $0.baseAddress!.pointee
                     family = sa.sa_family
                     guard sa.size <= self.count else { // ignores trailing bytes
-                        throw ErrNo.EAFNOSUPPORT
+                        throw Errno.addressFamilyNotSupported
                     }
                 }
 
@@ -639,7 +639,7 @@ public extension Data {
                     memcpy(&sun, data.baseAddress!, Int(sun.size))
                     return sun
                 default:
-                    throw ErrNo.EAFNOSUPPORT
+                    throw Errno.addressFamilyNotSupported
                 }
             }
         }
@@ -649,7 +649,7 @@ public extension Data {
 public extension sockaddr {
     init(bytes: [UInt8]) throws {
         guard bytes.count >= MemoryLayout<Self>.size else {
-            throw ErrNo.ERANGE
+            throw Errno.outOfRange
         }
         var sa = sockaddr()
         memcpy(&sa, bytes, MemoryLayout<Self>.size)
@@ -670,10 +670,10 @@ public extension sockaddr_storage {
         case AF_LOCAL:
             bytesRequired = MemoryLayout<sockaddr_un>.size
         default:
-            throw ErrNo.EAFNOSUPPORT
+            throw Errno.addressFamilyNotSupported
         }
         guard bytes.count >= bytesRequired else {
-            throw ErrNo.ERANGE
+            throw Errno.outOfRange
         }
         memcpy(&ss, bytes, bytesRequired)
         self = ss

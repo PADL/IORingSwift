@@ -21,7 +21,7 @@ import AsyncExtensions
 import CIORingShims
 @_implementationOnly
 import CIOURing
-import ErrNo
+import Errno
 import Glibc
 
 // MARK: - actor
@@ -66,11 +66,11 @@ public actor IORing {
         init(depth: CUnsignedInt = 64, flags: CUnsignedInt = 0) throws {
             var ring = io_uring()
 
-            try ErrNo.throwingErrNo {
+            try Errno.throwingErrno {
                 io_uring_queue_init(depth, &ring, flags)
             }
             self.ring = ring
-            try ErrNo.throwingErrNo {
+            try Errno.throwingErrno {
                 io_uring_init_event(&self.eventHandle, &self.ring)
             }
         }
@@ -116,7 +116,7 @@ public actor IORing {
         }
 
         private func submit() throws {
-            try ErrNo.throwingErrNo {
+            try Errno.throwingErrno {
                 io_uring_submit(&self.ring)
             }
         }
@@ -137,12 +137,12 @@ public actor IORing {
                     let result = try await body(sqe)
                     try submit()
                     return result
-                } catch let error as ErrNo {
+                } catch let error as Errno {
                     switch error {
-                    case .EAGAIN:
+                    case .resourceTemporarilyUnavailable:
                         fallthrough
                     // FIXME: should we always retry on cancel?
-                    case .ECANCELED:
+                    case .canceled:
                         break
                     default:
                         throw error
@@ -168,7 +168,7 @@ public actor IORing {
 
         private func cancelPendingSubmissions() {
             while let continuation = pendingSubmissions.dequeue() {
-                continuation.resume(throwing: ErrNo(rawValue: ECANCELED))
+                continuation.resume(throwing: Errno.canceled)
             }
         }
 
@@ -267,7 +267,7 @@ public actor IORing {
                                 }
 
                                 guard cqe.pointee.res >= 0 else {
-                                    continuation.resume(throwing: ErrNo(rawValue: -cqe.pointee.res))
+                                    continuation.resume(throwing: Errno(rawValue: -cqe.pointee.res))
                                     operationRaisedError = true
                                     return
                                 }
@@ -355,7 +355,7 @@ public actor IORing {
                                 }
                             }
                         } else {
-                            channel.fail(ErrNo(rawValue: -cqe.pointee.res))
+                            channel.fail(Errno(rawValue: -cqe.pointee.res))
                         }
                         return
                     }
@@ -467,7 +467,7 @@ public actor IORing {
         var registeredBuffersCount: Int {
             get throws {
                 guard let iov else {
-                    throw ErrNo.EINVAL
+                    throw Errno.invalidArgument
                 }
 
                 return iov.count
@@ -477,7 +477,7 @@ public actor IORing {
         var registeredBuffersSize: Int {
             get throws {
                 guard let buffers else {
-                    throw ErrNo.EINVAL
+                    throw Errno.invalidArgument
                 }
 
                 return buffers[0].count
@@ -487,11 +487,11 @@ public actor IORing {
         // FIXME: currently only supporting a single buffer size
         func registerBuffers(count: Int, size: Int) throws {
             guard buffers == nil else {
-                throw ErrNo.EEXIST
+                throw Errno.fileExists
             }
 
             guard count > 0, size > 0 else {
-                throw ErrNo.EINVAL
+                throw Errno.invalidArgument
             }
 
             var buffers = [FixedBuffer](repeating: [UInt8](repeating: 0, count: size), count: count)
@@ -504,7 +504,7 @@ public actor IORing {
                 }
             }
 
-            try ErrNo.throwingErrNo {
+            try Errno.throwingErrno {
                 io_uring_register_buffers(&self.ring, iov, UInt32(iov.count))
             }
 
@@ -514,10 +514,10 @@ public actor IORing {
 
         func unregisterBuffers() throws {
             if !hasRegisteredBuffers {
-                throw ErrNo.EINVAL
+                throw Errno.invalidArgument
             }
 
-            try ErrNo.throwingErrNo {
+            try Errno.throwingErrno {
                 io_uring_unregister_buffers(&self.ring)
             }
 
@@ -527,11 +527,11 @@ public actor IORing {
 
         func validateFixedBuffer(at index: UInt16, length: Int, offset: Int) throws {
             guard let iov, index < iov.count else {
-                throw ErrNo.EINVAL
+                throw Errno.invalidArgument
             }
 
             guard offset + length <= iov[Int(index)].iov_len else {
-                throw ErrNo.ERANGE
+                throw Errno.outOfRange
             }
         }
 
@@ -1052,7 +1052,7 @@ public extension IORing {
         let count = count ?? data.endIndex - data.startIndex
 
         guard count < data.endIndex - data.startIndex else {
-            throw ErrNo.EINVAL
+            throw Errno.invalidArgument
         }
 
         try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)

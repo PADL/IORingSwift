@@ -15,7 +15,7 @@
 //
 
 import AsyncExtensions
-import ErrNo
+import Errno
 import Foundation
 import Glibc
 import IORing
@@ -55,7 +55,7 @@ public struct IORingUDPClient {
 
     func send(message: String) async throws {
         guard let messageData = message.data(using: .utf8) else {
-            throw ErrNo.EINVAL
+            throw Errno.invalidArgument
         }
         let message = try Message(buffer: [UInt8](messageData + [0]))
         try await socket.sendMessage(message)

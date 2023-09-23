@@ -10,15 +10,6 @@
       }
     },
     {
-      "identity" : "errno",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Ponyboy47/ErrNo",
-      "state" : {
-        "revision" : "178566b112afe6bef3770678f1bbab6e5c626993",
-        "version" : "0.5.2"
-      }
-    },
-    {
       "identity" : "swift-async-algorithms",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-async-algorithms",
