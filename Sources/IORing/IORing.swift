@@ -443,35 +443,20 @@ public actor IORing {
             iov = nil
         }
 
-        private func validateFixedBufferIndex(_ index: UInt16) throws {
-            guard let iov else {
+        func validateFixedBuffer(index: UInt16, length: Int, offset: Int) throws {
+            guard let iov, index < iov.count else {
                 throw ErrNo.EINVAL
             }
 
-            guard index < iov.count else {
+            guard offset + length < iov[Int(index)].iov_len else {
                 throw ErrNo.ERANGE
             }
         }
 
-        private func validateFixedBufferLength(_ length: Int) throws {
-            guard let iov = iov?.first else {
-                throw ErrNo.EINVAL
-            }
-
-            guard length < iov.iov_len else {
-                throw ErrNo.ERANGE
-            }
-        }
-
-        func validateFixedBuffer(index: UInt16, length: Int) throws {
-            try validateFixedBufferIndex(index)
-            try validateFixedBufferLength(length)
-        }
-
-        func unsafePointerForFixedBuffer(at index: UInt16) -> UnsafeMutableRawPointer {
+        func unsafePointerForFixedBuffer(at index: UInt16, offset: Int) -> UnsafeMutableRawPointer {
             precondition(iov != nil)
             precondition(index < iov!.count)
-            return iov![Int(index)].iov_base!
+            return iov![Int(index)].iov_base! + offset
         }
     }
 }
@@ -569,15 +554,16 @@ private extension IORing {
     func io_uring_read_fixed(
         fd: FileDescriptor,
         count: Int,
-        offset: Int,
-        bufferIndex: UInt16
+        offset: Int, // offset into the file we are reading
+        bufferIndex: UInt16,
+        bufferOffset: Int // offset into the fixed buffer
     ) async throws -> Int {
-        try manager.validateFixedBuffer(index: bufferIndex, length: count)
+        try manager.validateFixedBuffer(index: bufferIndex, length: count, offset: bufferOffset)
 
         return try await manager.prepareAndSubmit(
             UInt8(IORING_OP_READ_FIXED),
             fd: fd,
-            address: manager.unsafePointerForFixedBuffer(at: bufferIndex),
+            address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
             length: CUnsignedInt(count),
             offset: offset,
             bufferIndex: bufferIndex
@@ -589,15 +575,16 @@ private extension IORing {
     func io_uring_write_fixed(
         fd: FileDescriptor,
         count: Int,
-        offset: Int,
-        bufferIndex: UInt16
+        offset: Int, // offset into the file we are writing
+        bufferIndex: UInt16,
+        bufferOffset: Int // offset into the fixed buffer
     ) async throws -> Int {
-        try manager.validateFixedBuffer(index: bufferIndex, length: count)
+        try manager.validateFixedBuffer(index: bufferIndex, length: count, offset: bufferOffset)
 
         return try await manager.prepareAndSubmit(
             UInt8(IORING_OP_WRITE_FIXED),
             fd: fd,
-            address: manager.unsafePointerForFixedBuffer(at: bufferIndex),
+            address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
             length: CUnsignedInt(count),
             offset: offset,
             bufferIndex: bufferIndex
