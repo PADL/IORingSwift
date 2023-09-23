@@ -120,7 +120,7 @@ public actor IORing {
             }
         }
 
-        private func submitRetrying<T>(
+        private func enqueueRetrying<T>(
             body: @escaping (UnsafeMutablePointer<io_uring_sqe>) async throws -> T
         ) async throws -> T {
             repeat {
@@ -133,9 +133,7 @@ public actor IORing {
                         continue
                     }
 
-                    let result = try await body(sqe)
-                    try submit()
-                    return result
+                    return try await body(sqe)
                 } catch let error as Errno {
                     switch error {
                     case .resourceTemporarilyUnavailable:
@@ -240,7 +238,7 @@ public actor IORing {
             socketAddress: sockaddr_storage? = nil,
             handler: @escaping (io_uring_cqe) throws -> T
         ) async throws -> T {
-            try await submitRetrying { [self] sqe in
+            try await enqueueRetrying { [self] sqe in
                 try await withCheckedThrowingContinuation { (
                     continuation: CheckedContinuation<
                         T,
@@ -321,7 +319,7 @@ public actor IORing {
             handler: @escaping (io_uring_cqe) throws -> T,
             channel: AsyncThrowingChannel<T, Error>
         ) async throws {
-            try await submitRetrying { [self] sqe in
+            try await enqueueRetrying { [self] sqe in
                 prepare(
                     opcode,
                     sqe: sqe,
