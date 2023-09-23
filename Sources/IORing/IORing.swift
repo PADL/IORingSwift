@@ -78,6 +78,9 @@ public actor IORing {
         deinit {
             cancelPendingSubmissions()
             io_uring_deinit_event(eventHandle, &ring)
+            if hasRegisteredBuffers {
+                try? unregisterBuffers()
+            }
             // FIXME: where are unhandled completion blocks deallocated?
             io_uring_queue_exit(&ring)
         }
@@ -448,7 +451,7 @@ public actor IORing {
                 throw ErrNo.EINVAL
             }
 
-            guard offset + length < iov[Int(index)].iov_len else {
+            guard offset + length <= iov[Int(index)].iov_len else {
                 throw ErrNo.ERANGE
             }
         }

@@ -30,16 +30,18 @@ public struct IORingCat {
             exit(1)
         }
 
-        let cat = try IORingCat()
+        let cat = try await IORingCat()
 
         for file in CommandLine.arguments[1...] {
             try await cat.cat(file)
         }
     }
 
-    init(blockSize: Int = 64) throws {
+    init(blockSize: Int = 64) async throws {
         ring = try IORing()
         self.blockSize = blockSize
+
+        try await ring.registerFixedBuffers(count: 1, size: blockSize)
     }
 
     func cat(_ file: String) async throws {
@@ -49,18 +51,17 @@ public struct IORingCat {
         var blocks = size % blockSize
         if size % blocks != 0 { blocks += 1 }
         var nremain = size
-        var buffer = [UInt8](repeating: 0, count: blockSize)
 
         while nremain != 0 {
             let count = nremain > blockSize ? blockSize : nremain
-            try await fd.withDescriptor { try await ring.read(
-                into: &buffer,
+            let bufferSlice = try await fd.withDescriptor { try await ring.readFixed(
                 count: count,
                 offset: size - nremain,
+                bufferIndex: 0,
                 from: $0
             ) }
             nremain -= count
-            outputToConsole(Array(buffer[0..<count]))
+            outputToConsole(Array(bufferSlice[0..<count]))
         }
     }
 
