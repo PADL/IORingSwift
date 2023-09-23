@@ -1026,11 +1026,19 @@ public extension IORing {
         offset: Int = -1,
         bufferIndex: UInt16,
         bufferOffset: Int = 0,
-        to fd: FileDescriptor
+        to fd: FileDescriptor,
+        _ body: (UnsafeMutableRawBufferPointer) throws -> ()
     ) async throws -> Int {
         let count = try count ?? manager.registeredBuffersSize
 
         try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
+
+        try manager.withUnsafeMutableBytesOfFixedBuffer(
+            at: bufferIndex,
+            length: count,
+            offset: bufferOffset,
+            body
+        )
 
         return try await io_uring_write_fixed(
             fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
@@ -1038,21 +1046,37 @@ public extension IORing {
         )
     }
 
-    func withUnsafeMutableBytesOfFixedBuffer<T>(
+    // this is useful for SPI
+    func writeReadFixed(
         count: Int? = nil,
+        offset: Int = -1,
         bufferIndex: UInt16,
         bufferOffset: Int = 0,
-        _ body: (UnsafeMutableRawBufferPointer) throws -> T
-    ) throws -> T {
+        to fd: FileDescriptor,
+        _ body: (UnsafeMutableRawBufferPointer) throws -> ()
+    ) async throws -> Int {
         let count = try count ?? manager.registeredBuffersSize
 
         try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
-        return try manager.withUnsafeMutableBytesOfFixedBuffer(
+
+        try manager.withUnsafeMutableBytesOfFixedBuffer(
             at: bufferIndex,
             length: count,
             offset: bufferOffset,
             body
         )
+
+        return try await manager.prepareAndSubmitLinked(
+            [UInt8(IORING_OP_WRITE_FIXED), UInt8(IORING_OP_READ_FIXED)],
+            fd: fd,
+            address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
+            length: CUnsignedInt(count),
+            offset: offset,
+            bufferIndex: bufferIndex
+        ) { cqe in
+            // FIXME: note this will only be called on the read, so we may need to handle short writes?
+            Int(cqe.res)
+        }
     }
 }
 
