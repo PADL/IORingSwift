@@ -938,7 +938,7 @@ public extension IORing {
         offset: Int = -1,
         bufferIndex: UInt16,
         bufferOffset: Int = 0,
-        from fd: FileDescriptor
+        to fd: FileDescriptor
     ) async throws {
         let count = count ?? data.endIndex - data.startIndex
 
