@@ -132,7 +132,7 @@ public extension ErrNo {
     static func throwingErrNo(_ body: @escaping () -> RawValue) throws -> RawValue {
         let result = body()
         if result < 0 {
-            throw ErrNo(rawValue: result)
+            throw ErrNo(rawValue: -result)
         }
         return result
     }

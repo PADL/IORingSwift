@@ -256,7 +256,7 @@ public actor IORing {
                                 }
 
                                 guard cqe.pointee.res >= 0 else {
-                                    continuation.resume(throwing: ErrNo(rawValue: cqe.pointee.res))
+                                    continuation.resume(throwing: ErrNo(rawValue: -cqe.pointee.res))
                                     operationRaisedError = true
                                     return
                                 }
@@ -344,7 +344,7 @@ public actor IORing {
                                 }
                             }
                         } else {
-                            channel.fail(ErrNo(rawValue: cqe.pointee.res))
+                            channel.fail(ErrNo(rawValue: -cqe.pointee.res))
                         }
                         return
                     }
