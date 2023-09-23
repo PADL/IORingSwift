@@ -407,7 +407,7 @@ public actor IORing {
         private var iov: [iovec]?
 
         // FIXME: currently only supporting a single buffer size
-        func registerFixedBuffers(count: Int, size: Int) throws {
+        func registerBuffers(count: Int, size: Int) throws {
             guard buffers == nil else {
                 throw ErrNo.EEXIST
             }
@@ -434,7 +434,7 @@ public actor IORing {
             self.iov = iov
         }
 
-        func unregisterFixedBuffers() throws {
+        func unregisterBuffers() throws {
             try ErrNo.throwingErrNo {
                 io_uring_unregister_buffers(&self.ring)
             }
@@ -863,6 +863,14 @@ public extension IORing {
     func connect(_ fd: FileDescriptor, to address: [UInt8]) async throws {
         let ss = try sockaddr_storage(bytes: address)
         try await io_uring_op_connect(fd: fd, address: ss)
+    }
+
+    func registerFixedBuffers(count: Int, size: Int) async throws {
+        try manager.registerBuffers(count: count, size: size)
+    }
+
+    func unregisterFixedBuffers() async throws {
+        try manager.unregisterBuffers()
     }
 }
 
