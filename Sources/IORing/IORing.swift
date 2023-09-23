@@ -209,9 +209,20 @@ public actor IORing {
             socketAddress: sockaddr_storage? = nil,
             handler: @escaping (io_uring_cqe) throws -> T
         ) async throws -> T {
-            try await prepareAndSubmitLinked([opcode], fd: fd, address: address, length: length, offset: offset,
-                flags: flags, ioprio: ioprio, moreFlags: moreFlags, bufferIndex: bufferIndex, bufferGroup: bufferGroup,
-                socketAddress: socketAddress, handler: handler)
+            try await prepareAndSubmitLinked(
+                [opcode],
+                fd: fd,
+                address: address,
+                length: length,
+                offset: offset,
+                flags: flags,
+                ioprio: ioprio,
+                moreFlags: moreFlags,
+                bufferIndex: bufferIndex,
+                bufferGroup: bufferGroup,
+                socketAddress: socketAddress,
+                handler: handler
+            )
         }
 
         /// prepare and atomically submit a series of linked operations on the same buffer,
