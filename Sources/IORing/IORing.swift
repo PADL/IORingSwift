@@ -581,10 +581,8 @@ private extension IORing {
         offset: Int, // offset into the file we are reading
         bufferIndex: UInt16,
         bufferOffset: Int // offset into the fixed buffer
-    ) async throws -> ArraySlice<UInt8> {
-        try manager.validateFixedBuffer(index: bufferIndex, length: count, offset: bufferOffset)
-
-        return try await manager.prepareAndSubmit(
+    ) async throws -> Int {
+        try await manager.prepareAndSubmit(
             UInt8(IORING_OP_READ_FIXED),
             fd: fd,
             address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
@@ -592,7 +590,7 @@ private extension IORing {
             offset: offset,
             bufferIndex: bufferIndex
         ) { cqe in
-            self.manager.buffer(at: bufferIndex, range: bufferOffset..<Int(cqe.res))
+            Int(cqe.res)
         }
     }
 
@@ -601,27 +599,15 @@ private extension IORing {
     @discardableResult
     func io_uring_write_fixed(
         fd: FileDescriptor,
-        buffer: ArraySlice<UInt8>,
         count: Int,
         offset: Int, // offset into the file we are writing
         bufferIndex: UInt16,
         bufferOffset: Int // offset into the fixed buffer
     ) async throws -> Int {
-        guard count < buffer.endIndex - buffer.startIndex else {
-            throw ErrNo.EINVAL
-        }
-
-        try manager.validateFixedBuffer(index: bufferIndex, length: count, offset: bufferOffset)
-
-        let address = manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset)
-        buffer[buffer.startIndex..<buffer.endIndex].withUnsafeBytes { bytes in
-            _ = memcpy(address, UnsafeRawPointer(bytes.baseAddress!), count)
-        }
-
-        return try await manager.prepareAndSubmit(
+        try await manager.prepareAndSubmit(
             UInt8(IORING_OP_WRITE_FIXED),
             fd: fd,
-            address: address,
+            address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
             length: CUnsignedInt(count),
             offset: offset,
             bufferIndex: bufferIndex
@@ -926,10 +912,14 @@ public extension IORing {
     ) async throws -> ArraySlice<UInt8> {
         let count = try count ?? manager.registeredBuffersSize
 
-        return try await io_uring_read_fixed(
+        try manager.validateFixedBuffer(index: bufferIndex, length: count, offset: bufferOffset)
+
+        let nwritten = try await io_uring_read_fixed(
             fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
             bufferOffset: bufferOffset
         )
+
+        return manager.buffer(at: bufferIndex, range: bufferOffset..<nwritten)
     }
 
     func writeFixed(
@@ -942,8 +932,20 @@ public extension IORing {
     ) async throws {
         let count = count ?? data.endIndex - data.startIndex
 
+        guard count < data.endIndex - data.startIndex else {
+            throw ErrNo.EINVAL
+        }
+
+        try manager.validateFixedBuffer(index: bufferIndex, length: count, offset: bufferOffset)
+
+        let address = manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset)
+
+        data[data.startIndex..<data.endIndex].withUnsafeBytes { bytes in
+            _ = memcpy(address, UnsafeRawPointer(bytes.baseAddress!), count)
+        }
+
         try await io_uring_write_fixed(
-            fd: fd, buffer: data, count: count, offset: offset, bufferIndex: bufferIndex,
+            fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
             bufferOffset: bufferOffset
         )
     }
