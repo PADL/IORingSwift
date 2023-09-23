@@ -409,6 +409,30 @@ public actor IORing {
         private var buffers: [FixedBuffer]?
         private var iov: [iovec]?
 
+        var hasRegisteredBuffers: Bool {
+            iov != nil
+        }
+
+        var registeredBuffersCount: Int {
+            get throws {
+                guard let iov else {
+                    throw ErrNo.EINVAL
+                }
+
+                return iov.count
+            }
+        }
+
+        var registeredBuffersSize: Int {
+            get throws {
+                guard let buffers else {
+                    throw ErrNo.EINVAL
+                }
+
+                return buffers[0].count
+            }
+        }
+
         // FIXME: currently only supporting a single buffer size
         func registerBuffers(count: Int, size: Int) throws {
             guard buffers == nil else {
@@ -438,6 +462,10 @@ public actor IORing {
         }
 
         func unregisterBuffers() throws {
+            if !hasRegisteredBuffers {
+                throw ErrNo.EINVAL
+            }
+
             try ErrNo.throwingErrNo {
                 io_uring_unregister_buffers(&self.ring)
             }
@@ -446,7 +474,7 @@ public actor IORing {
             iov = nil
         }
 
-        func validateFixedBuffer(index: UInt16, length: Int, offset: Int) throws {
+        func validateFixedBuffer(at index: UInt16, length: Int, offset: Int) throws {
             guard let iov, index < iov.count else {
                 throw ErrNo.EINVAL
             }
@@ -457,29 +485,31 @@ public actor IORing {
         }
 
         func unsafePointerForFixedBuffer(at index: UInt16, offset: Int) -> UnsafeMutableRawPointer {
-            precondition(iov != nil)
-            precondition(index < iov!.count)
+            precondition(hasRegisteredBuffers)
+            precondition(try! index < registeredBuffersCount)
+
             return iov![Int(index)].iov_base! + offset
         }
 
-        var hasRegisteredBuffers: Bool {
-            iov != nil
-        }
-
-        var registeredBuffersSize: Int {
-            get throws {
-                guard let buffers else {
-                    throw ErrNo.EINVAL
-                }
-
-                return buffers[0].count
-            }
-        }
-
         func buffer(at index: UInt16, range: Range<Int>) -> ArraySlice<UInt8> {
-            precondition(iov != nil)
-            precondition(index < iov!.count)
+            precondition(hasRegisteredBuffers)
+            precondition(try! index < registeredBuffersCount)
+
             return buffers![Int(index)][range]
+        }
+
+        func withUnsafeMutableBytesOfFixedBuffer<T>(
+            at index: UInt16,
+            length: Int,
+            offset: Int = 0,
+            _ body: (UnsafeMutableRawBufferPointer) throws -> T) rethrows -> T {
+            precondition(hasRegisteredBuffers)
+            precondition(try! index < registeredBuffersCount)
+            precondition(try! offset + length <= registeredBuffersSize)
+
+            return try buffers![Int(index)][offset..<offset + length].withUnsafeMutableBytes { bytes in
+                try body(bytes)
+            }
         }
     }
 }
@@ -912,7 +942,7 @@ public extension IORing {
     ) async throws -> ArraySlice<UInt8> {
         let count = try count ?? manager.registeredBuffersSize
 
-        try manager.validateFixedBuffer(index: bufferIndex, length: count, offset: bufferOffset)
+        try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
 
         let nwritten = try await io_uring_read_fixed(
             fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
@@ -936,7 +966,7 @@ public extension IORing {
             throw ErrNo.EINVAL
         }
 
-        try manager.validateFixedBuffer(index: bufferIndex, length: count, offset: bufferOffset)
+        try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
 
         let address = manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset)
 
@@ -959,12 +989,23 @@ public extension IORing {
     ) async throws {
         let count = try count ?? manager.registeredBuffersSize
 
-        try manager.validateFixedBuffer(index: bufferIndex, length: count, offset: bufferOffset)
+        try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
 
         try await io_uring_write_fixed(
             fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
             bufferOffset: bufferOffset
         )
+    }
+
+    func withUnsafeMutableBytesOfFixedBuffer<T>(
+        count: Int? = nil,
+        bufferIndex: UInt16,
+        bufferOffset: Int = 0,
+        _ body: (UnsafeMutableRawBufferPointer) throws -> T) throws -> T {
+        let count = try count ?? manager.registeredBuffersSize
+
+        try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
+        return try manager.withUnsafeMutableBytesOfFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset, body)
     }
 }
 
