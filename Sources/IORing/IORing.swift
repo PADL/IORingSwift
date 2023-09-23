@@ -1083,7 +1083,8 @@ public extension IORing {
 
         try manager.withFixedBufferSlice(
             at: bufferIndex,
-            range: bufferOffset..<(bufferOffset + count)) {
+            range: bufferOffset..<(bufferOffset + count)
+        ) {
             try body($0)
         }
 
