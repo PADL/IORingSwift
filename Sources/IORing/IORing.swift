@@ -502,14 +502,16 @@ public actor IORing {
             at index: UInt16,
             length: Int,
             offset: Int = 0,
-            _ body: (UnsafeMutableRawBufferPointer) throws -> T) rethrows -> T {
+            _ body: (UnsafeMutableRawBufferPointer) throws -> T
+        ) rethrows -> T {
             precondition(hasRegisteredBuffers)
             precondition(try! index < registeredBuffersCount)
             precondition(try! offset + length <= registeredBuffersSize)
 
-            return try buffers![Int(index)][offset..<offset + length].withUnsafeMutableBytes { bytes in
-                try body(bytes)
-            }
+            return try buffers![Int(index)][offset..<offset + length]
+                .withUnsafeMutableBytes { bytes in
+                    try body(bytes)
+                }
         }
     }
 }
@@ -1001,11 +1003,17 @@ public extension IORing {
         count: Int? = nil,
         bufferIndex: UInt16,
         bufferOffset: Int = 0,
-        _ body: (UnsafeMutableRawBufferPointer) throws -> T) throws -> T {
+        _ body: (UnsafeMutableRawBufferPointer) throws -> T
+    ) throws -> T {
         let count = try count ?? manager.registeredBuffersSize
 
         try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
-        return try manager.withUnsafeMutableBytesOfFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset, body)
+        return try manager.withUnsafeMutableBytesOfFixedBuffer(
+            at: bufferIndex,
+            length: count,
+            offset: bufferOffset,
+            body
+        )
     }
 }
 
