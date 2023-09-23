@@ -1014,7 +1014,31 @@ public extension IORing {
             bufferOffset: bufferOffset
         )
 
-        return manager.buffer(at: bufferIndex, range: bufferOffset..<nwritten)
+        return manager.buffer(at: bufferIndex, range: bufferOffset..<(bufferOffset + nwritten))
+    }
+
+    func readFixed(
+        count: Int? = nil,
+        offset: Int = -1,
+        bufferIndex: UInt16,
+        bufferOffset: Int = 0,
+        from fd: FileDescriptor,
+        _ body: (inout ArraySlice<UInt8>) throws -> ()
+    ) async throws {
+        let count = try count ?? manager.registeredBuffersSize
+
+        try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
+
+        let nwritten = try await io_uring_read_fixed(
+            fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
+            bufferOffset: bufferOffset
+        )
+
+        try manager.withFixedBufferSlice(
+            at: bufferIndex,
+            range: bufferOffset..<(bufferOffset + nwritten),
+            body
+        )
     }
 
     func writeFixed(
@@ -1051,7 +1075,7 @@ public extension IORing {
         bufferIndex: UInt16,
         bufferOffset: Int = 0,
         to fd: FileDescriptor,
-        _ body: (inout ArraySlice<UInt8>) throws -> ()
+        _ body: (ArraySlice<UInt8>) throws -> ()
     ) async throws -> Int {
         let count = try count ?? manager.registeredBuffersSize
 
@@ -1059,9 +1083,9 @@ public extension IORing {
 
         try manager.withFixedBufferSlice(
             at: bufferIndex,
-            range: bufferOffset..<(bufferOffset + count),
-            body
-        )
+            range: bufferOffset..<(bufferOffset + count)) {
+            try body($0)
+        }
 
         return try await io_uring_write_fixed(
             fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
@@ -1075,7 +1099,7 @@ public extension IORing {
         offset: Int = -1,
         bufferIndex: UInt16,
         bufferOffset: Int = 0,
-        to fd: FileDescriptor,
+        fd: FileDescriptor,
         _ body: (inout ArraySlice<UInt8>) throws -> ()
     ) async throws -> Int {
         let count = try count ?? manager.registeredBuffersSize
