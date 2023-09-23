@@ -212,8 +212,8 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
         ) }
     }
 
-    public func recv(count: Int) async throws -> [UInt8] {
-        try await fd.withDescriptor { try await ring.recv(
+    public func receive(count: Int) async throws -> [UInt8] {
+        try await fd.withDescriptor { try await ring.receive(
             count: count,
             from: $0
         ) }
@@ -226,16 +226,16 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
         ) }
     }
 
-    public func recvmsg(count: Int) async throws -> AnyAsyncSequence<Message> {
-        try await fd.withDescriptor { try await ring.recvmsg(
+    public func receiveMessages(count: Int) async throws -> AnyAsyncSequence<Message> {
+        try await fd.withDescriptor { try await ring.receiveMessages(
             count: count,
             from: $0
         ) }
     }
 
-    public func sendmsg(_ message: Message) async throws {
-        try await fd.withDescriptor { try await ring.sendmsg(
-            message,
+    public func sendMessage(_ message: Message) async throws {
+        try await fd.withDescriptor { try await ring.send(
+            message: message,
             to: $0
         ) }
     }

@@ -48,7 +48,7 @@ public struct IORingUDPServer {
     }
 
     func run() async throws {
-        let channel = try await socket.recvmsg(count: 1500)
+        let channel = try await socket.receiveMessages(count: 1500)
         for try await message in channel {
             print(message)
         }

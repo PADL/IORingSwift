@@ -58,6 +58,6 @@ public struct IORingUDPClient {
             throw ErrNo.EINVAL
         }
         let message = try Message(buffer: [UInt8](messageData + [0]))
-        try await socket.sendmsg(message)
+        try await socket.sendMessage(message)
     }
 }

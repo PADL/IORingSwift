@@ -813,11 +813,11 @@ public extension IORing {
         } while nwritten < count
     }
 
-    func recv(count: Int, from fd: FileDescriptor) async throws -> AnyAsyncSequence<[UInt8]> {
+    func receive(count: Int, from fd: FileDescriptor) async throws -> AnyAsyncSequence<[UInt8]> {
         try await io_uring_op_recv_multishot(fd: fd, count: count).eraseToAnyAsyncSequence()
     }
 
-    func recv(count: Int, from fd: FileDescriptor) async throws -> [UInt8] {
+    func receive(count: Int, from fd: FileDescriptor) async throws -> [UInt8] {
         var buffer = [UInt8](repeating: 0, count: count)
         try await io_uring_op_recv(fd: fd, buffer: &buffer)
         return buffer
@@ -827,17 +827,17 @@ public extension IORing {
         try await io_uring_op_send(fd: fd, buffer: data)
     }
 
-    func recvmsg(count: Int, from fd: FileDescriptor) async throws -> AnyAsyncSequence<Message> {
+    func receiveMessages(count: Int, from fd: FileDescriptor) async throws -> AnyAsyncSequence<Message> {
         try await io_uring_op_recvmsg_multishot(fd: fd, count: count).eraseToAnyAsyncSequence()
     }
 
-    func recvmsg(count: Int, from fd: FileDescriptor) async throws -> Message {
+    func receiveMessage(count: Int, from fd: FileDescriptor) async throws -> Message {
         var message = Message(capacity: count)
         try await io_uring_op_recvmsg(fd: fd, message: &message)
         return message
     }
 
-    func sendmsg(_ message: Message, to fd: FileDescriptor) async throws {
+    func send(message: Message, to fd: FileDescriptor) async throws {
         try await io_uring_op_sendmsg(fd: fd, message: message)
     }
 
