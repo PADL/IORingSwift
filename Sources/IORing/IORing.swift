@@ -209,6 +209,27 @@ public actor IORing {
             socketAddress: sockaddr_storage? = nil,
             handler: @escaping (io_uring_cqe) throws -> T
         ) async throws -> T {
+            try await prepareAndSubmitLinked([opcode], fd: fd, address: address, length: length, offset: offset,
+                flags: flags, ioprio: ioprio, moreFlags: moreFlags, bufferIndex: bufferIndex, bufferGroup: bufferGroup,
+                socketAddress: socketAddress, handler: handler)
+        }
+
+        /// prepare and atomically submit a series of linked operations on the same buffer,
+        /// can be used to implement write then read. `handler` is called after the last op.
+        func prepareAndSubmitLinked<T>(
+            _ opcodes: [UInt8],
+            fd: FileDescriptor,
+            address: UnsafeRawPointer? = nil,
+            length: CUnsignedInt = 0,
+            offset: Int = 0,
+            flags: UInt8 = 0,
+            ioprio: UInt16 = 0,
+            moreFlags: UInt32 = 0,
+            bufferIndex: UInt16 = 0,
+            bufferGroup: UInt16 = 0,
+            socketAddress: sockaddr_storage? = nil,
+            handler: @escaping (io_uring_cqe) throws -> T
+        ) async throws -> T {
             try await submitRetrying { [self] sqe in
                 try await withCheckedThrowingContinuation { (
                     continuation: CheckedContinuation<
@@ -217,39 +238,58 @@ public actor IORing {
                     >
                 ) in
                     do {
-                        prepare(
-                            opcode,
-                            sqe: sqe,
-                            fd: fd,
-                            address: address,
-                            length: length,
-                            offset: offset == -1 ? UInt64(bitPattern: -1) : UInt64(offset)
-                        ) { cqe in
-                            guard cqe.pointee.res >= 0 else {
-                                continuation.resume(throwing: ErrNo(rawValue: cqe.pointee.res))
-                                return
+                        var operationRaisedError = false
+
+                        for i in 0..<opcodes.count {
+                            let isFinalOperation = i == opcodes.count - 1
+                            prepare(
+                                opcodes[i],
+                                sqe: sqe,
+                                fd: fd,
+                                address: address,
+                                length: length,
+                                offset: offset == -1 ? UInt64(bitPattern: -1) : UInt64(offset)
+                            ) { cqe in
+                                guard !operationRaisedError else {
+                                    // only the first error is returned
+                                    return
+                                }
+
+                                guard cqe.pointee.res >= 0 else {
+                                    continuation.resume(throwing: ErrNo(rawValue: cqe.pointee.res))
+                                    operationRaisedError = true
+                                    return
+                                }
+
+                                if isFinalOperation {
+                                    do {
+                                        let result = try handler(cqe.pointee)
+                                        continuation.resume(returning: result)
+                                    } catch {
+                                        continuation.resume(throwing: error)
+                                    }
+                                }
                             }
-                            do {
-                                let result = try handler(cqe.pointee)
-                                continuation.resume(returning: result)
-                            } catch {
-                                continuation.resume(throwing: error)
+
+                            var flags = flags
+                            if !isFinalOperation {
+                                flags |= (1 << IOSQE_IO_LINK_BIT)
                             }
+                            setFlags(
+                                sqe,
+                                flags: flags,
+                                ioprio: ioprio,
+                                moreFlags: moreFlags,
+                                bufferIndex: bufferIndex,
+                                bufferGroup: bufferGroup
+                            )
+                            if let socketAddress {
+                                try socketAddress.withSockAddr { socketAddress in
+                                    try setSocketAddress(sqe, socketAddress: socketAddress)
+                                }
+                            }
+                            try submit()
                         }
-                        setFlags(
-                            sqe,
-                            flags: flags,
-                            ioprio: ioprio,
-                            moreFlags: moreFlags,
-                            bufferIndex: bufferIndex,
-                            bufferGroup: bufferGroup
-                        )
-                        if let socketAddress {
-                            try socketAddress.withSockAddr { socketAddress in
-                                try setSocketAddress(sqe, socketAddress: socketAddress)
-                            }
-                        }
-                        try submit()
                     } catch {
                         continuation.resume(throwing: error)
                     }
