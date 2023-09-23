@@ -18,7 +18,6 @@
 import CIORingShims
 @_implementationOnly
 import CIOURing
-import Errno
 import Glibc
 
 // MARK: - iovec extensions

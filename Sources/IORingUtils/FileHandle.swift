@@ -14,7 +14,6 @@
 // limitations under the License.
 //
 
-import Errno
 import Foundation
 import Glibc
 import IORing

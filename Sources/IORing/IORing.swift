@@ -21,7 +21,6 @@ import AsyncExtensions
 import CIORingShims
 @_implementationOnly
 import CIOURing
-import Errno
 import Glibc
 
 // MARK: - actor

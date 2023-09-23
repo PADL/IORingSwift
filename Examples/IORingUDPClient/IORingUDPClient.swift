@@ -15,7 +15,6 @@
 //
 
 import AsyncExtensions
-import Errno
 import Foundation
 import Glibc
 import IORing

@@ -55,12 +55,8 @@ let package = Package(
             ]
         ),
         .target(
-            name: "Errno"
-        ),
-        .target(
             name: "IORing",
             dependencies: ["CIORingShims",
-                           "Errno",
                            "AsyncExtensions",
                            .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")],
             cSettings: [
