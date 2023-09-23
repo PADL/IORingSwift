@@ -628,7 +628,6 @@ private extension IORing {
 
     // FIXME: support partial writes
     // FIXME: is there a way to support zero copy writes?
-    @discardableResult
     func io_uring_write_fixed(
         fd: FileDescriptor,
         count: Int,
@@ -961,7 +960,7 @@ public extension IORing {
         bufferIndex: UInt16,
         bufferOffset: Int = 0,
         to fd: FileDescriptor
-    ) async throws {
+    ) async throws -> Int {
         let count = count ?? data.endIndex - data.startIndex
 
         guard count < data.endIndex - data.startIndex else {
@@ -976,7 +975,7 @@ public extension IORing {
             _ = memcpy(address, UnsafeRawPointer(bytes.baseAddress!), count)
         }
 
-        try await io_uring_write_fixed(
+        return try await io_uring_write_fixed(
             fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
             bufferOffset: bufferOffset
         )
@@ -988,12 +987,12 @@ public extension IORing {
         bufferIndex: UInt16,
         bufferOffset: Int = 0,
         to fd: FileDescriptor
-    ) async throws {
+    ) async throws -> Int {
         let count = try count ?? manager.registeredBuffersSize
 
         try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
 
-        try await io_uring_write_fixed(
+        return try await io_uring_write_fixed(
             fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
             bufferOffset: bufferOffset
         )
