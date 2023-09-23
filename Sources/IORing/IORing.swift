@@ -986,7 +986,7 @@ public extension IORing {
         try await io_uring_op_connect(fd: fd, address: ss)
     }
 
-    func registerFixedBuffers(count: Int, size: Int) async throws {
+    func registerFixedBuffers(count: Int, size: Int) throws {
         try manager.registerBuffers(count: count, size: size)
     }
 
