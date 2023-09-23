@@ -61,6 +61,12 @@ public actor IORing {
         private var ring: io_uring
         private var eventHandle: UnsafeMutableRawPointer?
         private var pendingSubmissions = Queue<Continuation>()
+        private var submissionPolicy = SubmissionPolicy.implicit
+
+        enum SubmissionPolicy {
+            case implicit
+            case explicit
+        }
 
         init(depth: CUnsignedInt = 64, flags: CUnsignedInt = 0) throws {
             var ring = io_uring()
@@ -112,6 +118,21 @@ public actor IORing {
             sqe.pointee.fsync_flags = moreFlags
             sqe.pointee.buf_index = bufferIndex
             sqe.pointee.buf_group = bufferGroup
+        }
+
+        func beginSubmissionGroup() throws {
+            guard submissionPolicy == .implicit else {
+                throw Errno.invalidArgument
+            }
+            submissionPolicy = .explicit
+        }
+
+        func endSubmissionGroup() throws {
+            guard submissionPolicy == .explicit else {
+                throw Errno.invalidArgument
+            }
+            try submit()
+            submissionPolicy = .implicit
         }
 
         private func submit() throws {
@@ -296,7 +317,9 @@ public actor IORing {
                                     try setSocketAddress(sqe, socketAddress: socketAddress)
                                 }
                             }
-                            try submit()
+                            if submissionPolicy == .implicit {
+                                try submit()
+                            }
                         }
                     } catch {
                         continuation.resume(throwing: error)
@@ -374,7 +397,9 @@ public actor IORing {
                     bufferIndex: bufferIndex,
                     bufferGroup: bufferGroup
                 )
-                try submit()
+                if submissionPolicy == .implicit {
+                    try submit()
+                }
             }
         }
 
@@ -1121,6 +1146,14 @@ public extension IORing {
             // FIXME: note this will only be called on the read, so we may need to handle short writes?
             Int(cqe.res)
         }
+    }
+
+    func beginSubmissionGroup() throws {
+        try manager.beginSubmissionGroup()
+    }
+
+    func endSubmissionGroup() throws {
+        try manager.endSubmissionGroup()
     }
 }
 
