@@ -458,6 +458,10 @@ public actor IORing {
             precondition(index < iov!.count)
             return iov![Int(index)].iov_base! + offset
         }
+
+        var hasRegisteredBuffers: Bool {
+            iov != nil
+        }
     }
 }
 
@@ -871,6 +875,10 @@ public extension IORing {
 
     func unregisterFixedBuffers() async throws {
         try manager.unregisterBuffers()
+    }
+
+    var hasRegisteredBuffers: Bool {
+        manager.hasRegisteredBuffers
     }
 }
 
