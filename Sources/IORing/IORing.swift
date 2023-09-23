@@ -910,7 +910,7 @@ public extension IORing {
         try manager.unregisterBuffers()
     }
 
-    var hasRegisteredBuffers: Bool {
+    var hasRegisteredFixedBuffers: Bool {
         manager.hasRegisteredBuffers
     }
 
