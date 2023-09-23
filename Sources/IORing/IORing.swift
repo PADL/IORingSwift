@@ -949,6 +949,23 @@ public extension IORing {
             bufferOffset: bufferOffset
         )
     }
+
+    func writeFixed(
+        count: Int? = nil,
+        offset: Int = -1,
+        bufferIndex: UInt16,
+        bufferOffset: Int = 0,
+        to fd: FileDescriptor
+    ) async throws {
+        let count = try count ?? manager.registeredBuffersSize
+
+        try manager.validateFixedBuffer(index: bufferIndex, length: count, offset: bufferOffset)
+
+        try await io_uring_write_fixed(
+            fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
+            bufferOffset: bufferOffset
+        )
+    }
 }
 
 extension IORing: Equatable {
