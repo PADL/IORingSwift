@@ -317,7 +317,7 @@ public actor IORing {
                                     try setSocketAddress(sqe, socketAddress: socketAddress)
                                 }
                             }
-                            if submissionPolicy == .implicit {
+                            if submissionPolicy == .implicit, isFinalOperation {
                                 try submit()
                             }
                         }
