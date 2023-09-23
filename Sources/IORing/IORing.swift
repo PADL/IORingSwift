@@ -861,7 +861,10 @@ public extension IORing {
         try await io_uring_op_send(fd: fd, buffer: data)
     }
 
-    func receiveMessages(count: Int, from fd: FileDescriptor) async throws -> AnyAsyncSequence<Message> {
+    func receiveMessages(
+        count: Int,
+        from fd: FileDescriptor
+    ) async throws -> AnyAsyncSequence<Message> {
         try await io_uring_op_recvmsg_multishot(fd: fd, count: count).eraseToAnyAsyncSequence()
     }
 
@@ -921,7 +924,9 @@ public extension IORing {
         let count = try count ?? manager.registeredBuffersSize
 
         return try await io_uring_read_fixed(
-            fd: fd, count: count, offset: offset, bufferIndex: bufferIndex, bufferOffset: bufferOffset)
+            fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
+            bufferOffset: bufferOffset
+        )
     }
 
     func writeFixed(
@@ -935,9 +940,10 @@ public extension IORing {
         let count = count ?? data.endIndex - data.startIndex
 
         try await io_uring_write_fixed(
-            fd: fd, buffer: data, count: count, offset: offset, bufferIndex: bufferIndex, bufferOffset: bufferOffset)
+            fd: fd, buffer: data, count: count, offset: offset, bufferIndex: bufferIndex,
+            bufferOffset: bufferOffset
+        )
     }
-
 }
 
 extension IORing: Equatable {
