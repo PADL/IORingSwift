@@ -462,6 +462,22 @@ public actor IORing {
         var hasRegisteredBuffers: Bool {
             iov != nil
         }
+
+        var registeredBuffersSize: Int {
+            get throws {
+                guard let buffers else {
+                    throw ErrNo.EINVAL
+                }
+
+                return buffers[0].count
+            }
+        }
+
+        func buffer(at index: UInt16, range: Range<Int>) -> ArraySlice<UInt8> {
+            precondition(iov != nil)
+            precondition(index < iov!.count)
+            return buffers![Int(index)][range]
+        }
     }
 }
 
@@ -555,13 +571,14 @@ private extension IORing {
         }
     }
 
+    // FIXME: support partial reads
     func io_uring_read_fixed(
         fd: FileDescriptor,
         count: Int,
         offset: Int, // offset into the file we are reading
         bufferIndex: UInt16,
         bufferOffset: Int // offset into the fixed buffer
-    ) async throws -> Int {
+    ) async throws -> ArraySlice<UInt8> {
         try manager.validateFixedBuffer(index: bufferIndex, length: count, offset: bufferOffset)
 
         return try await manager.prepareAndSubmit(
@@ -572,23 +589,36 @@ private extension IORing {
             offset: offset,
             bufferIndex: bufferIndex
         ) { cqe in
-            Int(cqe.res)
+            self.manager.buffer(at: bufferIndex, range: bufferOffset..<Int(cqe.res))
         }
     }
 
+    // FIXME: support partial writes
+    // FIXME: is there a way to support zero copy writes?
+    @discardableResult
     func io_uring_write_fixed(
         fd: FileDescriptor,
+        buffer: ArraySlice<UInt8>,
         count: Int,
         offset: Int, // offset into the file we are writing
         bufferIndex: UInt16,
         bufferOffset: Int // offset into the fixed buffer
     ) async throws -> Int {
+        guard count < buffer.endIndex - buffer.startIndex else {
+            throw ErrNo.EINVAL
+        }
+
         try manager.validateFixedBuffer(index: bufferIndex, length: count, offset: bufferOffset)
+
+        let address = manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset)
+        buffer[buffer.startIndex..<buffer.endIndex].withUnsafeBytes { bytes in
+            _ = memcpy(address, UnsafeRawPointer(bytes.baseAddress!), count)
+        }
 
         return try await manager.prepareAndSubmit(
             UInt8(IORING_OP_WRITE_FIXED),
             fd: fd,
-            address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
+            address: address,
             length: CUnsignedInt(count),
             offset: offset,
             bufferIndex: bufferIndex
@@ -880,6 +910,34 @@ public extension IORing {
     var hasRegisteredBuffers: Bool {
         manager.hasRegisteredBuffers
     }
+
+    func readFixed(
+        count: Int? = nil,
+        offset: Int = -1,
+        bufferIndex: UInt16,
+        bufferOffset: Int = 0,
+        from fd: FileDescriptor
+    ) async throws -> ArraySlice<UInt8> {
+        let count = try count ?? manager.registeredBuffersSize
+
+        return try await io_uring_read_fixed(
+            fd: fd, count: count, offset: offset, bufferIndex: bufferIndex, bufferOffset: bufferOffset)
+    }
+
+    func writeFixed(
+        _ data: ArraySlice<UInt8>,
+        count: Int? = nil,
+        offset: Int = -1,
+        bufferIndex: UInt16,
+        bufferOffset: Int = 0,
+        from fd: FileDescriptor
+    ) async throws {
+        let count = count ?? data.endIndex - data.startIndex
+
+        try await io_uring_write_fixed(
+            fd: fd, buffer: data, count: count, offset: offset, bufferIndex: bufferIndex, bufferOffset: bufferOffset)
+    }
+
 }
 
 extension IORing: Equatable {
