@@ -534,8 +534,21 @@ public actor IORing {
         func buffer(at index: UInt16, range: Range<Int>) -> ArraySlice<UInt8> {
             precondition(hasRegisteredBuffers)
             precondition(try! index < registeredBuffersCount)
+            precondition(try! range.upperBound <= registeredBuffersSize)
 
             return buffers![Int(index)][range]
+        }
+
+        func withFixedBufferSlice<T>(
+            at index: UInt16,
+            range: Range<Int>,
+            _ body: (inout ArraySlice<UInt8>) throws -> T
+        ) rethrows -> T {
+            precondition(hasRegisteredBuffers)
+            precondition(try! index < registeredBuffersCount)
+            precondition(try! range.upperBound <= registeredBuffersSize)
+
+            return try body(&buffers![Int(index)][range])
         }
 
         func withUnsafeMutableBytesOfFixedBuffer<T>(
