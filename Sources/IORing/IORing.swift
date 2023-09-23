@@ -1040,16 +1040,15 @@ public extension IORing {
         bufferIndex: UInt16,
         bufferOffset: Int = 0,
         to fd: FileDescriptor,
-        _ body: (UnsafeMutableRawBufferPointer) throws -> ()
+        _ body: (inout ArraySlice<UInt8>) throws -> ()
     ) async throws -> Int {
         let count = try count ?? manager.registeredBuffersSize
 
         try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
 
-        try manager.withUnsafeMutableBytesOfFixedBuffer(
+        try manager.withFixedBufferSlice(
             at: bufferIndex,
-            length: count,
-            offset: bufferOffset,
+            range: bufferOffset..<(bufferOffset + count),
             body
         )
 
@@ -1066,16 +1065,15 @@ public extension IORing {
         bufferIndex: UInt16,
         bufferOffset: Int = 0,
         to fd: FileDescriptor,
-        _ body: (UnsafeMutableRawBufferPointer) throws -> ()
+        _ body: (inout ArraySlice<UInt8>) throws -> ()
     ) async throws -> Int {
         let count = try count ?? manager.registeredBuffersSize
 
         try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
 
-        try manager.withUnsafeMutableBytesOfFixedBuffer(
+        try manager.withFixedBufferSlice(
             at: bufferIndex,
-            length: count,
-            offset: bufferOffset,
+            range: bufferOffset..<(bufferOffset + count),
             body
         )
 
