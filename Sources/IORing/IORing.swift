@@ -61,12 +61,6 @@ public actor IORing {
         private var ring: io_uring
         private var eventHandle: UnsafeMutableRawPointer?
         private var pendingSubmissions = Queue<Continuation>()
-        private var submissionPolicy = SubmissionPolicy.implicit
-
-        enum SubmissionPolicy {
-            case implicit
-            case explicit
-        }
 
         init(depth: CUnsignedInt = 64, flags: CUnsignedInt = 0) throws {
             var ring = io_uring()
@@ -118,21 +112,6 @@ public actor IORing {
             sqe.pointee.fsync_flags = moreFlags
             sqe.pointee.buf_index = bufferIndex
             sqe.pointee.buf_group = bufferGroup
-        }
-
-        func beginSubmissionGroup() throws {
-            guard submissionPolicy == .implicit else {
-                throw Errno.invalidArgument
-            }
-            submissionPolicy = .explicit
-        }
-
-        func endSubmissionGroup() throws {
-            guard submissionPolicy == .explicit else {
-                throw Errno.invalidArgument
-            }
-            try submit()
-            submissionPolicy = .implicit
         }
 
         private func submit() throws {
@@ -213,6 +192,68 @@ public actor IORing {
             }
         }
 
+        private func prepareAndOptionallySubmitSingleshot<T>(
+            _ opcode: UInt8,
+            fd: FileDescriptor,
+            address: UnsafeRawPointer? = nil,
+            length: CUnsignedInt = 0,
+            offset: Int = 0,
+            flags: UInt8 = 0,
+            ioprio: UInt16 = 0,
+            moreFlags: UInt32 = 0,
+            bufferIndex: UInt16 = 0,
+            bufferGroup: UInt16 = 0,
+            socketAddress: sockaddr_storage? = nil,
+            handler: @escaping (io_uring_cqe) throws -> T,
+            submit: Bool
+        ) async throws -> T {
+            try await enqueueRetrying { [self] sqe in
+                try await withCheckedThrowingContinuation { (
+                    continuation: CheckedContinuation<T, Error>
+                ) in
+                    prepare(
+                        opcode,
+                        sqe: sqe,
+                        fd: fd,
+                        address: address,
+                        length: length,
+                        offset: offset == -1 ? UInt64(bitPattern: -1) : UInt64(offset)
+                    ) { cqe in
+                        guard cqe.pointee.res >= 0 else {
+                            continuation.resume(throwing: Errno(rawValue: cqe.pointee.res))
+                            return
+                        }
+                        do {
+                            let result = try handler(cqe.pointee)
+                            continuation.resume(returning: result)
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                    do {
+                        setFlags(
+                            sqe,
+                            flags: flags,
+                            ioprio: ioprio,
+                            moreFlags: moreFlags,
+                            bufferIndex: bufferIndex,
+                            bufferGroup: bufferGroup
+                        )
+                        if let socketAddress {
+                            try socketAddress.withSockAddr { socketAddress in
+                                try setSocketAddress(sqe, socketAddress: socketAddress)
+                            }
+                        }
+                        if submit {
+                            try self.submit()
+                        }
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
+        }
+
         func prepareAndSubmit<T>(
             _ opcode: UInt8,
             fd: FileDescriptor,
@@ -227,8 +268,8 @@ public actor IORing {
             socketAddress: sockaddr_storage? = nil,
             handler: @escaping (io_uring_cqe) throws -> T
         ) async throws -> T {
-            try await prepareAndSubmitLinked(
-                [opcode],
+            try await prepareAndOptionallySubmitSingleshot(
+                opcode,
                 fd: fd,
                 address: address,
                 length: length,
@@ -239,12 +280,11 @@ public actor IORing {
                 bufferIndex: bufferIndex,
                 bufferGroup: bufferGroup,
                 socketAddress: socketAddress,
-                handler: handler
+                handler: handler,
+                submit: true
             )
         }
 
-        /// prepare and atomically submit a series of linked operations on the same buffer,
-        /// can be used to implement write then read. `handler` is called after the last op.
         func prepareAndSubmitLinked<T>(
             _ opcodes: [UInt8],
             fd: FileDescriptor,
@@ -258,73 +298,33 @@ public actor IORing {
             bufferGroup: UInt16 = 0,
             socketAddress: sockaddr_storage? = nil,
             handler: @escaping (io_uring_cqe) throws -> T
-        ) async throws -> T {
-            try await enqueueRetrying { [self] sqe in
-                try await withCheckedThrowingContinuation { (
-                    continuation: CheckedContinuation<
-                        T,
-                        Error
-                    >
-                ) in
-                    do {
-                        var operationRaisedError = false
-
-                        for i in 0..<opcodes.count {
-                            let isFinalOperation = i == opcodes.count - 1
-                            prepare(
-                                opcodes[i],
-                                sqe: sqe,
-                                fd: fd,
-                                address: address,
-                                length: length,
-                                offset: offset == -1 ? UInt64(bitPattern: -1) : UInt64(offset)
-                            ) { cqe in
-                                guard !operationRaisedError else {
-                                    // only the first error is returned
-                                    return
-                                }
-
-                                guard cqe.pointee.res >= 0 else {
-                                    continuation.resume(throwing: Errno(rawValue: -cqe.pointee.res))
-                                    operationRaisedError = true
-                                    return
-                                }
-
-                                if isFinalOperation {
-                                    do {
-                                        let result = try handler(cqe.pointee)
-                                        continuation.resume(returning: result)
-                                    } catch {
-                                        continuation.resume(throwing: error)
-                                    }
-                                }
-                            }
-
-                            var flags = flags
-                            if !isFinalOperation {
-                                flags |= (1 << IOSQE_IO_LINK_BIT)
-                            }
-                            setFlags(
-                                sqe,
-                                flags: flags,
-                                ioprio: ioprio,
-                                moreFlags: moreFlags,
-                                bufferIndex: bufferIndex,
-                                bufferGroup: bufferGroup
-                            )
-                            if let socketAddress {
-                                try socketAddress.withSockAddr { socketAddress in
-                                    try setSocketAddress(sqe, socketAddress: socketAddress)
-                                }
-                            }
-                            if submissionPolicy == .implicit, isFinalOperation {
-                                try submit()
-                            }
-                        }
-                    } catch {
-                        continuation.resume(throwing: error)
+        ) async throws -> [T] {
+            try await withThrowingTaskGroup(of: T.self, returning: [T].self) { taskGroup in
+                for i in 0..<opcodes.count {
+                    taskGroup.addTask {
+                        try await self.prepareAndOptionallySubmitSingleshot(
+                            opcodes[i],
+                            fd: fd,
+                            address: address,
+                            length: length,
+                            offset: offset,
+                            flags: flags | (i < opcodes.count - 1 ? (1 << IOSQE_IO_LINK_BIT) : 0),
+                            ioprio: ioprio,
+                            moreFlags: moreFlags,
+                            bufferIndex: bufferIndex,
+                            bufferGroup: bufferGroup,
+                            socketAddress: socketAddress,
+                            handler: handler,
+                            submit: false
+                        )
                     }
                 }
+                try submit()
+                var results = [T]()
+                while let result = try await taskGroup.next() {
+                    results.append(result)
+                }
+                return results
             }
         }
 
@@ -375,7 +375,7 @@ public actor IORing {
                                 }
                             }
                         } else {
-                            channel.fail(Errno(rawValue: -cqe.pointee.res))
+                            channel.fail(Errno(rawValue: cqe.pointee.res))
                         }
                         return
                     }
@@ -397,9 +397,7 @@ public actor IORing {
                     bufferIndex: bufferIndex,
                     bufferGroup: bufferGroup
                 )
-                if submissionPolicy == .implicit {
-                    try submit()
-                }
+                try submit()
             }
         }
 
@@ -1135,7 +1133,7 @@ public extension IORing {
             body
         )
 
-        return try await manager.prepareAndSubmitLinked(
+        let result: [Int] = try await manager.prepareAndSubmitLinked(
             [UInt8(IORING_OP_WRITE_FIXED), UInt8(IORING_OP_READ_FIXED)],
             fd: fd,
             address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
@@ -1143,17 +1141,10 @@ public extension IORing {
             offset: offset,
             bufferIndex: bufferIndex
         ) { cqe in
-            // FIXME: note this will only be called on the read, so we may need to handle short writes?
             Int(cqe.res)
         }
-    }
 
-    func beginSubmissionGroup() throws {
-        try manager.beginSubmissionGroup()
-    }
-
-    func endSubmissionGroup() throws {
-        try manager.endSubmissionGroup()
+        return result.last ?? 0
     }
 }
 
