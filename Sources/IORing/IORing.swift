@@ -623,34 +623,40 @@ public actor IORing {
 private extension IORing {
     func io_uring_op_cancel(
         fd: FileDescriptor,
+        link: Bool = false,
         flags: UInt32 = 0
     ) async throws {
         try await manager.prepareAndSubmit(
             UInt8(IORING_OP_ASYNC_CANCEL),
             fd: fd,
+            flags: link ? IORing.IOSqeIOLink : 0,
             moreFlags: flags
         ) { _ in }
     }
 
     func io_uring_op_close(
-        fd: FileDescriptor
+        fd: FileDescriptor,
+        link: Bool = false
     ) async throws {
         try await manager.prepareAndSubmit(
             UInt8(IORING_OP_CLOSE),
-            fd: fd
+            fd: fd,
+            flags: link ? IORing.IOSqeIOLink : 0
         ) { _ in }
     }
 
     func io_uring_op_readv(
         fd: FileDescriptor,
         iovecs: [iovec],
-        offset: Int
+        offset: Int,
+        link: Bool = false
     ) async throws -> Int {
         try await manager.prepareAndSubmitIovec(
             UInt8(IORING_OP_READV),
             fd: fd,
             iovecs: iovecs,
-            offset: offset
+            offset: offset,
+            flags: link ? IORing.IOSqeIOLink : 0
         ) { cqe in
             Int(cqe.res)
         }
@@ -660,13 +666,15 @@ private extension IORing {
         fd: FileDescriptor,
         iovecs: [iovec],
         count: Int,
-        offset: Int
+        offset: Int,
+        link: Bool = false
     ) async throws -> Int {
         try await manager.prepareAndSubmitIovec(
             UInt8(IORING_OP_WRITEV),
             fd: fd,
             iovecs: iovecs,
-            offset: offset
+            offset: offset,
+            flags: link ? IORing.IOSqeIOLink : 0
         ) { cqe in
             Int(cqe.res)
         }
@@ -676,14 +684,16 @@ private extension IORing {
         fd: FileDescriptor,
         buffer: inout [UInt8],
         count: Int,
-        offset: Int
+        offset: Int,
+        link: Bool = false
     ) async throws -> Int {
         try await manager.prepareAndSubmit(
             UInt8(IORING_OP_READ),
             fd: fd,
             address: buffer,
             length: CUnsignedInt(count),
-            offset: offset
+            offset: offset,
+            flags: link ? IORing.IOSqeIOLink : 0
         ) { [buffer] cqe in
             _ = buffer
             return Int(cqe.res)
@@ -694,14 +704,16 @@ private extension IORing {
         fd: FileDescriptor,
         buffer: [UInt8],
         count: Int,
-        offset: Int
+        offset: Int,
+        link: Bool = false
     ) async throws -> Int {
         try await manager.prepareAndSubmit(
             UInt8(IORING_OP_WRITE),
             fd: fd,
             address: buffer,
             length: CUnsignedInt(count),
-            offset: offset
+            offset: offset,
+            flags: link ? IORing.IOSqeIOLink : 0
         ) { [buffer] cqe in
             _ = buffer
             return Int(cqe.res)
@@ -714,7 +726,8 @@ private extension IORing {
         count: Int,
         offset: Int, // offset into the file we are reading
         bufferIndex: UInt16,
-        bufferOffset: Int // offset into the fixed buffer
+        bufferOffset: Int, // offset into the fixed buffer
+        link: Bool = false
     ) async throws -> Int {
         try await manager.prepareAndSubmit(
             UInt8(IORING_OP_READ_FIXED),
@@ -722,6 +735,7 @@ private extension IORing {
             address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
             length: CUnsignedInt(count),
             offset: offset,
+            flags: link ? IORing.IOSqeIOLink : 0,
             bufferIndex: bufferIndex
         ) { cqe in
             Int(cqe.res)
@@ -735,7 +749,8 @@ private extension IORing {
         count: Int,
         offset: Int, // offset into the file we are writing
         bufferIndex: UInt16,
-        bufferOffset: Int // offset into the fixed buffer
+        bufferOffset: Int, // offset into the fixed buffer
+        link: Bool = false
     ) async throws -> Int {
         try await manager.prepareAndSubmit(
             UInt8(IORING_OP_WRITE_FIXED),
@@ -743,6 +758,7 @@ private extension IORing {
             address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
             length: CUnsignedInt(count),
             offset: offset,
+            flags: link ? IORing.IOSqeIOLink : 0,
             bufferIndex: bufferIndex
         ) { cqe in
             Int(cqe.res)
@@ -753,7 +769,8 @@ private extension IORing {
         fd: FileDescriptor,
         buffer: [UInt8],
         to socketAddress: sockaddr_storage? = nil,
-        flags: UInt32 = 0
+        flags: UInt32 = 0,
+        link: Bool = false
     ) async throws {
         try await manager.prepareAndSubmit(
             UInt8(IORING_OP_SEND),
@@ -761,6 +778,7 @@ private extension IORing {
             address: buffer,
             length: CUnsignedInt(buffer.count),
             offset: 0,
+            flags: link ? IORing.IOSqeIOLink : 0,
             moreFlags: flags,
             socketAddress: socketAddress
         ) { [buffer] _ in
@@ -772,7 +790,8 @@ private extension IORing {
     func io_uring_op_recv(
         fd: FileDescriptor,
         buffer: inout [UInt8],
-        flags: UInt32 = 0
+        flags: UInt32 = 0,
+        link: Bool = false
     ) async throws {
         try await manager.prepareAndSubmit(
             UInt8(IORING_OP_RECV),
@@ -780,6 +799,7 @@ private extension IORing {
             address: buffer,
             length: CUnsignedInt(buffer.count),
             offset: 0,
+            flags: link ? IORing.IOSqeIOLink : 0,
             moreFlags: flags
         ) { [buffer] _ in
             _ = buffer
@@ -789,7 +809,8 @@ private extension IORing {
 
     func io_uring_op_recv_multishot(
         fd: FileDescriptor,
-        count: Int
+        count: Int,
+        link: Bool = false
     ) async throws -> AsyncThrowingChannel<[UInt8], Error> {
         // FIXME: check this will be captured or do we need to
         var buffer = [UInt8](repeating: 0, count: count)
@@ -798,6 +819,7 @@ private extension IORing {
             fd: fd,
             address: &buffer[0],
             length: CUnsignedInt(count),
+            flags: link ? IORing.IOSqeIOLink : 0,
             ioprio: RecvSendIoPrio.multishot
         ) { [buffer] _ in
             buffer
@@ -807,7 +829,8 @@ private extension IORing {
     func io_uring_op_recvmsg(
         fd: FileDescriptor,
         message: inout Message,
-        flags: UInt32 = 0
+        flags: UInt32 = 0,
+        link: Bool = false
     ) async throws {
         try await message.withUnsafeMutablePointer { pointer in
             try await manager.prepareAndSubmit(
@@ -816,6 +839,7 @@ private extension IORing {
                 address: pointer,
                 length: 1,
                 offset: 0,
+                flags: link ? IORing.IOSqeIOLink : 0,
                 moreFlags: flags
             ) { _ in }
         }
@@ -824,7 +848,8 @@ private extension IORing {
     func io_uring_op_recvmsg_multishot(
         fd: FileDescriptor,
         count: Int,
-        flags: UInt32 = 0
+        flags: UInt32 = 0,
+        link: Bool = false
     ) async throws -> AsyncThrowingChannel<Message, Error> {
         let message = Message(capacity: count)
         return try await message.withUnsafeMutablePointer { pointer in
@@ -832,6 +857,7 @@ private extension IORing {
                 UInt8(IORING_OP_RECVMSG),
                 fd: fd,
                 address: pointer,
+                flags: link ? IORing.IOSqeIOLink : 0,
                 ioprio: AcceptIoPrio.multishot,
                 moreFlags: flags
             ) { [message] _ in
@@ -843,7 +869,8 @@ private extension IORing {
     func io_uring_op_sendmsg(
         fd: FileDescriptor,
         message: Message,
-        flags: UInt32 = 0
+        flags: UInt32 = 0,
+        link: Bool = false
     ) async throws {
         try await message.withUnsafePointer { pointer in
             try await manager.prepareAndSubmit(
@@ -852,6 +879,7 @@ private extension IORing {
                 address: pointer,
                 length: 1,
                 offset: 0,
+                flags: link ? IORing.IOSqeIOLink : 0,
                 moreFlags: flags
             ) { _ in }
         }
@@ -859,7 +887,8 @@ private extension IORing {
 
     func io_uring_op_accept(
         fd: FileDescriptor,
-        flags: UInt32 = 0
+        flags: UInt32 = 0,
+        link: Bool = false
     ) async throws -> (FileDescriptor, sockaddr_storage) {
         var ss = sockaddr_storage()
         return try await manager.prepareAndSubmit(
@@ -868,6 +897,7 @@ private extension IORing {
             address: &ss,
             length: CUnsignedInt(MemoryLayout<sockaddr_storage>.size),
             offset: 0,
+            flags: link ? IORing.IOSqeIOLink : 0,
             moreFlags: flags
         ) { [ss] cqe in
             _ = ss
@@ -877,11 +907,13 @@ private extension IORing {
 
     func io_uring_op_multishot_accept(
         fd: FileDescriptor,
-        flags: UInt32 = 0
+        flags: UInt32 = 0,
+        link: Bool = false
     ) async throws -> AsyncThrowingChannel<FileDescriptor, Error> {
         try await manager.prepareAndSubmitMultishot(
             UInt8(IORING_OP_ACCEPT),
             fd: fd,
+            flags: link ? IORing.IOSqeIOLink : 0,
             ioprio: AcceptIoPrio.multishot,
             moreFlags: flags,
             retryOnCancel: true
@@ -892,14 +924,16 @@ private extension IORing {
 
     func io_uring_op_connect(
         fd: FileDescriptor,
-        address: sockaddr_storage
+        address: sockaddr_storage,
+        link: Bool = false
     ) async throws {
         var address = address // FIXME: check lifetime
         try await manager.prepareAndSubmit(
             UInt8(IORING_OP_CONNECT),
             fd: fd,
             address: &address,
-            offset: Int(address.size)
+            offset: Int(address.size),
+            flags: link ? IORing.IOSqeIOLink : 0
         ) { [address] _ in
             _ = address
         }
@@ -1165,11 +1199,43 @@ public extension IORing {
         return result.last ?? 0
     }
 
-    func withSubmissionGroup<T>(
-        _ body: @escaping (EnqueueTask<T>) -> ()
-    ) async throws -> [T] {
-        try await manager.withSubmissionGroup(body)
+/*
+    @discardableResult
+    func copy(
+        count: Int,
+        offset: Int = -1,
+        from fd1: FileDescriptor,
+        to fd2: FileDescriptor
+    ) async throws -> Bool {
+        var buffer = [UInt8](repeating: 0, count: count)
+
+        let result = try await manager.withSubmissionGroup { [self] enqueue in
+            enqueue { [self] in
+                try await io_uring_op_read(
+                    fd: fd1,
+                    buffer: &buffer,
+                    count: count,
+                    offset: offset,
+                    link: true
+                )
+            }
+            enqueue { [self] in
+                try await io_uring_op_write(
+                    fd: fd2,
+                    buffer: buffer,
+                    count: count,
+                    offset: offset
+                )
+            }
+        }
+
+        if result[0] != result[1] {
+            throw Errno.resourceTemporarilyUnavailable
+        }
+
+        return result[0] == 0
     }
+*/
 }
 
 extension IORing: Equatable {
