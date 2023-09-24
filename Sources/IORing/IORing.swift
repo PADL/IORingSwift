@@ -28,6 +28,13 @@ import Glibc
 public actor IORing {
     public static let shared = try? IORing()
 
+    public static let IOSqeFixedFile: UInt8 = (1 << IOSQE_FIXED_FILE_BIT)
+    public static let IOSqeIODrain: UInt8 = (1 << IOSQE_IO_DRAIN_BIT)
+    public static let IOSqeIOLink: UInt8 = (1 << IOSQE_IO_LINK_BIT)
+    public static let IOSqeIOHardLink: UInt8 = (1 << IOSQE_IO_HARDLINK_BIT)
+    public static let IOSqeAsync: UInt8 = (1 << IOSQE_ASYNC_BIT)
+    public static let IOSqeBufferSelect: UInt8 = (1 << IOSQE_BUFFER_SELECT_BIT)
+
     public typealias FileDescriptor = CInt
 
     public typealias EnqueuedTaskBody<T> =
@@ -322,7 +329,7 @@ public actor IORing {
                             address: address,
                             length: length,
                             offset: offset,
-                            flags: flags | (i < opcodes.count - 1 ? (1 << IOSQE_IO_LINK_BIT) : 0),
+                            flags: flags | (i < opcodes.count - 1 ? IORing.IOSqeIOLink: 0),
                             ioprio: ioprio,
                             moreFlags: moreFlags,
                             bufferIndex: bufferIndex,
