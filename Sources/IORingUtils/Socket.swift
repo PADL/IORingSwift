@@ -33,9 +33,9 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
 
     public var description: String {
         if let localName = try? localName, let peerName = try? peerName {
-            return "\(type(of: self))(fd: \(fd), localName: \(localName), peerName: \(peerName))"
+            "\(type(of: self))(fd: \(fd), localName: \(localName), peerName: \(peerName))"
         } else {
-            return "\(type(of: self))(fd: \(fd))"
+            "\(type(of: self))(fd: \(fd))"
         }
     }
 
@@ -345,15 +345,15 @@ extension sockaddr: SocketAddress {
             return try withUnsafePointer(to: storage) {
                 switch Int32(sa_family) {
                 case AF_INET:
-                    return try $0.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+                    try $0.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
                         try $0.pointee.presentationAddress
                     }
                 case AF_INET6:
-                    return try $0.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
+                    try $0.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
                         try $0.pointee.presentationAddress
                     }
                 case AF_LOCAL:
-                    return try $0.withMemoryRebound(to: sockaddr_un.self, capacity: 1) {
+                    try $0.withMemoryRebound(to: sockaddr_un.self, capacity: 1) {
                         try $0.pointee.presentationAddress
                     }
                 default:
@@ -370,11 +370,11 @@ extension sockaddr: SocketAddress {
             return try withUnsafePointer(to: storage) {
                 switch Int32(sa_family) {
                 case AF_INET:
-                    return try $0.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+                    try $0.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
                         try $0.pointee.port
                     }
                 case AF_INET6:
-                    return try $0.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
+                    try $0.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
                         try $0.pointee.port
                     }
                 default:

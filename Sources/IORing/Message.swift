@@ -110,11 +110,10 @@ public final class Message {
         buffer: [UInt8] = [],
         flags: Int32 = 0
     ) throws {
-        let ss: sockaddr_storage
-        if let name {
-            ss = try sockaddr_storage(bytes: name)
+        let ss: sockaddr_storage = if let name {
+            try sockaddr_storage(bytes: name)
         } else {
-            ss = sockaddr_storage()
+            sockaddr_storage()
         }
         self.init(address: ss, buffer: buffer, flags: 0)
     }

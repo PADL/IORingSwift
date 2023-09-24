@@ -1199,43 +1199,43 @@ public extension IORing {
         return result.last ?? 0
     }
 
-/*
-    @discardableResult
-    func copy(
-        count: Int,
-        offset: Int = -1,
-        from fd1: FileDescriptor,
-        to fd2: FileDescriptor
-    ) async throws -> Bool {
-        var buffer = [UInt8](repeating: 0, count: count)
+    /*
+     @discardableResult
+     func copy(
+         count: Int,
+         offset: Int = -1,
+         from fd1: FileDescriptor,
+         to fd2: FileDescriptor
+     ) async throws -> Bool {
+         var buffer = [UInt8](repeating: 0, count: count)
 
-        let result = try await manager.withSubmissionGroup { [self] enqueue in
-            enqueue { [self] in
-                try await io_uring_op_read(
-                    fd: fd1,
-                    buffer: &buffer,
-                    count: count,
-                    offset: offset,
-                    link: true
-                )
-            }
-            enqueue { [self] in
-                try await io_uring_op_write(
-                    fd: fd2,
-                    buffer: buffer,
-                    count: count,
-                    offset: offset
-                )
-            }
-        }
+         let result = try await manager.withSubmissionGroup { [self] enqueue in
+             enqueue { [self] in
+                 try await io_uring_op_read(
+                     fd: fd1,
+                     buffer: &buffer,
+                     count: count,
+                     offset: offset,
+                     link: true
+                 )
+             }
+             enqueue { [self] in
+                 try await io_uring_op_write(
+                     fd: fd2,
+                     buffer: buffer,
+                     count: count,
+                     offset: offset
+                 )
+             }
+         }
 
-        if result[0] != result[1] {
-            throw Errno.resourceTemporarilyUnavailable
-        }
+         if result[0] != result[1] {
+             throw Errno.resourceTemporarilyUnavailable
+         }
 
-        return result[0] == 0
-    }
-*/
+         return result[0] == 0
+     }
+     */
 }
 
 extension IORing: Equatable {
