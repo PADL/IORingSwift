@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+#include <assert.h>
 #include <sys/eventfd.h>
 #include <liburing.h>
 #include <dispatch/dispatch.h>
@@ -21,20 +22,16 @@
 
 #include "CIORingShims.h"
 
-void io_uring_prep_rw_block(int op,
-                            struct io_uring_sqe *sqe,
-                            int fd,
-                            const void *addr,
-                            unsigned int len,
-                            uint64_t offset,
-                            io_uring_cqe_block block) {
-    io_uring_prep_rw(op, sqe, fd, addr, len, offset);
+void io_uring_sqe_set_block(struct io_uring_sqe *sqe, io_uring_cqe_block block) {
+    assert(sqe->user_data == 0);
     io_uring_sqe_set_data(sqe, _Block_copy(block));
 }
 
 static void invoke_block(struct io_uring_cqe *cqe) {
     auto block =
         reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
+    assert(cqe != nullptr);
+    assert(block != nullptr);
     block(cqe);
     if ((cqe->flags & IORING_CQE_F_MORE) == 0)
         _Block_release(block);

@@ -25,7 +25,7 @@ import Glibc
 
 // MARK: - actor
 
-public actor IORing {
+public actor IORing: CustomStringConvertible {
     public static let shared = try? IORing()
 
     public static let IOSqeFixedFile: UInt8 = (1 << IOSQE_FIXED_FILE_BIT)
@@ -36,12 +36,6 @@ public actor IORing {
     public static let IOSqeBufferSelect: UInt8 = (1 << IOSQE_BUFFER_SELECT_BIT)
 
     public typealias FileDescriptor = CInt
-
-    public typealias EnqueuedTaskBody<T> =
-        (_: @Sendable () async throws -> T)
-
-    public typealias EnqueueTask<T> =
-        (_: (@escaping EnqueuedTaskBody<T>) -> ())
 
     private let manager: Manager
 
@@ -64,20 +58,38 @@ public actor IORing {
         static let zcReportUsage = UInt16(1 << 3)
     }
 
+    // FIXME: should we make default depth >1?
     public init(depth: Int = 1, flags: UInt32 = 0) throws {
         manager = try Manager(depth: CUnsignedInt(depth), flags: flags)
     }
 
-    private final class Manager {
+    func submit() throws {
+        try manager.submit()
+    }
+
+    public nonisolated var description: String {
+        withUnsafePointer(to: self) { pointer in
+            "\(type(of: self))(\(pointer))"
+        }
+    }
+
+    fileprivate final class Manager {
         private typealias Continuation = CheckedContinuation<(), Error>
 
         private var ring: io_uring
         private var eventHandle: UnsafeMutableRawPointer?
         private var pendingSubmissions = Queue<Continuation>()
 
+        let depth: CUnsignedInt
+
+        static func logDebug(message: String, functionName: String = #function) {
+            debugPrint("IORing.Manager.\(functionName): \(message)")
+        }
+
         init(depth: CUnsignedInt = 64, flags: CUnsignedInt = 0) throws {
             var ring = io_uring()
 
+            self.depth = depth
             try Errno.throwingErrno {
                 io_uring_queue_init(depth, &ring, flags)
             }
@@ -99,69 +111,39 @@ public actor IORing {
 
         private typealias BlockHandler = (UnsafePointer<io_uring_cqe>) -> ()
 
-        private func setSocketAddress(
-            _ sqe: UnsafeMutablePointer<io_uring_sqe>,
-            socketAddress: UnsafePointer<sockaddr>
-        ) throws {
-            sqe.pointee.addr2 = UInt64(UInt(bitPattern: socketAddress))
-            // FIXME: update kernel headers to get size, pad structure definition
-            try withUnsafeMutablePointer(to: &sqe.pointee.file_index) { pointer in
-                try pointer.withMemoryRebound(to: UInt16.self, capacity: 2) { pointer in
-                    pointer[0] = try UInt16(socketAddress.pointee.size)
+        private var sqe: UnsafeMutablePointer<io_uring_sqe> {
+            get throws {
+                guard let sqe = io_uring_get_sqe(&ring) else {
+                    throw Errno.resourceTemporarilyUnavailable
                 }
+                return sqe
             }
         }
 
-        private func setFlags(
-            _ sqe: UnsafeMutablePointer<io_uring_sqe>,
-            flags: UInt8,
-            ioprio: UInt16,
-            moreFlags: UInt32,
-            bufferIndex: UInt16,
-            bufferGroup: UInt16
-        ) {
-            io_uring_sqe_set_flags(sqe, UInt32(flags))
-            sqe.pointee.ioprio = ioprio
-            sqe.pointee.fsync_flags = moreFlags
-            sqe.pointee.buf_index = bufferIndex
-            sqe.pointee.buf_group = bufferGroup
-        }
+        private var asyncSqe: UnsafeMutablePointer<io_uring_sqe> {
+            get async throws {
+                repeat {
+                    do {
+                        guard let sqe = try? sqe else {
+                            // queue is full, suspend
+                            try await suspendPendingSubmission()
+                            continue
+                        }
 
-        private func submit() throws {
-            if submissionGroupTask != nil {
-                return
-            }
-            try Errno.throwingErrno {
-                io_uring_submit(&self.ring)
-            }
-        }
-
-        private func enqueueRetrying<T>(
-            body: @escaping (UnsafeMutablePointer<io_uring_sqe>) async throws -> T
-        ) async throws -> T {
-            repeat {
-                do {
-                    let sqe = io_uring_get_sqe(&ring)
-
-                    guard let sqe else {
-                        // queue is full, suspend
-                        try await suspendPendingSubmission()
-                        continue
+                        return sqe
+                    } catch let error as Errno {
+                        switch error {
+                        case .resourceTemporarilyUnavailable:
+                            fallthrough
+                        // FIXME: should we always retry on cancel?
+                        case .canceled:
+                            break
+                        default:
+                            throw error
+                        }
                     }
-
-                    return try await body(sqe)
-                } catch let error as Errno {
-                    switch error {
-                    case .resourceTemporarilyUnavailable:
-                        fallthrough
-                    // FIXME: should we always retry on cancel?
-                    case .canceled:
-                        break
-                    default:
-                        throw error
-                    }
-                }
-            } while true
+                } while true
+            }
         }
 
         private func suspendPendingSubmission() async throws {
@@ -191,20 +173,97 @@ public actor IORing {
             fd: FileDescriptor,
             address: UnsafeRawPointer?,
             length: CUnsignedInt,
-            offset: UInt64,
-            handler: @escaping BlockHandler
+            offset: UInt64
         ) {
-            io_uring_prep_rw_block(
+            io_uring_prep_rw(
                 CInt(opcode),
                 sqe,
                 fd,
                 address,
                 length,
                 offset
-            ) {
+            )
+        }
+
+        private func setSocketAddress(
+            _ sqe: UnsafeMutablePointer<io_uring_sqe>,
+            socketAddress: UnsafePointer<sockaddr>
+        ) throws {
+            sqe.pointee.addr2 = UInt64(UInt(bitPattern: socketAddress))
+            // FIXME: update kernel headers to get size, pad structure definition
+            try withUnsafeMutablePointer(to: &sqe.pointee.file_index) { pointer in
+                try pointer.withMemoryRebound(to: UInt16.self, capacity: 2) { pointer in
+                    pointer[0] = try UInt16(socketAddress.pointee.size)
+                }
+            }
+        }
+
+        private func setFlags(
+            _ sqe: UnsafeMutablePointer<io_uring_sqe>,
+            flags: UInt8,
+            ioprio: UInt16,
+            moreFlags: UInt32,
+            bufferIndex: UInt16,
+            bufferGroup: UInt16
+        ) {
+            io_uring_sqe_set_flags(sqe, UInt32(flags))
+            sqe.pointee.ioprio = ioprio
+            sqe.pointee.fsync_flags = moreFlags
+            sqe.pointee.buf_index = bufferIndex
+            sqe.pointee.buf_group = bufferGroup
+        }
+
+        private func prepareAndSetFlags(
+            _ opcode: UInt8,
+            sqe: UnsafeMutablePointer<io_uring_sqe>,
+            fd: FileDescriptor,
+            address: UnsafeRawPointer?,
+            length: CUnsignedInt,
+            offset: Int = 0,
+            flags: UInt8,
+            ioprio: UInt16,
+            moreFlags: UInt32,
+            bufferIndex: UInt16,
+            bufferGroup: UInt16,
+            socketAddress: sockaddr_storage? = nil
+        ) throws {
+            prepare(
+                opcode,
+                sqe: sqe,
+                fd: fd,
+                address: address,
+                length: length,
+                offset: offset == -1 ? UInt64(bitPattern: -1) : UInt64(offset)
+            )
+            setFlags(
+                sqe,
+                flags: flags,
+                ioprio: ioprio,
+                moreFlags: moreFlags,
+                bufferIndex: bufferIndex,
+                bufferGroup: bufferGroup
+            )
+            if let socketAddress {
+                try socketAddress.withSockAddr { socketAddress in
+                    try setSocketAddress(sqe, socketAddress: socketAddress)
+                }
+            }
+        }
+
+        private func setBlock(
+            _ sqe: UnsafeMutablePointer<io_uring_sqe>,
+            handler: @escaping BlockHandler
+        ) {
+            io_uring_sqe_set_block(sqe) {
                 // FIXME: this could race before io_uring_cqe_seen() is called, although shouldn't happen if on same actor
                 handler($0)
                 self.resumePendingSubmission()
+            }
+        }
+
+        func submit() throws {
+            try Errno.throwingErrno {
+                io_uring_submit(&self.ring)
             }
         }
 
@@ -220,124 +279,53 @@ public actor IORing {
             bufferIndex: UInt16 = 0,
             bufferGroup: UInt16 = 0,
             socketAddress: sockaddr_storage? = nil,
+            operation: SubmissionGroup<T>.Operation? = nil,
             handler: @escaping (io_uring_cqe) throws -> T
         ) async throws -> T {
-            try await enqueueRetrying { [self] sqe in
-                try await withCheckedThrowingContinuation { (
-                    continuation: CheckedContinuation<T, Error>
-                ) in
-                    prepare(
-                        opcode,
-                        sqe: sqe,
-                        fd: fd,
-                        address: address,
-                        length: length,
-                        offset: offset == -1 ? UInt64(bitPattern: -1) : UInt64(offset)
-                    ) { cqe in
-                        guard cqe.pointee.res >= 0 else {
-                            debugPrint(
-                                "IORing.prepareAndOptionallySubmitSingleshot completion failed: \(Errno(rawValue: cqe.pointee.res))"
+            let sqe = try await asyncSqe
+
+            try prepareAndSetFlags(
+                opcode,
+                sqe: sqe,
+                fd: fd,
+                address: address,
+                length: length,
+                offset: offset,
+                flags: flags,
+                ioprio: ioprio,
+                moreFlags: moreFlags,
+                bufferIndex: bufferIndex,
+                bufferGroup: bufferGroup,
+                socketAddress: socketAddress
+            )
+
+            return try await withCheckedThrowingContinuation { (
+                continuation: CheckedContinuation<
+                    T,
+                    Error
+                >
+            ) in
+                setBlock(sqe) { cqe in
+                    guard cqe.pointee.res >= 0 else {
+                        Self
+                            .logDebug(
+                                message: "completion failed: \(Errno(rawValue: cqe.pointee.res))"
                             )
-                            continuation.resume(throwing: Errno(rawValue: cqe.pointee.res))
-                            return
-                        }
-                        do {
-                            let result = try handler(cqe.pointee)
-                            continuation.resume(returning: result)
-                        } catch {
-                            debugPrint(
-                                "IORing.prepareAndOptionallySubmitSingleshot handler failed: \(error)"
-                            )
-                            continuation.resume(throwing: error)
-                        }
+                        continuation.resume(throwing: Errno(rawValue: cqe.pointee.res))
+                        return
                     }
                     do {
-                        setFlags(
-                            sqe,
-                            flags: flags,
-                            ioprio: ioprio,
-                            moreFlags: moreFlags,
-                            bufferIndex: bufferIndex,
-                            bufferGroup: bufferGroup
-                        )
-                        if let socketAddress {
-                            try socketAddress.withSockAddr { socketAddress in
-                                try setSocketAddress(sqe, socketAddress: socketAddress)
-                            }
-                        }
-                        try self.submit()
+                        try continuation.resume(returning: handler(cqe.pointee))
                     } catch {
+                        Self.logDebug(message: "handler failed: \(error)")
                         continuation.resume(throwing: error)
                     }
                 }
-            }
-        }
-
-        private var submissionGroupTask: Any? // this is just a placeholder for re-entrancy checking
-
-        /// withSubmissionGroup() allows multiple submissions to be enqueued in a single system
-        /// call
-        func withSubmissionGroup<T>(
-            _ body: @escaping (IORing.EnqueueTask<T>) -> ()
-        ) async throws -> [T] {
-            precondition(submissionGroupTask == nil)
-
-            guard submissionGroupTask == nil else {
-                throw Errno.invalidArgument // re-entrancy check
-            }
-
-            return try await withThrowingTaskGroup(of: T.self, returning: [T].self) { taskGroup in
-                self.submissionGroupTask = taskGroup
-                body { block in
-                    taskGroup.addTask {
-                        try await block()
-                    }
-                }
-                try Errno.throwingErrno {
-                    io_uring_submit(&self.ring)
-                }
-
-                var results = [T]()
-                while let result = try await taskGroup.next() {
-                    results.append(result)
-                }
-                submissionGroupTask = nil
-                return results
-            }
-        }
-
-        func prepareAndSubmitLinked<T>(
-            _ opcodes: [UInt8],
-            fd: FileDescriptor,
-            address: UnsafeRawPointer? = nil,
-            length: CUnsignedInt = 0,
-            offset: Int = 0,
-            flags: UInt8 = 0,
-            ioprio: UInt16 = 0,
-            moreFlags: UInt32 = 0,
-            bufferIndex: UInt16 = 0,
-            bufferGroup: UInt16 = 0,
-            socketAddress: sockaddr_storage? = nil,
-            handler: @escaping (io_uring_cqe) throws -> T
-        ) async throws -> [T] {
-            try await withSubmissionGroup { enqueue in
-                for i in 0..<opcodes.count {
-                    enqueue {
-                        try await self.prepareAndSubmit(
-                            opcodes[i],
-                            fd: fd,
-                            address: address,
-                            length: length,
-                            offset: offset,
-                            flags: flags | (i < opcodes.count - 1 ? IORing.IOSqeIOLink : 0),
-                            ioprio: ioprio,
-                            moreFlags: moreFlags,
-                            bufferIndex: bufferIndex,
-                            bufferGroup: bufferGroup,
-                            socketAddress: socketAddress,
-                            handler: handler
-                        )
-                    }
+                if let operation {
+                    operation.notifyBlockRegistration()
+                } else {
+                    do { try submit() }
+                    catch { continuation.resume(throwing: error) }
                 }
             }
         }
@@ -356,67 +344,66 @@ public actor IORing {
             handler: @escaping (io_uring_cqe) throws -> T,
             channel: AsyncThrowingChannel<T, Error>
         ) async throws {
-            try await enqueueRetrying { [self] sqe in
-                prepare(
-                    opcode,
-                    sqe: sqe,
-                    fd: fd,
-                    address: address,
-                    length: length,
-                    offset: 0
-                ) { cqe in
-                    guard cqe.pointee.res >= 0 else {
-                        if cqe.pointee.res == -ECANCELED, retryOnCancel {
-                            // looks like we need to resubmit the entire request
-                            Task {
-                                do {
-                                    try await self.prepareAndSubmitMultishot(
-                                        opcode,
-                                        fd: fd,
-                                        address: address,
-                                        length: length,
-                                        flags: flags,
-                                        ioprio: ioprio,
-                                        moreFlags: moreFlags,
-                                        bufferIndex: bufferIndex,
-                                        bufferGroup: bufferGroup,
-                                        retryOnCancel: retryOnCancel,
-                                        handler: handler,
-                                        channel: channel
-                                    )
-                                } catch {
-                                    channel.fail(error)
-                                }
-                            }
-                        } else {
-                            debugPrint(
-                                "IORing.prepareAndSubmitMultishot completion failed: \(Errno(rawValue: cqe.pointee.res))"
-                            )
-                            channel.fail(Errno(rawValue: cqe.pointee.res))
-                        }
-                        return
-                    }
-                    do {
-                        let result = try handler(cqe.pointee)
-                        Task {
-                            await channel.send(result)
-                        }
-                    } catch {
-                        debugPrint("IORing.prepareAndSubmitMultishot handler failed: \(error)")
-                        channel.fail(error)
-                    }
-                }
+            let sqe = try await asyncSqe
 
-                setFlags(
-                    sqe,
-                    flags: flags,
-                    ioprio: ioprio,
-                    moreFlags: moreFlags,
-                    bufferIndex: bufferIndex,
-                    bufferGroup: bufferGroup
-                )
-                try submit()
+            try prepareAndSetFlags(
+                opcode,
+                sqe: sqe,
+                fd: fd,
+                address: address,
+                length: length,
+                flags: flags,
+                ioprio: ioprio,
+                moreFlags: moreFlags,
+                bufferIndex: bufferIndex,
+                bufferGroup: bufferGroup,
+                socketAddress: nil
+            )
+
+            setBlock(sqe) { cqe in
+                guard cqe.pointee.res >= 0 else {
+                    if cqe.pointee.res == -ECANCELED, retryOnCancel {
+                        // looks like we need to resubmit the entire request
+                        Task {
+                            do {
+                                try await self.prepareAndSubmitMultishot(
+                                    opcode,
+                                    fd: fd,
+                                    address: address,
+                                    length: length,
+                                    flags: flags,
+                                    ioprio: ioprio,
+                                    moreFlags: moreFlags,
+                                    bufferIndex: bufferIndex,
+                                    bufferGroup: bufferGroup,
+                                    retryOnCancel: retryOnCancel,
+                                    handler: handler,
+                                    channel: channel
+                                )
+                            } catch {
+                                channel.fail(error)
+                            }
+                        }
+                    } else {
+                        Self
+                            .logDebug(
+                                message: "completion failed: \(Errno(rawValue: cqe.pointee.res))"
+                            )
+                        channel.fail(Errno(rawValue: cqe.pointee.res))
+                    }
+                    return
+                }
+                do {
+                    let result = try handler(cqe.pointee)
+                    Task {
+                        await channel.send(result)
+                    }
+                } catch {
+                    Self.logDebug(message: "handler failed: \(error)")
+                    channel.fail(error)
+                }
             }
+            try submit()
         }
 
         func prepareAndSubmitMultishot<T>(
@@ -478,7 +465,8 @@ public actor IORing {
                             offset: offset,
                             flags: flags,
                             ioprio: ioprio,
-                            moreFlags: moreFlags
+                            moreFlags: moreFlags,
+                            operation: nil as SubmissionGroup<()>.Operation?
                         ) { cqe in
                             do {
                                 try continuation.resume(returning: handler(cqe))
@@ -615,6 +603,16 @@ public actor IORing {
                     try body(bytes)
                 }
         }
+
+        // MARK: - submission groups
+    }
+
+    fileprivate func withSubmissionGroup<T>(@_inheritActorContext _ body: (
+        SubmissionGroup<T>
+    ) async throws -> ()) async throws -> [T] {
+        let submissionGroup = try await SubmissionGroup<T>(ring: self)
+        try await body(submissionGroup)
+        return try await submissionGroup.finish()
     }
 }
 
@@ -721,13 +719,14 @@ private extension IORing {
     }
 
     // FIXME: support partial reads
-    func io_uring_read_fixed(
+    func io_uring_op_read_fixed(
         fd: FileDescriptor,
         count: Int,
         offset: Int, // offset into the file we are reading
         bufferIndex: UInt16,
         bufferOffset: Int, // offset into the fixed buffer
-        link: Bool = false
+        link: Bool = false,
+        operation: SubmissionGroup<Int>.Operation? = nil
     ) async throws -> Int {
         try await manager.prepareAndSubmit(
             UInt8(IORING_OP_READ_FIXED),
@@ -736,21 +735,22 @@ private extension IORing {
             length: CUnsignedInt(count),
             offset: offset,
             flags: link ? IORing.IOSqeIOLink : 0,
-            bufferIndex: bufferIndex
+            bufferIndex: bufferIndex,
+            operation: operation
         ) { cqe in
             Int(cqe.res)
         }
     }
 
     // FIXME: support partial writes
-    // FIXME: is there a way to support zero copy writes?
-    func io_uring_write_fixed(
+    func io_uring_op_write_fixed(
         fd: FileDescriptor,
         count: Int,
         offset: Int, // offset into the file we are writing
         bufferIndex: UInt16,
         bufferOffset: Int, // offset into the fixed buffer
-        link: Bool = false
+        link: Bool = false,
+        operation: SubmissionGroup<Int>.Operation? = nil
     ) async throws -> Int {
         try await manager.prepareAndSubmit(
             UInt8(IORING_OP_WRITE_FIXED),
@@ -759,7 +759,8 @@ private extension IORing {
             length: CUnsignedInt(count),
             offset: offset,
             flags: link ? IORing.IOSqeIOLink : 0,
-            bufferIndex: bufferIndex
+            bufferIndex: bufferIndex,
+            operation: operation
         ) { cqe in
             Int(cqe.res)
         }
@@ -1081,7 +1082,7 @@ public extension IORing {
 
         try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
 
-        let nwritten = try await io_uring_read_fixed(
+        let nwritten = try await io_uring_op_read_fixed(
             fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
             bufferOffset: bufferOffset
         )
@@ -1101,7 +1102,7 @@ public extension IORing {
 
         try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
 
-        let nwritten = try await io_uring_read_fixed(
+        let nwritten = try await io_uring_op_read_fixed(
             fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
             bufferOffset: bufferOffset
         )
@@ -1135,7 +1136,7 @@ public extension IORing {
             _ = memcpy(address, UnsafeRawPointer(bytes.baseAddress!), count)
         }
 
-        return try await io_uring_write_fixed(
+        return try await io_uring_op_write_fixed(
             fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
             bufferOffset: bufferOffset
         )
@@ -1160,13 +1161,12 @@ public extension IORing {
             try body($0)
         }
 
-        return try await io_uring_write_fixed(
+        return try await io_uring_op_write_fixed(
             fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
             bufferOffset: bufferOffset
         )
     }
 
-    // this is useful for SPI
     func writeReadFixed(
         count: Int? = nil,
         offset: Int = -1,
@@ -1174,7 +1174,7 @@ public extension IORing {
         bufferOffset: Int = 0,
         fd: FileDescriptor,
         _ body: (inout ArraySlice<UInt8>) throws -> ()
-    ) async throws -> Int {
+    ) async throws {
         let count = try count ?? manager.registeredBuffersSize
 
         try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
@@ -1185,58 +1185,77 @@ public extension IORing {
             body
         )
 
-        let result: [Int] = try await manager.prepareAndSubmitLinked(
-            [UInt8(IORING_OP_WRITE_FIXED), UInt8(IORING_OP_READ_FIXED)],
-            fd: fd,
-            address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
-            length: CUnsignedInt(count),
-            offset: offset,
-            bufferIndex: bufferIndex
-        ) { cqe in
-            Int(cqe.res)
+        let result = try await withSubmissionGroup { (group: SubmissionGroup<Int>) in
+            await group.enqueue { [self] operation in
+                try await io_uring_op_write_fixed(
+                    fd: fd,
+                    count: count,
+                    offset: offset,
+                    bufferIndex: bufferIndex,
+                    bufferOffset: 0,
+                    operation: operation
+                )
+            }
+            await group.enqueue { [self] operation in
+                try await io_uring_op_read_fixed(
+                    fd: fd,
+                    count: count,
+                    offset: offset,
+                    bufferIndex: bufferIndex,
+                    bufferOffset: 0,
+                    link: true,
+                    operation: operation
+                )
+            }
         }
 
-        return result.last ?? 0
+        guard result.count == 2, result[0] == result[1] else {
+            throw Errno.resourceTemporarilyUnavailable
+        }
     }
 
-    /*
-     @discardableResult
-     func copy(
-         count: Int,
-         offset: Int = -1,
-         from fd1: FileDescriptor,
-         to fd2: FileDescriptor
-     ) async throws -> Bool {
-         var buffer = [UInt8](repeating: 0, count: count)
+    func copy(
+        count: Int? = nil,
+        offset: Int = -1,
+        bufferIndex: UInt16,
+        from fd1: FileDescriptor,
+        to fd2: FileDescriptor
+    ) async throws {
+        let count = try count ?? manager.registeredBuffersSize
 
-         let result = try await manager.withSubmissionGroup { [self] enqueue in
-             enqueue { [self] in
-                 try await io_uring_op_read(
-                     fd: fd1,
-                     buffer: &buffer,
-                     count: count,
-                     offset: offset,
-                     link: true
-                 )
-             }
-             enqueue { [self] in
-                 try await io_uring_op_write(
-                     fd: fd2,
-                     buffer: buffer,
-                     count: count,
-                     offset: offset
-                 )
-             }
-         }
+        try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: 0)
 
-         if result[0] != result[1] {
-             throw Errno.resourceTemporarilyUnavailable
-         }
+        let result = try await withSubmissionGroup { (group: SubmissionGroup<Int>) in
+            await group.enqueue { [self] operation in
+                try await io_uring_op_read_fixed(
+                    fd: fd1,
+                    count: count,
+                    offset: offset,
+                    bufferIndex: bufferIndex,
+                    bufferOffset: 0,
+                    link: true,
+                    operation: operation
+                )
+            }
+            await group.enqueue { [self] operation in
+                try await io_uring_op_write_fixed(
+                    fd: fd2,
+                    count: count,
+                    offset: offset,
+                    bufferIndex: bufferIndex,
+                    bufferOffset: 0,
+                    operation: operation
+                )
+            }
+        }
 
-         return result[0] == 0
-     }
-     */
+        guard result.count == 2, result[0] == result[1] else {
+            throw Errno.resourceTemporarilyUnavailable
+        }
+    }
 }
+
+// MARK: - conformances
 
 extension IORing: Equatable {
     public static func == (lhs: IORing, rhs: IORing) -> Bool {

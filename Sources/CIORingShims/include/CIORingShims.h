@@ -22,19 +22,20 @@
 extern "C" {
 #endif
 
+/// Completion queue event block, released after last event received
 typedef void (^io_uring_cqe_block)(struct io_uring_cqe *_Nonnull);
 
-void io_uring_prep_rw_block(int,
-                            struct io_uring_sqe *_Nonnull,
-                            int,
-                            const void *_Nullable,
-                            unsigned int,
-                            uint64_t,
-                            _Nonnull io_uring_cqe_block);
+/// Retains and sets block in submission queue event
+void io_uring_sqe_set_block(struct io_uring_sqe *_Nonnull sqe,
+                            _Nonnull io_uring_cqe_block block);
 
+/// Enrol a `io_uring` for `io_uring_cqe_block` processing
 int io_uring_init_event(void *_Nullable *_Nonnull, struct io_uring *_Nonnull);
+
+/// De-enroll `io_uring` from block processing
 void io_uring_deinit_event(void *_Nullable, struct io_uring *_Nonnull);
 
+/// Private helper API, presently unused
 void CMSG_APPLY(const struct msghdr * _Nonnull,
     void (^_Nonnull)(struct cmsghdr *_Nonnull, const uint8_t * _Nonnull, size_t));
 
