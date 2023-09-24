@@ -1165,11 +1165,13 @@ public extension IORing {
         return result.last ?? 0
     }
 
+/*
     func withSubmissionGroup<T>(
         _ body: @escaping (EnqueueTask<T>) -> ()
     ) async throws -> [T] {
         try await manager.withSubmissionGroup(body)
     }
+*/
 }
 
 extension IORing: Equatable {
