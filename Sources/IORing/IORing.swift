@@ -127,8 +127,12 @@ public actor IORing {
             sqe.pointee.buf_group = bufferGroup
         }
 
-        private func submit() throws {
-            if submissionGroupTask != nil {
+        private func submit(_ sqe: UnsafeMutablePointer<io_uring_sqe>) throws {
+            // FIXME: we also need to handle submitting when the final SQE is ready in
+            // the non-linked case. This isn't an issue yet because we don't expose any
+            // multiple submission API that _don't_ use linked submissions
+            if sqe.pointee.flags & IOSqeIOLink != 0 {
+                precondition(submissionGroupTask != nil)
                 return
             }
             try Errno.throwingErrno {
@@ -265,7 +269,7 @@ public actor IORing {
                                 try setSocketAddress(sqe, socketAddress: socketAddress)
                             }
                         }
-                        try self.submit()
+                        try self.submit(sqe)
                     } catch {
                         continuation.resume(throwing: error)
                     }
@@ -293,12 +297,11 @@ public actor IORing {
                         try await block()
                     }
                 }
-                try Errno.throwingErrno {
-                    return io_uring_submit(&self.ring)
-                }
 
+                debugPrint("awaiting results")
                 var results = [T]()
                 while let result = try await taskGroup.next() {
+                    debugPrint("got result \(result)")
                     results.append(result)
                 }
                 submissionGroupTask = nil
@@ -415,7 +418,7 @@ public actor IORing {
                     bufferIndex: bufferIndex,
                     bufferGroup: bufferGroup
                 )
-                try submit()
+                try submit(sqe)
             }
         }
 
@@ -729,7 +732,8 @@ private extension IORing {
         bufferOffset: Int, // offset into the fixed buffer
         link: Bool = false
     ) async throws -> Int {
-        try await manager.prepareAndSubmit(
+        debugPrint("submit read")
+        return try await manager.prepareAndSubmit(
             UInt8(IORING_OP_READ_FIXED),
             fd: fd,
             address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
@@ -738,7 +742,8 @@ private extension IORing {
             flags: link ? IORing.IOSqeIOLink : 0,
             bufferIndex: bufferIndex
         ) { cqe in
-            Int(cqe.res)
+            debugPrint("read fixed \(cqe)")
+            return Int(cqe.res)
         }
     }
 
@@ -761,7 +766,8 @@ private extension IORing {
             flags: link ? IORing.IOSqeIOLink : 0,
             bufferIndex: bufferIndex
         ) { cqe in
-            Int(cqe.res)
+            debugPrint("write fixed \(cqe)")
+            return Int(cqe.res)
         }
     }
 
@@ -1213,7 +1219,7 @@ public extension IORing {
 
         let result = try await manager.withSubmissionGroup { [self] enqueue in
             enqueue { [self] in
-                return try await io_uring_op_read_fixed(
+                try await io_uring_op_read_fixed(
                     fd: fd1,
                     count: count,
                     offset: offset,
@@ -1223,7 +1229,7 @@ public extension IORing {
                 )
             }
             enqueue { [self] in
-                return try await io_uring_op_write_fixed(
+                try await io_uring_op_write_fixed(
                     fd: fd2,
                     count: count,
                     offset: offset,

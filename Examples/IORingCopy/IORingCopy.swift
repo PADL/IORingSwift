@@ -30,12 +30,13 @@ public struct IORingCopy {
             exit(1)
         }
 
-        let copier = try IORingCopy()
+        let copier = try await IORingCopy()
         try await copier.copy(from: CommandLine.arguments[1], to: CommandLine.arguments[2])
     }
 
-    init() throws {
+    init() async throws {
         ring = try IORing()
+        try await ring.registerFixedBuffers(count: 1, size: Self.BlockSize)
     }
 
     func copy(from: String, to: String) async throws {
@@ -46,24 +47,23 @@ public struct IORingCopy {
         var blocks = size % Self.BlockSize
         if size % blocks != 0 { blocks += 1 }
         var nremain = size
-        var buffer = [UInt8](repeating: 0, count: Self.BlockSize)
 
         while nremain != 0 {
             let count = nremain > Self.BlockSize ? Self.BlockSize : nremain
             let offset = size - nremain
 
-            try await infd.withDescriptor { try await ring.read(
-                into: &buffer,
-                count: count,
-                offset: offset,
-                from: $0
-            ) }
-            try await outfd.withDescriptor { try await ring.write(
-                buffer,
-                count: count,
-                offset: offset,
-                to: $0
-            ) }
+            try await infd.withDescriptor { infd in
+                try await outfd.withDescriptor { outfd in
+                    try await ring.copy(
+                        count: count,
+                        offset: offset,
+                        bufferIndex: 0,
+                        from: infd,
+                        to: outfd
+                    )
+                }
+            }
+
             nremain -= count
         }
     }
