@@ -294,7 +294,7 @@ public actor IORing {
                     }
                 }
                 try Errno.throwingErrno {
-                    io_uring_submit(&self.ring)
+                    return io_uring_submit(&self.ring)
                 }
 
                 var results = [T]()
@@ -721,7 +721,7 @@ private extension IORing {
     }
 
     // FIXME: support partial reads
-    func io_uring_read_fixed(
+    func io_uring_op_read_fixed(
         fd: FileDescriptor,
         count: Int,
         offset: Int, // offset into the file we are reading
@@ -744,7 +744,7 @@ private extension IORing {
 
     // FIXME: support partial writes
     // FIXME: is there a way to support zero copy writes?
-    func io_uring_write_fixed(
+    func io_uring_op_write_fixed(
         fd: FileDescriptor,
         count: Int,
         offset: Int, // offset into the file we are writing
@@ -1081,7 +1081,7 @@ public extension IORing {
 
         try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
 
-        let nwritten = try await io_uring_read_fixed(
+        let nwritten = try await io_uring_op_read_fixed(
             fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
             bufferOffset: bufferOffset
         )
@@ -1101,7 +1101,7 @@ public extension IORing {
 
         try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
 
-        let nwritten = try await io_uring_read_fixed(
+        let nwritten = try await io_uring_op_read_fixed(
             fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
             bufferOffset: bufferOffset
         )
@@ -1135,7 +1135,7 @@ public extension IORing {
             _ = memcpy(address, UnsafeRawPointer(bytes.baseAddress!), count)
         }
 
-        return try await io_uring_write_fixed(
+        return try await io_uring_op_write_fixed(
             fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
             bufferOffset: bufferOffset
         )
@@ -1160,7 +1160,7 @@ public extension IORing {
             try body($0)
         }
 
-        return try await io_uring_write_fixed(
+        return try await io_uring_op_write_fixed(
             fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
             bufferOffset: bufferOffset
         )
@@ -1199,43 +1199,47 @@ public extension IORing {
         return result.last ?? 0
     }
 
-    /*
-     @discardableResult
-     func copy(
-         count: Int,
-         offset: Int = -1,
-         from fd1: FileDescriptor,
-         to fd2: FileDescriptor
-     ) async throws -> Bool {
-         var buffer = [UInt8](repeating: 0, count: count)
+    @discardableResult
+    func copy(
+        count: Int? = nil,
+        offset: Int = -1,
+        bufferIndex: UInt16,
+        from fd1: FileDescriptor,
+        to fd2: FileDescriptor
+    ) async throws -> Bool {
+        let count = try count ?? manager.registeredBuffersSize
 
-         let result = try await manager.withSubmissionGroup { [self] enqueue in
-             enqueue { [self] in
-                 try await io_uring_op_read(
-                     fd: fd1,
-                     buffer: &buffer,
-                     count: count,
-                     offset: offset,
-                     link: true
-                 )
-             }
-             enqueue { [self] in
-                 try await io_uring_op_write(
-                     fd: fd2,
-                     buffer: buffer,
-                     count: count,
-                     offset: offset
-                 )
-             }
-         }
+        try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: 0)
 
-         if result[0] != result[1] {
-             throw Errno.resourceTemporarilyUnavailable
-         }
+        let result = try await manager.withSubmissionGroup { [self] enqueue in
+            enqueue { [self] in
+                return try await io_uring_op_read_fixed(
+                    fd: fd1,
+                    count: count,
+                    offset: offset,
+                    bufferIndex: bufferIndex,
+                    bufferOffset: 0,
+                    link: true
+                )
+            }
+            enqueue { [self] in
+                return try await io_uring_op_write_fixed(
+                    fd: fd2,
+                    count: count,
+                    offset: offset,
+                    bufferIndex: bufferIndex,
+                    bufferOffset: 0
+                )
+            }
+        }
 
-         return result[0] == 0
-     }
-     */
+        if result[0] != result[1] {
+            // FIXME: support for partial reads and writes
+            throw Errno.resourceTemporarilyUnavailable
+        }
+
+        return result[0] == 0
+    }
 }
 
 extension IORing: Equatable {
