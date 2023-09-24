@@ -329,7 +329,7 @@ public actor IORing {
                             address: address,
                             length: length,
                             offset: offset,
-                            flags: flags | (i < opcodes.count - 1 ? IORing.IOSqeIOLink: 0),
+                            flags: flags | (i < opcodes.count - 1 ? IORing.IOSqeIOLink : 0),
                             ioprio: ioprio,
                             moreFlags: moreFlags,
                             bufferIndex: bufferIndex,
