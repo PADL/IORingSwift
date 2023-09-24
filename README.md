@@ -12,4 +12,6 @@ The package consists of two libraries:
 
 Not all system calls are yet supported and tests are yet to be written, so caveat emptor. Pull requests welcome.
 
+Note: you'll need a recent (6.x) kernel to use some of the functionality, such as multi-shot `accept(2)`.
+
 The intention is that this will also eventually support the real-time I/O subsystem in Zephyr, for use with SwiftIO.
