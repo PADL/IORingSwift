@@ -30,6 +30,12 @@ public actor IORing {
 
     public typealias FileDescriptor = CInt
 
+    public typealias EnqueuedTaskBody<T> =
+        (_: @Sendable () async throws -> T)
+
+    public typealias EnqueueTask<T> =
+        (_: (@escaping EnqueuedTaskBody<T>) -> ())
+
     private let manager: Manager
 
     private struct AcceptIoPrio: OptionSet {
@@ -115,6 +121,9 @@ public actor IORing {
         }
 
         private func submit() throws {
+            if submissionGroupTask != nil {
+                return
+            }
             try Errno.throwingErrno {
                 io_uring_submit(&self.ring)
             }
@@ -192,7 +201,7 @@ public actor IORing {
             }
         }
 
-        private func prepareAndOptionallySubmitSingleshot<T>(
+        func prepareAndSubmit<T>(
             _ opcode: UInt8,
             fd: FileDescriptor,
             address: UnsafeRawPointer? = nil,
@@ -204,8 +213,7 @@ public actor IORing {
             bufferIndex: UInt16 = 0,
             bufferGroup: UInt16 = 0,
             socketAddress: sockaddr_storage? = nil,
-            handler: @escaping (io_uring_cqe) throws -> T,
-            submit: Bool
+            handler: @escaping (io_uring_cqe) throws -> T
         ) async throws -> T {
             try await enqueueRetrying { [self] sqe in
                 try await withCheckedThrowingContinuation { (
@@ -250,9 +258,7 @@ public actor IORing {
                                 try setSocketAddress(sqe, socketAddress: socketAddress)
                             }
                         }
-                        if submit {
-                            try self.submit()
-                        }
+                        try self.submit()
                     } catch {
                         continuation.resume(throwing: error)
                     }
@@ -260,35 +266,37 @@ public actor IORing {
             }
         }
 
-        func prepareAndSubmit<T>(
-            _ opcode: UInt8,
-            fd: FileDescriptor,
-            address: UnsafeRawPointer? = nil,
-            length: CUnsignedInt = 0,
-            offset: Int = 0,
-            flags: UInt8 = 0,
-            ioprio: UInt16 = 0,
-            moreFlags: UInt32 = 0,
-            bufferIndex: UInt16 = 0,
-            bufferGroup: UInt16 = 0,
-            socketAddress: sockaddr_storage? = nil,
-            handler: @escaping (io_uring_cqe) throws -> T
-        ) async throws -> T {
-            try await prepareAndOptionallySubmitSingleshot(
-                opcode,
-                fd: fd,
-                address: address,
-                length: length,
-                offset: offset,
-                flags: flags,
-                ioprio: ioprio,
-                moreFlags: moreFlags,
-                bufferIndex: bufferIndex,
-                bufferGroup: bufferGroup,
-                socketAddress: socketAddress,
-                handler: handler,
-                submit: true
-            )
+        private var submissionGroupTask: Any? // this is just a placeholder for re-entrancy checking
+
+        /// withSubmissionGroup() allows multiple submissions to be enqueued in a single system
+        /// call
+        func withSubmissionGroup<T>(
+            _ body: @escaping (IORing.EnqueueTask<T>) -> ()
+        ) async throws -> [T] {
+            precondition(submissionGroupTask == nil)
+
+            guard submissionGroupTask == nil else {
+                throw Errno.invalidArgument // re-entrancy check
+            }
+
+            return try await withThrowingTaskGroup(of: T.self, returning: [T].self) { taskGroup in
+                self.submissionGroupTask = taskGroup
+                body { block in
+                    taskGroup.addTask {
+                        try await block()
+                    }
+                }
+                try Errno.throwingErrno {
+                    io_uring_submit(&self.ring)
+                }
+
+                var results = [T]()
+                while let result = try await taskGroup.next() {
+                    results.append(result)
+                }
+                submissionGroupTask = nil
+                return results
+            }
         }
 
         func prepareAndSubmitLinked<T>(
@@ -305,10 +313,10 @@ public actor IORing {
             socketAddress: sockaddr_storage? = nil,
             handler: @escaping (io_uring_cqe) throws -> T
         ) async throws -> [T] {
-            try await withThrowingTaskGroup(of: T.self, returning: [T].self) { taskGroup in
+            try await withSubmissionGroup { enqueue in
                 for i in 0..<opcodes.count {
-                    taskGroup.addTask {
-                        try await self.prepareAndOptionallySubmitSingleshot(
+                    enqueue {
+                        try await self.prepareAndSubmit(
                             opcodes[i],
                             fd: fd,
                             address: address,
@@ -320,17 +328,10 @@ public actor IORing {
                             bufferIndex: bufferIndex,
                             bufferGroup: bufferGroup,
                             socketAddress: socketAddress,
-                            handler: handler,
-                            submit: false
+                            handler: handler
                         )
                     }
                 }
-                try submit()
-                var results = [T]()
-                while let result = try await taskGroup.next() {
-                    results.append(result)
-                }
-                return results
             }
         }
 
@@ -1155,6 +1156,12 @@ public extension IORing {
         }
 
         return result.last ?? 0
+    }
+
+    func withSubmissionGroup<T>(
+        _ body: @escaping (EnqueueTask<T>) -> ()
+    ) async throws -> [T] {
+        try await manager.withSubmissionGroup(body)
     }
 }
 
