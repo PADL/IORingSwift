@@ -220,6 +220,9 @@ public actor IORing {
                         offset: offset == -1 ? UInt64(bitPattern: -1) : UInt64(offset)
                     ) { cqe in
                         guard cqe.pointee.res >= 0 else {
+                            debugPrint(
+                                "IORing.prepareAndOptionallySubmitSingleshot completion failed: \(Errno(rawValue: cqe.pointee.res))"
+                            )
                             continuation.resume(throwing: Errno(rawValue: cqe.pointee.res))
                             return
                         }
@@ -227,6 +230,9 @@ public actor IORing {
                             let result = try handler(cqe.pointee)
                             continuation.resume(returning: result)
                         } catch {
+                            debugPrint(
+                                "IORing.prepareAndOptionallySubmitSingleshot handler failed: \(error)"
+                            )
                             continuation.resume(throwing: error)
                         }
                     }
@@ -375,6 +381,9 @@ public actor IORing {
                                 }
                             }
                         } else {
+                            debugPrint(
+                                "IORing.prepareAndSubmitMultishot completion failed: \(Errno(rawValue: cqe.pointee.res))"
+                            )
                             channel.fail(Errno(rawValue: cqe.pointee.res))
                         }
                         return
@@ -385,6 +394,7 @@ public actor IORing {
                             await channel.send(result)
                         }
                     } catch {
+                        debugPrint("IORing.prepareAndSubmitMultishot handler failed: \(error)")
                         channel.fail(error)
                     }
                 }
