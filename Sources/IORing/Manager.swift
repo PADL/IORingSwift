@@ -546,20 +546,4 @@ final class Manager {
 
         return try body(&buffers![Int(index)][range])
     }
-
-    func withUnsafeMutableBytesOfFixedBuffer<T>(
-        at index: UInt16,
-        length: Int,
-        offset: Int = 0,
-        _ body: (UnsafeMutableRawBufferPointer) throws -> T
-    ) rethrows -> T {
-        precondition(hasRegisteredBuffers)
-        precondition(try! index < registeredBuffersCount)
-        precondition(try! offset + length <= registeredBuffersSize)
-
-        return try buffers![Int(index)][offset..<offset + length]
-            .withUnsafeMutableBytes { bytes in
-                try body(bytes)
-            }
-    }
 }
