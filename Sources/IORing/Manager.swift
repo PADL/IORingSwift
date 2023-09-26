@@ -16,7 +16,6 @@
 
 @_implementationOnly
 import AsyncAlgorithms
-import AsyncExtensions
 @_implementationOnly
 import CIORingShims
 @_implementationOnly
@@ -30,7 +29,6 @@ final class Manager {
     private var eventHandle: UnsafeMutableRawPointer?
     private var pendingSubmissions = Queue<Continuation>()
 
-    let depth: CUnsignedInt
 
     static func logDebug(message: String, functionName: String = #function) {
         debugPrint("IORing.Manager.\(functionName): \(message)")
@@ -39,7 +37,6 @@ final class Manager {
     init(depth: CUnsignedInt, flags: CUnsignedInt) throws {
         var ring = io_uring()
 
-        self.depth = depth
         try Errno.throwingErrno {
             io_uring_queue_init(depth, &ring, flags)
         }
