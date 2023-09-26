@@ -29,7 +29,6 @@ final class Manager {
     private var eventHandle: UnsafeMutableRawPointer?
     private var pendingSubmissions = Queue<Continuation>()
 
-
     static func logDebug(message: String, functionName: String = #function) {
         debugPrint("IORing.Manager.\(functionName): \(message)")
     }
