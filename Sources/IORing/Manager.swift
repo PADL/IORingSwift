@@ -22,7 +22,7 @@ import CIORingShims
 import CIOURing
 import Glibc
 
-final class Manager {
+final class Manager: BlockRegistrationNotifiable {
     private typealias Continuation = CheckedContinuation<(), Error>
 
     private var ring: io_uring
@@ -213,6 +213,10 @@ final class Manager {
         }
     }
 
+    func notifyBlockRegistration() throws {
+        try submit()
+    }
+
     func prepareAndSubmit<T>(
         _ opcode: UInt8,
         fd: IORing.FileDescriptor,
@@ -225,9 +229,10 @@ final class Manager {
         bufferIndex: UInt16 = 0,
         bufferGroup: UInt16 = 0,
         socketAddress: sockaddr_storage? = nil,
-        operation: SubmissionGroup<T>.Operation? = nil,
+        operation: BlockRegistrationNotifiable? = nil,
         handler: @escaping (io_uring_cqe) throws -> T
     ) async throws -> T {
+        let operation = operation ?? self
         let sqe = try await asyncSqe
 
         try prepareAndSetFlags(
@@ -267,11 +272,10 @@ final class Manager {
                     continuation.resume(throwing: error)
                 }
             }
-            if let operation {
-                operation.notifyBlockRegistration()
-            } else {
-                do { try submit() }
-                catch { continuation.resume(throwing: error) }
+            do {
+                try operation.notifyBlockRegistration()
+            } catch {
+                continuation.resume(throwing: error)
             }
         }
     }
@@ -288,8 +292,10 @@ final class Manager {
         bufferGroup: UInt16,
         retryOnCancel: Bool,
         handler: @escaping (io_uring_cqe) throws -> T,
+        operation: BlockRegistrationNotifiable? = nil,
         channel: AsyncThrowingChannel<T, Error>
     ) async throws {
+        let operation = operation ?? self
         let sqe = try await asyncSqe
 
         try prepareAndSetFlags(
@@ -354,7 +360,7 @@ final class Manager {
                 channel.fail(error)
             }
         }
-        try submit()
+        try operation.notifyBlockRegistration()
     }
 
     func prepareAndSubmitMultishot<T>(
@@ -417,7 +423,7 @@ final class Manager {
                         flags: flags,
                         ioprio: ioprio,
                         moreFlags: moreFlags,
-                        operation: nil as SubmissionGroup<()>.Operation?
+                        operation: nil
                     ) { cqe in
                         do {
                             try continuation.resume(returning: handler(cqe))

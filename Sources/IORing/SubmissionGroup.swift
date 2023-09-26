@@ -20,13 +20,17 @@ import AsyncQueue
 import AsyncAlgorithms
 import Glibc
 
+protocol BlockRegistrationNotifiable {
+    func notifyBlockRegistration() throws
+}
+
 actor SubmissionGroup<T> {
     private let ring: IORing
     private let queue = ActorQueue<SubmissionGroup>()
     private var operations = [Operation]()
     private var channel = AsyncThrowingChannel<T, Error>()
 
-    final class Operation {
+    final class Operation: BlockRegistrationNotifiable {
         private let body: @Sendable (_: Operation) async throws -> T
         fileprivate var registered = false
         fileprivate var result: Result<T, Error> = .failure(Errno.resourceTemporarilyUnavailable)
@@ -50,7 +54,7 @@ actor SubmissionGroup<T> {
             }
         }
 
-        func notifyBlockRegistration() {
+        func notifyBlockRegistration() throws {
             registered = true
         }
     }
