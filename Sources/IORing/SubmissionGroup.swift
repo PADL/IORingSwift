@@ -61,9 +61,9 @@ actor SubmissionGroup<T> {
     }
 
     func enqueue(_ body: @escaping @Sendable (_: Operation) async throws -> T) {
-        queue.enqueue { group in
-            let operation = Operation(channel: group.channel, body)
-            group.operations.append(operation)
+        let operation = Operation(channel: channel, body)
+        operations.append(operation)
+        queue.enqueue { _ in
             await operation.perform()
         }
     }
