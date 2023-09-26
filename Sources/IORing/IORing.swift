@@ -606,8 +606,6 @@ public actor IORing: CustomStringConvertible {
                     try body(bytes)
                 }
         }
-
-        // MARK: - submission groups
     }
 
     fileprivate func withSubmissionGroup<T>(@_inheritActorContext _ body: (
