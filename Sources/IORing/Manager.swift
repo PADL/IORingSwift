@@ -29,6 +29,10 @@ final class Manager {
     private var eventHandle: UnsafeMutableRawPointer?
     private var pendingSubmissions = Queue<Continuation>()
 
+    fileprivate typealias FixedBuffer = [UInt8]
+    private var buffers: [FixedBuffer]?
+    private var iov: [iovec]?
+
     static func logDebug(message: String, functionName: String = #function) {
         debugPrint("IORing.Manager.\(functionName): \(message)")
     }
@@ -438,13 +442,11 @@ final class Manager {
             return ()
         }
     }
+}
 
-    // MARK: - fixed buffer support
+// MARK: - fixed buffer support
 
-    private typealias FixedBuffer = [UInt8]
-    private var buffers: [FixedBuffer]?
-    private var iov: [iovec]?
-
+extension Manager {
     var hasRegisteredBuffers: Bool {
         iov != nil
     }
