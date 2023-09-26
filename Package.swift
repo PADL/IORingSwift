@@ -59,6 +59,7 @@ let package = Package(
             name: "IORing",
             dependencies: ["CIORingShims",
                            "AsyncExtensions",
+                           .product(name: "AsyncQueue", package: "swift-async-queue"),
                            .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")],
             cSettings: [
                 .define("_XOPEN_SOURCE=500"),
@@ -75,7 +76,6 @@ let package = Package(
             name: "IORingUtils",
             dependencies: ["IORing",
                            "AsyncExtensions",
-                           .product(name: "AsyncQueue", package: "swift-async-queue"),
                            .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")]
         ),
         .executableTarget(
