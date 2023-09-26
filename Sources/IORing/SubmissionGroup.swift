@@ -50,7 +50,7 @@ actor SubmissionGroup<T> {
             }
         }
 
-        func notifyBlockRegistration() {
+        func ready() {
             registered = true
         }
     }

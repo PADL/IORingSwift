@@ -211,7 +211,7 @@ final class Manager {
             self.resumePendingSubmission()
         }
         if let operation {
-            operation.notifyBlockRegistration()
+            operation.ready()
         } else {
             try submit()
         }
@@ -221,10 +221,6 @@ final class Manager {
         try Errno.throwingErrno {
             io_uring_submit(&self.ring)
         }
-    }
-
-    func notifyBlockRegistration() throws {
-        try submit()
     }
 
     func prepareAndSubmit<T>(
