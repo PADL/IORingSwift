@@ -198,13 +198,16 @@ final class Manager: BlockRegistrationNotifiable {
 
     private func setBlock(
         sqe: UnsafeMutablePointer<io_uring_sqe>,
+        operation: BlockRegistrationNotifiable?,
         handler: @escaping BlockHandler
-    ) {
+    ) throws {
         io_uring_sqe_set_block(sqe) {
             // FIXME: this could race before io_uring_cqe_seen() is called, although shouldn't happen if on same actor
             handler($0)
             self.resumePendingSubmission()
         }
+        let operation = operation ?? self
+        try operation.notifyBlockRegistration()
     }
 
     func submit() throws {
@@ -232,7 +235,6 @@ final class Manager: BlockRegistrationNotifiable {
         operation: BlockRegistrationNotifiable? = nil,
         handler: @escaping (io_uring_cqe) throws -> T
     ) async throws -> T {
-        let operation = operation ?? self
         let sqe = try await asyncSqe
 
         try prepareAndSetFlags(
@@ -256,24 +258,23 @@ final class Manager: BlockRegistrationNotifiable {
                 Error
             >
         ) in
-            setBlock(sqe: sqe) { cqe in
-                guard cqe.pointee.res >= 0 else {
-                    Self
-                        .logDebug(
-                            message: "completion failed: \(Errno(rawValue: cqe.pointee.res))"
-                        )
-                    continuation.resume(throwing: Errno(rawValue: cqe.pointee.res))
-                    return
-                }
-                do {
-                    try continuation.resume(returning: handler(cqe.pointee))
-                } catch {
-                    Self.logDebug(message: "handler failed: \(error)")
-                    continuation.resume(throwing: error)
-                }
-            }
             do {
-                try operation.notifyBlockRegistration()
+                try setBlock(sqe: sqe, operation: operation) { cqe in
+                    guard cqe.pointee.res >= 0 else {
+                        Self
+                            .logDebug(
+                                message: "completion failed: \(Errno(rawValue: cqe.pointee.res))"
+                            )
+                        continuation.resume(throwing: Errno(rawValue: cqe.pointee.res))
+                        return
+                    }
+                    do {
+                        try continuation.resume(returning: handler(cqe.pointee))
+                    } catch {
+                        Self.logDebug(message: "handler failed: \(error)")
+                        continuation.resume(throwing: error)
+                    }
+                }
             } catch {
                 continuation.resume(throwing: error)
             }
@@ -295,7 +296,6 @@ final class Manager: BlockRegistrationNotifiable {
         operation: BlockRegistrationNotifiable? = nil,
         channel: AsyncThrowingChannel<T, Error>
     ) async throws {
-        let operation = operation ?? self
         let sqe = try await asyncSqe
 
         try prepareAndSetFlags(
@@ -312,7 +312,7 @@ final class Manager: BlockRegistrationNotifiable {
             socketAddress: nil
         )
 
-        setBlock(sqe: sqe) { cqe in
+        try setBlock(sqe: sqe, operation: operation) { cqe in
             guard cqe.pointee.res >= 0 else {
                 if cqe.pointee.res == -ECANCELED, retryOnCancel {
                     // looks like we need to resubmit the entire request
@@ -360,7 +360,6 @@ final class Manager: BlockRegistrationNotifiable {
                 channel.fail(error)
             }
         }
-        try operation.notifyBlockRegistration()
     }
 
     func prepareAndSubmitMultishot<T>(
