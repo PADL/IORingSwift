@@ -61,39 +61,35 @@ final class Manager {
 
     private typealias BlockHandler = (UnsafePointer<io_uring_cqe>) -> ()
 
-    private var sqe: UnsafeMutablePointer<io_uring_sqe> {
-        get throws {
-            guard let sqe = io_uring_get_sqe(&ring) else {
-                throw Errno.resourceTemporarilyUnavailable
-            }
-            return sqe
+    private func getSqe() throws -> UnsafeMutablePointer<io_uring_sqe> {
+        guard let sqe = io_uring_get_sqe(&ring) else {
+            throw Errno.resourceTemporarilyUnavailable
         }
+        return sqe
     }
 
-    private var asyncSqe: UnsafeMutablePointer<io_uring_sqe> {
-        get async throws {
-            repeat {
-                do {
-                    guard let sqe = try? sqe else {
-                        // queue is full, suspend
-                        try await suspendPendingSubmission()
-                        continue
-                    }
-
-                    return sqe
-                } catch let error as Errno {
-                    switch error {
-                    case .resourceTemporarilyUnavailable:
-                        fallthrough
-                    // FIXME: should we always retry on cancel?
-                    case .canceled:
-                        break
-                    default:
-                        throw error
-                    }
+    private func getAsyncSqe() async throws -> UnsafeMutablePointer<io_uring_sqe> {
+        repeat {
+            do {
+                guard let sqe = try? getSqe() else {
+                    // queue is full, suspend
+                    try await suspendPendingSubmission()
+                    continue
                 }
-            } while true
-        }
+
+                return sqe
+            } catch let error as Errno {
+                switch error {
+                case .resourceTemporarilyUnavailable:
+                    fallthrough
+                // FIXME: should we always retry on cancel?
+                case .canceled:
+                    break
+                default:
+                    throw error
+                }
+            }
+        } while true
     }
 
     private func suspendPendingSubmission() async throws {
@@ -238,7 +234,7 @@ final class Manager {
         operation: SubmissionGroup<T>.Operation? = nil,
         handler: @escaping (io_uring_cqe) throws -> T
     ) async throws -> T {
-        let sqe = try await asyncSqe
+        let sqe = try await getAsyncSqe()
 
         try prepareAndSetFlags(
             opcode,
@@ -298,7 +294,7 @@ final class Manager {
         operation: SubmissionGroup<T>.Operation? = nil,
         channel: AsyncThrowingChannel<T, Error>
     ) async throws {
-        let sqe = try await asyncSqe
+        let sqe = try await getAsyncSqe()
 
         try prepareAndSetFlags(
             opcode,
