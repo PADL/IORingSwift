@@ -325,7 +325,7 @@ private extension IORing {
                 fd: fd,
                 address: pointer,
                 flags: link ? IORing.IOSqeIOLink : 0,
-                ioprio: AcceptIoPrio.multishot,
+                ioprio: RecvSendIoPrio.multishot,
                 moreFlags: flags
             ) { [message] _ in
                 message.copy()
