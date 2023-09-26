@@ -81,6 +81,7 @@ actor SubmissionGroup<T> {
         await queue.enqueueAndWait { _ in }
         await registration()
         try await ring.submit()
+        defer { channel.finish() }
         return try await channel.collect(max: operations.count)
     }
 }
