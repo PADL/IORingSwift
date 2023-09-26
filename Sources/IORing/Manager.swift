@@ -22,7 +22,7 @@ import CIORingShims
 import CIOURing
 import Glibc
 
-final class Manager: BlockRegistrationNotifiable {
+final class Manager {
     private typealias Continuation = CheckedContinuation<(), Error>
 
     private var ring: io_uring
@@ -198,7 +198,7 @@ final class Manager: BlockRegistrationNotifiable {
 
     private func setBlock(
         sqe: UnsafeMutablePointer<io_uring_sqe>,
-        operation: BlockRegistrationNotifiable?,
+        operation: SubmissionGroup<some Any>.Operation?,
         handler: @escaping BlockHandler
     ) throws {
         io_uring_sqe_set_block(sqe) {
@@ -206,8 +206,11 @@ final class Manager: BlockRegistrationNotifiable {
             handler($0)
             self.resumePendingSubmission()
         }
-        let operation = operation ?? self
-        try operation.notifyBlockRegistration()
+        if let operation {
+            operation.notifyBlockRegistration()
+        } else {
+            try submit()
+        }
     }
 
     func submit() throws {
@@ -232,7 +235,7 @@ final class Manager: BlockRegistrationNotifiable {
         bufferIndex: UInt16 = 0,
         bufferGroup: UInt16 = 0,
         socketAddress: sockaddr_storage? = nil,
-        operation: BlockRegistrationNotifiable? = nil,
+        operation: SubmissionGroup<T>.Operation? = nil,
         handler: @escaping (io_uring_cqe) throws -> T
     ) async throws -> T {
         let sqe = try await asyncSqe
@@ -293,7 +296,7 @@ final class Manager: BlockRegistrationNotifiable {
         bufferGroup: UInt16,
         retryOnCancel: Bool,
         handler: @escaping (io_uring_cqe) throws -> T,
-        operation: BlockRegistrationNotifiable? = nil,
+        operation: SubmissionGroup<T>.Operation? = nil,
         channel: AsyncThrowingChannel<T, Error>
     ) async throws {
         let sqe = try await asyncSqe
