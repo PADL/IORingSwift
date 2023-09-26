@@ -51,6 +51,8 @@ actor SubmissionGroup<T> {
         }
 
         func notifyBlockRegistration() {
+            /// called from I/O wrapper function to notify that continuation has been registered
+            /// with `io_uring`
             state = .registered
         }
     }
