@@ -382,8 +382,7 @@ private extension IORing {
             fd: fd,
             flags: link ? IORing.IOSqeIOLink : 0,
             ioprio: AcceptIoPrio.multishot,
-            moreFlags: flags,
-            retryOnCancel: true
+            moreFlags: flags
         ) { cqe in
             cqe.res
         }

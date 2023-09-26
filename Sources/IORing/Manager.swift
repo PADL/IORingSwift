@@ -294,7 +294,6 @@ final class Manager {
         moreFlags: UInt32,
         bufferIndex: UInt16,
         bufferGroup: UInt16,
-        retryOnCancel: Bool,
         handler: @escaping (io_uring_cqe) throws -> T,
         operation: SubmissionGroup<T>.Operation? = nil,
         channel: AsyncThrowingChannel<T, Error>
@@ -317,8 +316,7 @@ final class Manager {
 
         try setBlock(sqe: sqe, operation: operation) { cqe in
             guard cqe.pointee.res >= 0 else {
-                if cqe.pointee.res == -ECANCELED, retryOnCancel {
-                    // looks like we need to resubmit the entire request
+                if cqe.pointee.res == -ECANCELED {
                     Task {
                         do {
                             try await self.prepareAndSubmitMultishot(
@@ -331,8 +329,8 @@ final class Manager {
                                 moreFlags: moreFlags,
                                 bufferIndex: bufferIndex,
                                 bufferGroup: bufferGroup,
-                                retryOnCancel: retryOnCancel,
                                 handler: handler,
+                                operation: operation,
                                 channel: channel
                             )
                         } catch {
@@ -375,7 +373,6 @@ final class Manager {
         moreFlags: UInt32 = 0,
         bufferIndex: UInt16 = 0,
         bufferGroup: UInt16 = 0,
-        retryOnCancel: Bool = false,
         handler: @escaping (io_uring_cqe) throws -> T
     ) async throws -> AsyncThrowingChannel<T, Error> {
         let channel = AsyncThrowingChannel<T, Error>()
@@ -389,7 +386,6 @@ final class Manager {
             moreFlags: moreFlags,
             bufferIndex: bufferIndex,
             bufferGroup: bufferGroup,
-            retryOnCancel: retryOnCancel,
             handler: handler,
             channel: channel
         )
