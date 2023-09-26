@@ -28,7 +28,7 @@ actor SubmissionGroup<T> {
 
     final class Operation {
         private let body: @Sendable (_: Operation) async throws -> T
-        fileprivate var registered = false
+        fileprivate var isReady = false
         fileprivate var result: Result<T, Error> = .failure(Errno.resourceTemporarilyUnavailable)
         fileprivate let channel: AsyncThrowingChannel<T, Error>
 
@@ -51,7 +51,7 @@ actor SubmissionGroup<T> {
         }
 
         func ready() {
-            registered = true
+            isReady = true
         }
     }
 
@@ -69,9 +69,9 @@ actor SubmissionGroup<T> {
     }
 
     // FIXME: there has to be a better way to do this than "busy" wait
-    private func registration() async {
+    private func operationsReady() async {
         for operation in operations {
-            while !operation.registered {
+            while !operation.isReady {
                 await Task.yield()
             }
         }
@@ -79,7 +79,7 @@ actor SubmissionGroup<T> {
 
     func finish() async throws -> [T] {
         await queue.enqueueAndWait { _ in }
-        await registration()
+        await operationsReady()
         try await ring.submit()
         defer { channel.finish() }
         return try await channel.collect(max: operations.count)
