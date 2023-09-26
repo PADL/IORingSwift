@@ -133,7 +133,7 @@ final class Manager {
     }
 
     private func setSocketAddress(
-        _ sqe: UnsafeMutablePointer<io_uring_sqe>,
+        sqe: UnsafeMutablePointer<io_uring_sqe>,
         socketAddress: UnsafePointer<sockaddr>
     ) throws {
         sqe.pointee.addr2 = UInt64(UInt(bitPattern: socketAddress))
@@ -146,7 +146,7 @@ final class Manager {
     }
 
     private func setFlags(
-        _ sqe: UnsafeMutablePointer<io_uring_sqe>,
+        sqe: UnsafeMutablePointer<io_uring_sqe>,
         flags: UInt8,
         ioprio: UInt16,
         moreFlags: UInt32,
@@ -183,7 +183,7 @@ final class Manager {
             offset: offset == -1 ? UInt64(bitPattern: -1) : UInt64(offset)
         )
         setFlags(
-            sqe,
+            sqe: sqe,
             flags: flags,
             ioprio: ioprio,
             moreFlags: moreFlags,
@@ -192,13 +192,13 @@ final class Manager {
         )
         if let socketAddress {
             try socketAddress.withSockAddr { socketAddress in
-                try setSocketAddress(sqe, socketAddress: socketAddress)
+                try setSocketAddress(sqe: sqe, socketAddress: socketAddress)
             }
         }
     }
 
     private func setBlock(
-        _ sqe: UnsafeMutablePointer<io_uring_sqe>,
+        sqe: UnsafeMutablePointer<io_uring_sqe>,
         handler: @escaping BlockHandler
     ) {
         io_uring_sqe_set_block(sqe) {
@@ -252,7 +252,7 @@ final class Manager {
                 Error
             >
         ) in
-            setBlock(sqe) { cqe in
+            setBlock(sqe: sqe) { cqe in
                 guard cqe.pointee.res >= 0 else {
                     Self
                         .logDebug(
@@ -307,7 +307,7 @@ final class Manager {
             socketAddress: nil
         )
 
-        setBlock(sqe) { cqe in
+        setBlock(sqe: sqe) { cqe in
             guard cqe.pointee.res >= 0 else {
                 if cqe.pointee.res == -ECANCELED, retryOnCancel {
                     // looks like we need to resubmit the entire request
