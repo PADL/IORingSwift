@@ -389,6 +389,9 @@ public actor IORing: CustomStringConvertible {
                             .logDebug(
                                 message: "completion failed: \(Errno(rawValue: cqe.pointee.res))"
                             )
+                        if cqe.pointee.res == -EINVAL {
+                            print("IORingSwift: multishot io_uring submission failed, are you running a recent enough kernel?")
+                        }
                         channel.fail(Errno(rawValue: cqe.pointee.res))
                     }
                     return
