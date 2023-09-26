@@ -10,13 +10,15 @@ The package consists of two libraries:
 * [IORing](Sources/IORing), which provides `async/await` Swift concurrency-aware wrappers for making `io_uring` requests
 * [IORingUtils](Sources/IORingUtils), an optional library providing for managing file descriptor lifetimes and handling socket addresses
 
-Not all system calls are yet supported and tests are yet to be written, so caveat emptor. Additionally, there is limited support for submitting multiple events in a single system call, although this is in active development (see `withSubmissionGroup()`). Pull requests are welcome.
-
 The intention is that this will also eventually support the real-time I/O subsystem in Zephyr, for use with SwiftIO.
 
 Notes
 -----
 
 * You'll need a recent (6.x) kernel to use some of the functionality, such as multi-shot `accept(2)`
-* There's an intermittent data corruption issue with the submission groups, like `IORing.copy()`, which is being investigated.
+* There's a race condition with submission groups (e.g. `IORing.copy()`) that is still under investigation
+* Not all system calls are yet supported
+* Tests are yet to be written, so caveat emptor
+
+Pull requests are welcome, of course!
 
