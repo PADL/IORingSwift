@@ -16,44 +16,42 @@
 
 @_implementationOnly
 import AsyncQueue
+@_implementationOnly
+import AsyncAlgorithms
 import Glibc
 
 actor SubmissionGroup<T> {
     private let ring: IORing
     private let queue = ActorQueue<SubmissionGroup>()
     private var operations = [Operation]()
+    private var channel = AsyncThrowingChannel<T, Error>()
 
     final class Operation {
-        fileprivate enum State: UInt8 {
-            case enqueued
-            case registered
-            case complete
-        }
-
         private let body: @Sendable (_: Operation) async throws -> T
+        fileprivate var registered = false
         fileprivate var result: Result<T, Error> = .failure(Errno.resourceTemporarilyUnavailable)
-        fileprivate var state: State = .enqueued
+        fileprivate let channel: AsyncThrowingChannel<T, Error>
 
         fileprivate init(
+            channel: AsyncThrowingChannel<T, Error>,
             @_inheritActorContext _ body: @escaping @Sendable (_: Operation) async throws
                 -> T
         ) {
+            self.channel = channel
             self.body = body
         }
 
         fileprivate func perform() async {
             do {
-                result = try await .success(body(self))
+                let result = try await body(self)
+                await channel.send(result)
             } catch {
-                result = .failure(error)
+                channel.fail(error)
             }
-            state = .complete
         }
 
         func notifyBlockRegistration() {
-            /// called from I/O wrapper function to notify that continuation has been registered
-            /// with `io_uring`
-            state = .registered
+            registered = true
         }
     }
 
@@ -64,16 +62,16 @@ actor SubmissionGroup<T> {
 
     func enqueue(_ body: @escaping @Sendable (_: Operation) async throws -> T) {
         queue.enqueue { group in
-            let operation = Operation(body)
+            let operation = Operation(channel: group.channel, body)
             group.operations.append(operation)
             await operation.perform()
         }
     }
 
     // FIXME: there has to be a better way to do this than "busy" wait
-    private func yieldUntilOperationState(is state: Operation.State) async {
+    private func registration() async {
         for operation in operations {
-            while operation.state.rawValue < state.rawValue {
+            while !operation.registered {
                 await Task.yield()
             }
         }
@@ -81,9 +79,23 @@ actor SubmissionGroup<T> {
 
     func finish() async throws -> [T] {
         await queue.enqueueAndWait { _ in }
-        await yieldUntilOperationState(is: .registered)
+        await registration()
         try await ring.submit()
-        await yieldUntilOperationState(is: .complete)
-        return try operations.map { try $0.result.get() }
+        return try await channel.collect(max: operations.count)
+    }
+}
+
+private extension AsyncSequence {
+    func collect(max: Int) async rethrows -> [Element] {
+        var collected = 0
+        var elements = [Element]()
+        for try await element in self {
+            elements.append(element)
+            collected += 1
+            if collected == max {
+                break
+            }
+        }
+        return elements
     }
 }
