@@ -398,7 +398,7 @@ private extension IORing {
       moreFlags: flags
     ) { [ss] cqe in
       _ = ss
-      return try (FileHandle(fileDescriptor: cqe.res), ss)
+      return try (FileHandle(fileDescriptor: cqe.res, closeOnDealloc: true), ss)
     }
   }
 
@@ -412,7 +412,7 @@ private extension IORing {
       ioprio: AcceptIoPrio.multishot,
       moreFlags: flags
     ) { cqe in
-      try FileHandle(fileDescriptor: cqe.res)
+      try FileHandle(fileDescriptor: cqe.res, closeOnDealloc: true)
     }
   }
 

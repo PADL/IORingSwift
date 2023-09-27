@@ -44,7 +44,7 @@ public struct IORingCat {
   }
 
   func cat(_ file: String) async throws {
-    let fd = try FileHandle(fileDescriptor: open(file, O_RDONLY))
+    let fd = try FileHandle(fileDescriptor: open(file, O_RDONLY), closeOnDealloc: true)
 
     let size = try fd.getSize()
     var blocks = size % blockSize

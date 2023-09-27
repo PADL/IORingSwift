@@ -25,8 +25,9 @@ public protocol FileDescriptorRepresentable {
 /// Include our own FileHandle for accept() so we do not need to import Foundation
 public final class FileHandle: FileDescriptorRepresentable, CustomStringConvertible {
   public private(set) var fileDescriptor: Int32
+  private let closeOnDealloc: Bool
 
-  public init(fileDescriptor: Int32) throws {
+  public init(fileDescriptor: Int32, closeOnDealloc: Bool = false) throws {
     if fileDescriptor < 0 {
       let lastError = Errno.lastError
       if lastError.rawValue == 0 {
@@ -35,6 +36,7 @@ public final class FileHandle: FileDescriptorRepresentable, CustomStringConverti
         throw lastError
       }
     }
+    self.closeOnDealloc = closeOnDealloc
     self.fileDescriptor = fileDescriptor
   }
 
@@ -43,7 +45,7 @@ public final class FileHandle: FileDescriptorRepresentable, CustomStringConverti
   }
 
   deinit {
-    if fileDescriptor != -1 {
+    if closeOnDealloc, fileDescriptor != -1 {
       try? _close()
     }
   }

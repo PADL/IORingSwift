@@ -40,8 +40,11 @@ public struct IORingCopy {
   }
 
   func copy(from: String, to: String) async throws {
-    let infd = try FileHandle(fileDescriptor: open(from, O_RDONLY))
-    let outfd = try FileHandle(fileDescriptor: open(to, O_WRONLY | O_CREAT | O_TRUNC, 0o644))
+    let infd = try FileHandle(fileDescriptor: open(from, O_RDONLY), closeOnDealloc: true)
+    let outfd = try FileHandle(
+      fileDescriptor: open(to, O_WRONLY | O_CREAT | O_TRUNC, 0o644),
+      closeOnDealloc: true
+    )
 
     let size = try infd.getSize()
     var blocks = size % Self.BlockSize
