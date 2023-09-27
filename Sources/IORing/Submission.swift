@@ -18,8 +18,6 @@
 import AsyncAlgorithms
 @_implementationOnly
 import CIORingShims
-@_implementationOnly
-import CIOURing
 import Glibc
 
 final class Submission<T>: CustomStringConvertible {
