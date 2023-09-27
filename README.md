@@ -16,7 +16,6 @@ Notes
 -----
 
 * You'll need a recent (6.x) kernel to use some of the functionality, such as multi-shot `accept(2)`
-* There's a race condition with submission groups (e.g. `IORing.copy()`) that is still under investigation
 * Not all system calls are yet supported
 * Tests are yet to be written, so caveat emptor
 
