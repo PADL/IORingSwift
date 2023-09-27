@@ -63,14 +63,14 @@ public actor IORing: CustomStringConvertible {
         manager = try Manager(depth: CUnsignedInt(depth), flags: flags)
     }
 
-    func submit() throws {
-        try manager.submit()
-    }
-
     public nonisolated var description: String {
         withUnsafePointer(to: self) { pointer in
             "\(type(of: self))(\(pointer))"
         }
+    }
+
+    func submit() throws {
+        try manager.submit()
     }
 
     fileprivate func withSubmissionGroup<T>(@_inheritActorContext _ body: (
@@ -191,8 +191,7 @@ private extension IORing {
         offset: Int, // offset into the file we are reading
         bufferIndex: UInt16,
         bufferOffset: Int, // offset into the fixed buffer
-        link: Bool = false,
-        operation: SubmissionGroup<Int>.Operation? = nil
+        link: Bool = false
     ) async throws -> Int {
         try await manager.prepareAndSubmit(
             UInt8(IORING_OP_READ_FIXED),
@@ -201,8 +200,7 @@ private extension IORing {
             length: CUnsignedInt(count),
             offset: offset,
             flags: link ? IORing.IOSqeIOLink : 0,
-            bufferIndex: bufferIndex,
-            operation: operation
+            bufferIndex: bufferIndex
         ) { cqe in
             Int(cqe.res)
         }
@@ -215,8 +213,7 @@ private extension IORing {
         offset: Int, // offset into the file we are writing
         bufferIndex: UInt16,
         bufferOffset: Int, // offset into the fixed buffer
-        link: Bool = false,
-        operation: SubmissionGroup<Int>.Operation? = nil
+        link: Bool = false
     ) async throws -> Int {
         try await manager.prepareAndSubmit(
             UInt8(IORING_OP_WRITE_FIXED),
@@ -225,8 +222,7 @@ private extension IORing {
             length: CUnsignedInt(count),
             offset: offset,
             flags: link ? IORing.IOSqeIOLink : 0,
-            bufferIndex: bufferIndex,
-            operation: operation
+            bufferIndex: bufferIndex
         ) { cqe in
             Int(cqe.res)
         }
@@ -639,45 +635,7 @@ public extension IORing {
         bufferOffset: Int = 0,
         fd: FileDescriptor,
         _ body: (inout ArraySlice<UInt8>) throws -> ()
-    ) async throws {
-        let count = try count ?? manager.registeredBuffersSize
-
-        try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
-
-        try manager.withFixedBufferSlice(
-            at: bufferIndex,
-            range: bufferOffset..<(bufferOffset + count),
-            body
-        )
-
-        let result = try await withSubmissionGroup { (group: SubmissionGroup<Int>) in
-            await group.enqueue { [self] operation in
-                try await io_uring_op_write_fixed(
-                    fd: fd,
-                    count: count,
-                    offset: offset,
-                    bufferIndex: bufferIndex,
-                    bufferOffset: 0,
-                    operation: operation
-                )
-            }
-            await group.enqueue { [self] operation in
-                try await io_uring_op_read_fixed(
-                    fd: fd,
-                    count: count,
-                    offset: offset,
-                    bufferIndex: bufferIndex,
-                    bufferOffset: 0,
-                    link: true,
-                    operation: operation
-                )
-            }
-        }
-
-        guard result.count == 2, result[0] == result[1] else {
-            throw Errno.resourceTemporarilyUnavailable
-        }
-    }
+    ) async throws {}
 
     func copy(
         count: Int? = nil,
@@ -691,27 +649,28 @@ public extension IORing {
         try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: 0)
 
         let result = try await withSubmissionGroup { (group: SubmissionGroup<Int>) in
-            await group.enqueue { [self] operation in
-                try await io_uring_op_read_fixed(
-                    fd: fd1,
-                    count: count,
-                    offset: offset,
-                    bufferIndex: bufferIndex,
-                    bufferOffset: 0,
-                    link: true,
-                    operation: operation
-                )
-            }
-            await group.enqueue { [self] operation in
-                try await io_uring_op_write_fixed(
-                    fd: fd2,
-                    count: count,
-                    offset: offset,
-                    bufferIndex: bufferIndex,
-                    bufferOffset: 0,
-                    operation: operation
-                )
-            }
+            let readSubmission = try await Submission(
+                manager: manager,
+                UInt8(IORING_OP_READ_FIXED),
+                fd: fd1,
+                address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: 0),
+                length: CUnsignedInt(count),
+                offset: offset,
+                flags: IORing.IOSqeIOLink,
+                bufferIndex: bufferIndex
+            ) { cqe in Int(cqe.res) }
+            await group.enqueue(submission: readSubmission)
+
+            let writeSubmission = try await Submission(
+                manager: manager,
+                UInt8(IORING_OP_WRITE_FIXED),
+                fd: fd2,
+                address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: 0),
+                length: CUnsignedInt(count),
+                offset: offset,
+                bufferIndex: bufferIndex
+            ) { cqe in Int(cqe.res) }
+            await group.enqueue(submission: writeSubmission)
         }
 
         guard result.count == 2, result[0] == result[1] else {

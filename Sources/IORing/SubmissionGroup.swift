@@ -20,41 +20,28 @@ import AsyncQueue
 import AsyncAlgorithms
 import Glibc
 
+extension Submission {
+    func enqueue() async {
+        do {
+            let result = try await submitSingleshot()
+            await group?.resultChannel.send(result)
+        } catch {
+            group?.resultChannel.fail(error)
+        }
+    }
+
+    func ready() {
+        Task { await group?.readinessChannel.send(self) }
+    }
+}
+
 actor SubmissionGroup<T> {
     private let ring: IORing
     private let queue = ActorQueue<SubmissionGroup>()
-    private var operations = [Operation]()
+    private var submissions = [Submission<T>]()
 
-    private let readinessChannel = AsyncChannel<Operation>()
-    private let resultChannel = AsyncThrowingChannel<T, Error>()
-
-    final class Operation {
-        private let body: @Sendable (_: Operation) async throws -> T
-        fileprivate var result: Result<T, Error> = .failure(Errno.resourceTemporarilyUnavailable)
-        fileprivate weak var group: SubmissionGroup?
-
-        fileprivate init(
-            group: SubmissionGroup,
-            @_inheritActorContext _ body: @escaping @Sendable (_: Operation) async throws
-                -> T
-        ) {
-            self.group = group
-            self.body = body
-        }
-
-        fileprivate func perform() async {
-            do {
-                let result = try await body(self)
-                await group?.resultChannel.send(result)
-            } catch {
-                group?.resultChannel.fail(error)
-            }
-        }
-
-        func ready() {
-            Task { await group?.readinessChannel.send(self) }
-        }
-    }
+    fileprivate let readinessChannel = AsyncChannel<Submission<T>>()
+    fileprivate let resultChannel = AsyncThrowingChannel<T, Error>()
 
     init(@_inheritActorContext ring: IORing) async throws {
         self.ring = ring
@@ -62,35 +49,35 @@ actor SubmissionGroup<T> {
     }
 
     ///
-    /// Asynchronously enqueues an operation. Operation must call `ready()` when
+    /// Asynchronously enqueues an submission. Submission must call `ready()` when
     /// its continuation is registered in the SQE `user_data` otherwise the group
     /// will never be submitted.
     ///
-    func enqueue(_ body: @escaping @Sendable (_: Operation) async throws -> T) {
-        let operation = Operation(group: self, body)
-        operations.append(operation)
+    func enqueue(submission: Submission<T>) {
+        submission.group = self
+        submissions.append(submission)
         queue.enqueue { _ in
-            await operation.perform()
+            await submission.enqueue()
         }
     }
 
     ///
-    /// Call `finish()` once all operations have been submitted to the submission group.
+    /// Call `finish()` once all submissions have been submitted to the submission group.
     ///
     /// Completing the submission group involves the following:
     ///
-    /// - Await all operations to be scheduled on queue
-    /// - Wait for all operations to have continuations registered
+    /// - Await all submissions to be scheduled on queue
+    /// - Wait for all submissions to have continuations registered
     /// - Submit SQEs to I/O ring
     /// - Collect results from results channel
     ///
     func finish() async throws -> [T] {
         await queue.enqueueAndWait { _ in }
-        _ = await readinessChannel.collect(max: operations.count)
+        _ = await readinessChannel.collect(max: submissions.count)
         try await ring.submit()
         readinessChannel.finish()
         defer { resultChannel.finish() }
-        return try await resultChannel.collect(max: operations.count)
+        return try await resultChannel.collect(max: submissions.count)
     }
 }
 
