@@ -24,34 +24,35 @@ actor SubmissionGroup<T> {
     private let ring: IORing
     private let queue = ActorQueue<SubmissionGroup>()
     private var operations = [Operation]()
-    private var channel = AsyncThrowingChannel<T, Error>()
+
+    private let readinessChannel = AsyncChannel<Operation>()
+    private let resultChannel = AsyncThrowingChannel<T, Error>()
 
     final class Operation {
         private let body: @Sendable (_: Operation) async throws -> T
-        fileprivate var isReady = false
         fileprivate var result: Result<T, Error> = .failure(Errno.resourceTemporarilyUnavailable)
-        fileprivate let channel: AsyncThrowingChannel<T, Error>
+        fileprivate weak var group: SubmissionGroup?
 
         fileprivate init(
-            channel: AsyncThrowingChannel<T, Error>,
+            group: SubmissionGroup,
             @_inheritActorContext _ body: @escaping @Sendable (_: Operation) async throws
                 -> T
         ) {
-            self.channel = channel
+            self.group = group
             self.body = body
         }
 
         fileprivate func perform() async {
             do {
                 let result = try await body(self)
-                await channel.send(result)
+                await group?.resultChannel.send(result)
             } catch {
-                channel.fail(error)
+                group?.resultChannel.fail(error)
             }
         }
 
         func ready() {
-            isReady = true
+            Task { await group?.readinessChannel.send(self) }
         }
     }
 
@@ -60,29 +61,36 @@ actor SubmissionGroup<T> {
         queue.adoptExecutionContext(of: self)
     }
 
+    ///
+    /// Asynchronously enqueues an operation. Operation must call `ready()` when
+    /// its continuation is registered in the SQE `user_data` otherwise the group
+    /// will never be submitted.
+    ///
     func enqueue(_ body: @escaping @Sendable (_: Operation) async throws -> T) {
-        let operation = Operation(channel: channel, body)
+        let operation = Operation(group: self, body)
         operations.append(operation)
         queue.enqueue { _ in
             await operation.perform()
         }
     }
 
-    // FIXME: there has to be a better way to do this than "busy" wait
-    private func operationsReady() async {
-        for operation in operations {
-            while !operation.isReady {
-                await Task.yield()
-            }
-        }
-    }
-
+    ///
+    /// Call `finish()` once all operations have been submitted to the submission group.
+    ///
+    /// Completing the submission group involves the following:
+    ///
+    /// - Await all operations to be scheduled on queue
+    /// - Wait for all operations to have continuations registered
+    /// - Submit SQEs to I/O ring
+    /// - Collect results from results channel
+    ///
     func finish() async throws -> [T] {
         await queue.enqueueAndWait { _ in }
-        await operationsReady()
+        _ = await readinessChannel.collect(max: operations.count)
         try await ring.submit()
-        defer { channel.finish() }
-        return try await channel.collect(max: operations.count)
+        readinessChannel.finish()
+        defer { resultChannel.finish() }
+        return try await resultChannel.collect(max: operations.count)
     }
 }
 
