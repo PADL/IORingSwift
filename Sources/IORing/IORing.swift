@@ -184,7 +184,6 @@ private extension IORing {
     }
   }
 
-  // FIXME: support partial reads
   func io_uring_op_read_fixed(
     fd: FileDescriptor,
     count: Int,
@@ -192,9 +191,51 @@ private extension IORing {
     bufferIndex: UInt16,
     bufferOffset: Int, // offset into the fixed buffer
     link: Bool = false
-  ) async throws -> Int {
-    try await manager.prepareAndSubmit(
+  ) async throws -> Submission<Int> {
+    try await Submission(
+      manager: manager,
       UInt8(IORING_OP_READ_FIXED),
+      fd: fd,
+      address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
+      length: CUnsignedInt(count),
+      offset: offset,
+      flags: link ? IORing.IOSqeIOLink : 0,
+      bufferIndex: bufferIndex
+    ) { cqe in
+      Int(cqe.res)
+    }
+  }
+
+  // FIXME: support partial reads
+  func io_uring_op_read_fixed(
+    fd: FileDescriptor,
+    count: Int,
+    offset: Int, // offset into the file we are writing
+    bufferIndex: UInt16,
+    bufferOffset: Int, // offset into the fixed buffer
+    link: Bool = false
+  ) async throws -> Int {
+    try await io_uring_op_read_fixed(
+      fd: fd,
+      count: count,
+      offset: offset,
+      bufferIndex: bufferIndex,
+      bufferOffset: bufferOffset,
+      link: link
+    ).submitSingleshot()
+  }
+
+  func io_uring_op_write_fixed(
+    fd: FileDescriptor,
+    count: Int,
+    offset: Int, // offset into the file we are writing
+    bufferIndex: UInt16,
+    bufferOffset: Int, // offset into the fixed buffer
+    link: Bool = false
+  ) async throws -> Submission<Int> {
+    try await Submission(
+      manager: manager,
+      UInt8(IORING_OP_WRITE_FIXED),
       fd: fd,
       address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
       length: CUnsignedInt(count),
@@ -215,17 +256,14 @@ private extension IORing {
     bufferOffset: Int, // offset into the fixed buffer
     link: Bool = false
   ) async throws -> Int {
-    try await manager.prepareAndSubmit(
-      UInt8(IORING_OP_WRITE_FIXED),
+    try await io_uring_op_write_fixed(
       fd: fd,
-      address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
-      length: CUnsignedInt(count),
+      count: count,
       offset: offset,
-      flags: link ? IORing.IOSqeIOLink : 0,
-      bufferIndex: bufferIndex
-    ) { cqe in
-      Int(cqe.res)
-    }
+      bufferIndex: bufferIndex,
+      bufferOffset: bufferOffset,
+      link: link
+    ).submitSingleshot()
   }
 
   func io_uring_op_send(
@@ -539,12 +577,12 @@ public extension IORing {
 
     try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
 
-    let nwritten = try await io_uring_op_read_fixed(
+    let nread: Int = try await io_uring_op_read_fixed(
       fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
       bufferOffset: bufferOffset
     )
 
-    return manager.buffer(at: bufferIndex, range: bufferOffset..<(bufferOffset + nwritten))
+    return manager.buffer(at: bufferIndex, range: bufferOffset..<(bufferOffset + nread))
   }
 
   func readFixed(
@@ -559,14 +597,14 @@ public extension IORing {
 
     try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
 
-    let nwritten = try await io_uring_op_read_fixed(
+    let nread: Int = try await io_uring_op_read_fixed(
       fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
       bufferOffset: bufferOffset
     )
 
     try manager.withFixedBufferSlice(
       at: bufferIndex,
-      range: bufferOffset..<(bufferOffset + nwritten),
+      range: bufferOffset..<(bufferOffset + nread),
       body
     )
   }
@@ -637,27 +675,23 @@ public extension IORing {
     try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: 0)
 
     let result = try await withSubmissionGroup { (group: SubmissionGroup<Int>) in
-      let writeSubmission = try await Submission(
-        manager: manager,
-        UInt8(IORING_OP_WRITE_FIXED),
+      let writeSubmission: Submission<Int> = try await io_uring_op_write_fixed(
         fd: fd,
-        address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: 0),
-        length: CUnsignedInt(count),
+        count: count,
         offset: offset,
-        flags: IORing.IOSqeIOLink,
-        bufferIndex: bufferIndex
-      ) { cqe in Int(cqe.res) }
+        bufferIndex: bufferIndex,
+        bufferOffset: 0,
+        link: true
+      )
       await group.enqueue(submission: writeSubmission)
 
-      let readSubmission = try await Submission(
-        manager: manager,
-        UInt8(IORING_OP_READ_FIXED),
+      let readSubmission: Submission<Int> = try await io_uring_op_read_fixed(
         fd: fd,
-        address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: 0),
-        length: CUnsignedInt(count),
+        count: count,
         offset: offset,
-        bufferIndex: bufferIndex
-      ) { cqe in Int(cqe.res) }
+        bufferIndex: bufferIndex,
+        bufferOffset: 0
+      )
       await group.enqueue(submission: readSubmission)
     }
 
@@ -678,27 +712,23 @@ public extension IORing {
     try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: 0)
 
     let result = try await withSubmissionGroup { (group: SubmissionGroup<Int>) in
-      let readSubmission = try await Submission(
-        manager: manager,
-        UInt8(IORING_OP_READ_FIXED),
+      let readSubmission: Submission<Int> = try await io_uring_op_read_fixed(
         fd: fd1,
-        address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: 0),
-        length: CUnsignedInt(count),
+        count: count,
         offset: offset,
-        flags: IORing.IOSqeIOLink,
-        bufferIndex: bufferIndex
-      ) { cqe in Int(cqe.res) }
+        bufferIndex: bufferIndex,
+        bufferOffset: 0,
+        link: true
+      )
       await group.enqueue(submission: readSubmission)
 
-      let writeSubmission = try await Submission(
-        manager: manager,
-        UInt8(IORING_OP_WRITE_FIXED),
+      let writeSubmission: Submission<Int> = try await io_uring_op_write_fixed(
         fd: fd2,
-        address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: 0),
-        length: CUnsignedInt(count),
+        count: count,
         offset: offset,
-        bufferIndex: bufferIndex
-      ) { cqe in Int(cqe.res) }
+        bufferIndex: bufferIndex,
+        bufferOffset: 0
+      )
       await group.enqueue(submission: writeSubmission)
     }
 
