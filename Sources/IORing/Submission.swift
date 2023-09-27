@@ -187,7 +187,7 @@ final class Submission<T>: CustomStringConvertible {
         } else {
           Manager
             .logDebug(
-              message: "completion failed: \(Errno(rawValue: cqe.pointee.res))"
+              message: "completion fd \(fd) opcode \(opcode) failed: \(Errno(rawValue: cqe.pointee.res))"
             )
           if cqe.pointee.res == -EINVAL {
             print(
