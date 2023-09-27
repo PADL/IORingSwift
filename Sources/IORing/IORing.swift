@@ -35,8 +35,6 @@ public actor IORing: CustomStringConvertible {
   public static let IOSqeAsync: UInt8 = (1 << IOSQE_ASYNC_BIT)
   public static let IOSqeBufferSelect: UInt8 = (1 << IOSQE_BUFFER_SELECT_BIT)
 
-  public typealias FileDescriptor = CInt
-
   private let manager: Manager
 
   private struct AcceptIoPrio: OptionSet {
@@ -86,7 +84,7 @@ public actor IORing: CustomStringConvertible {
 
 private extension IORing {
   func io_uring_op_cancel(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     link: Bool = false,
     flags: UInt32 = 0
   ) async throws {
@@ -99,7 +97,7 @@ private extension IORing {
   }
 
   func io_uring_op_close(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     link: Bool = false
   ) async throws {
     try await manager.prepareAndSubmit(
@@ -110,7 +108,7 @@ private extension IORing {
   }
 
   func io_uring_op_readv(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     iovecs: [iovec],
     offset: Int,
     link: Bool = false
@@ -127,7 +125,7 @@ private extension IORing {
   }
 
   func io_uring_op_writev(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     iovecs: [iovec],
     count: Int,
     offset: Int,
@@ -145,7 +143,7 @@ private extension IORing {
   }
 
   func io_uring_op_read(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     buffer: inout [UInt8],
     count: Int,
     offset: Int,
@@ -165,7 +163,7 @@ private extension IORing {
   }
 
   func io_uring_op_write(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     buffer: [UInt8],
     count: Int,
     offset: Int,
@@ -185,7 +183,7 @@ private extension IORing {
   }
 
   func io_uring_op_read_fixed(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     count: Int,
     offset: Int, // offset into the file we are reading
     bufferIndex: UInt16,
@@ -208,7 +206,7 @@ private extension IORing {
 
   // FIXME: support partial reads
   func io_uring_op_read_fixed(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     count: Int,
     offset: Int, // offset into the file we are writing
     bufferIndex: UInt16,
@@ -226,7 +224,7 @@ private extension IORing {
   }
 
   func io_uring_op_write_fixed(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     count: Int,
     offset: Int, // offset into the file we are writing
     bufferIndex: UInt16,
@@ -249,7 +247,7 @@ private extension IORing {
 
   // FIXME: support partial writes
   func io_uring_op_write_fixed(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     count: Int,
     offset: Int, // offset into the file we are writing
     bufferIndex: UInt16,
@@ -267,7 +265,7 @@ private extension IORing {
   }
 
   func io_uring_op_send(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     buffer: [UInt8],
     to socketAddress: sockaddr_storage? = nil,
     flags: UInt32 = 0,
@@ -289,7 +287,7 @@ private extension IORing {
   }
 
   func io_uring_op_recv(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     buffer: inout [UInt8],
     flags: UInt32 = 0,
     link: Bool = false
@@ -309,7 +307,7 @@ private extension IORing {
   }
 
   func io_uring_op_recv_multishot(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     count: Int,
     link: Bool = false
   ) async throws -> AsyncThrowingChannel<[UInt8], Error> {
@@ -328,7 +326,7 @@ private extension IORing {
   }
 
   func io_uring_op_recvmsg(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     message: inout Message,
     flags: UInt32 = 0,
     link: Bool = false
@@ -347,7 +345,7 @@ private extension IORing {
   }
 
   func io_uring_op_recvmsg_multishot(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     count: Int,
     flags: UInt32 = 0
   ) async throws -> AsyncThrowingChannel<Message, Error> {
@@ -366,7 +364,7 @@ private extension IORing {
   }
 
   func io_uring_op_sendmsg(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     message: Message,
     flags: UInt32 = 0,
     link: Bool = false
@@ -385,10 +383,10 @@ private extension IORing {
   }
 
   func io_uring_op_accept(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     flags: UInt32 = 0,
     link: Bool = false
-  ) async throws -> (FileDescriptor, sockaddr_storage) {
+  ) async throws -> (FileDescriptorRepresentable, sockaddr_storage) {
     var ss = sockaddr_storage()
     return try await manager.prepareAndSubmit(
       UInt8(IORING_OP_ACCEPT),
@@ -400,26 +398,26 @@ private extension IORing {
       moreFlags: flags
     ) { [ss] cqe in
       _ = ss
-      return (cqe.res, ss)
+      return try (FileHandle(fileDescriptor: cqe.res), ss)
     }
   }
 
   func io_uring_op_multishot_accept(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     flags: UInt32 = 0
-  ) async throws -> AsyncThrowingChannel<FileDescriptor, Error> {
+  ) async throws -> AsyncThrowingChannel<FileDescriptorRepresentable, Error> {
     try await manager.prepareAndSubmitMultishot(
       UInt8(IORING_OP_ACCEPT),
       fd: fd,
       ioprio: AcceptIoPrio.multishot,
       moreFlags: flags
     ) { cqe in
-      cqe.res
+      try FileHandle(fileDescriptor: cqe.res)
     }
   }
 
   func io_uring_op_connect(
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     address: sockaddr_storage,
     link: Bool = false
   ) async throws {
@@ -439,7 +437,7 @@ private extension IORing {
 // MARK: - public API
 
 public extension IORing {
-  func close(_ fd: FileDescriptor) async throws {
+  func close(_ fd: FileDescriptorRepresentable) async throws {
     try await io_uring_op_close(fd: fd)
   }
 
@@ -448,7 +446,7 @@ public extension IORing {
     into buffer: inout [UInt8],
     count: Int? = nil,
     offset: Int = -1,
-    from fd: FileDescriptor
+    from fd: FileDescriptorRepresentable
   ) async throws -> Bool {
     var nread = 0
     let count = count ?? buffer.count
@@ -471,7 +469,7 @@ public extension IORing {
     return true
   }
 
-  func read(count: Int, from fd: FileDescriptor) async throws -> [UInt8] {
+  func read(count: Int, from fd: FileDescriptorRepresentable) async throws -> [UInt8] {
     var buffer = [UInt8](repeating: 0, count: count)
     guard try await read(into: &buffer, count: count, from: fd) else {
       return []
@@ -483,7 +481,7 @@ public extension IORing {
     _ data: [UInt8],
     count: Int? = nil,
     offset: Int = -1,
-    to fd: FileDescriptor
+    to fd: FileDescriptorRepresentable
   ) async throws {
     var nwritten = 0
     let count = count ?? data.count
@@ -499,44 +497,47 @@ public extension IORing {
     } while nwritten < count
   }
 
-  func receive(count: Int, from fd: FileDescriptor) async throws -> AnyAsyncSequence<[UInt8]> {
+  func receive(
+    count: Int,
+    from fd: FileDescriptorRepresentable
+  ) async throws -> AnyAsyncSequence<[UInt8]> {
     try await io_uring_op_recv_multishot(fd: fd, count: count).eraseToAnyAsyncSequence()
   }
 
-  func receive(count: Int, from fd: FileDescriptor) async throws -> [UInt8] {
+  func receive(count: Int, from fd: FileDescriptorRepresentable) async throws -> [UInt8] {
     var buffer = [UInt8](repeating: 0, count: count)
     try await io_uring_op_recv(fd: fd, buffer: &buffer)
     return buffer
   }
 
-  func send(_ data: [UInt8], to fd: FileDescriptor) async throws {
+  func send(_ data: [UInt8], to fd: FileDescriptorRepresentable) async throws {
     try await io_uring_op_send(fd: fd, buffer: data)
   }
 
   func receiveMessages(
     count: Int,
-    from fd: FileDescriptor
+    from fd: FileDescriptorRepresentable
   ) async throws -> AnyAsyncSequence<Message> {
     try await io_uring_op_recvmsg_multishot(fd: fd, count: count).eraseToAnyAsyncSequence()
   }
 
-  func receiveMessage(count: Int, from fd: FileDescriptor) async throws -> Message {
+  func receiveMessage(count: Int, from fd: FileDescriptorRepresentable) async throws -> Message {
     var message = Message(capacity: count)
     try await io_uring_op_recvmsg(fd: fd, message: &message)
     return message
   }
 
-  func send(message: Message, to fd: FileDescriptor) async throws {
+  func send(message: Message, to fd: FileDescriptorRepresentable) async throws {
     try await io_uring_op_sendmsg(fd: fd, message: message)
   }
 
-  func accept(from fd: FileDescriptor) async throws
-    -> AnyAsyncSequence<FileDescriptor>
+  func accept(from fd: FileDescriptorRepresentable) async throws
+    -> AnyAsyncSequence<FileDescriptorRepresentable>
   {
     try await io_uring_op_multishot_accept(fd: fd).eraseToAnyAsyncSequence()
   }
 
-  func connect(_ fd: FileDescriptor, to address: sockaddr_storage) async throws {
+  func connect(_ fd: FileDescriptorRepresentable, to address: sockaddr_storage) async throws {
     try await io_uring_op_connect(fd: fd, address: address)
   }
 
@@ -549,7 +550,7 @@ public extension IORing {
   // Provide an escape hatch by encoding sockaddr_storage into [UInt8]. We can provide
   // wrapper APIs in IORingUtils that take the non-X/Open sockaddr layout.
 
-  func connect(_ fd: FileDescriptor, to address: [UInt8]) async throws {
+  func connect(_ fd: FileDescriptorRepresentable, to address: [UInt8]) async throws {
     let ss = try sockaddr_storage(bytes: address)
     try await io_uring_op_connect(fd: fd, address: ss)
   }
@@ -571,7 +572,7 @@ public extension IORing {
     offset: Int = -1,
     bufferIndex: UInt16,
     bufferOffset: Int = 0,
-    from fd: FileDescriptor
+    from fd: FileDescriptorRepresentable
   ) async throws -> ArraySlice<UInt8> {
     let count = try count ?? manager.registeredBuffersSize
 
@@ -590,7 +591,7 @@ public extension IORing {
     offset: Int = -1,
     bufferIndex: UInt16,
     bufferOffset: Int = 0,
-    from fd: FileDescriptor,
+    from fd: FileDescriptorRepresentable,
     _ body: (inout ArraySlice<UInt8>) throws -> ()
   ) async throws {
     let count = try count ?? manager.registeredBuffersSize
@@ -615,7 +616,7 @@ public extension IORing {
     offset: Int = -1,
     bufferIndex: UInt16,
     bufferOffset: Int = 0,
-    to fd: FileDescriptor
+    to fd: FileDescriptorRepresentable
   ) async throws -> Int {
     let count = count ?? data.endIndex - data.startIndex
 
@@ -642,7 +643,7 @@ public extension IORing {
     offset: Int = -1,
     bufferIndex: UInt16,
     bufferOffset: Int = 0,
-    to fd: FileDescriptor,
+    to fd: FileDescriptorRepresentable,
     _ body: (ArraySlice<UInt8>) throws -> ()
   ) async throws -> Int {
     let count = try count ?? manager.registeredBuffersSize
@@ -667,7 +668,7 @@ public extension IORing {
     offset: Int = -1,
     bufferIndex: UInt16,
     bufferOffset: Int = 0,
-    fd: FileDescriptor,
+    fd: FileDescriptorRepresentable,
     _ body: (inout ArraySlice<UInt8>) throws -> ()
   ) async throws {
     let count = try count ?? manager.registeredBuffersSize
@@ -704,8 +705,8 @@ public extension IORing {
     count: Int? = nil,
     offset: Int = -1,
     bufferIndex: UInt16,
-    from fd1: FileDescriptor,
-    to fd2: FileDescriptor
+    from fd1: FileDescriptorRepresentable,
+    to fd2: FileDescriptorRepresentable
   ) async throws {
     let count = try count ?? manager.registeredBuffersSize
 

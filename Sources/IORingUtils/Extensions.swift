@@ -15,7 +15,6 @@
 //
 
 import AsyncExtensions
-import Foundation
 import Glibc
 import IORing
 
@@ -48,11 +47,11 @@ public extension IORing {
     public typealias Element = UInt8
 
     let ring: IORing
-    let fd: IORing.FileDescriptor
+    let fd: FileDescriptorRepresentable
 
     public struct AsyncIterator: AsyncIteratorProtocol {
       let ring: IORing
-      let fd: IORing.FileDescriptor
+      let fd: FileDescriptorRepresentable
 
       public mutating func next() async throws -> Element? {
         guard !Task.isCancelled else {
@@ -73,7 +72,7 @@ public extension IORing {
   }
 
   func asyncBytes(
-    from fd: FileDescriptor
+    from fd: FileDescriptorRepresentable
   ) -> AnyAsyncSequence<UInt8> {
     AsyncByteSequence(ring: self, fd: fd).eraseToAnyAsyncSequence()
   }
@@ -89,11 +88,32 @@ extension UnsafeMutablePointer {
 }
 
 extension IORing {
-  func connect(_ fd: FileDescriptor, to address: any SocketAddress) async throws {
+  func connect(_ fd: FileDescriptorRepresentable, to address: any SocketAddress) async throws {
     var addressBuffer = [UInt8]()
     withUnsafeBytes(of: address.asStorage()) {
       addressBuffer = [UInt8]($0)
     }
     try await connect(fd, to: addressBuffer)
+  }
+}
+
+public extension FileDescriptorRepresentable {
+  func setNonBlocking() throws {
+    let flags = try Errno.throwingErrno { fcntl(self.fileDescriptor, F_GETFL, 0) }
+    try Errno.throwingErrno { fcntl(self.fileDescriptor, F_SETFL, flags | O_NONBLOCK) }
+  }
+
+  func getSize() throws -> Int {
+    var st = stat()
+
+    if fstat(fileDescriptor, &st) < 0 {
+      throw Errno.lastError
+    }
+
+    if st.st_mode & S_IFMT == S_IFREG {
+      return st.st_size
+    } else {
+      throw Errno.invalidArgument
+    }
   }
 }

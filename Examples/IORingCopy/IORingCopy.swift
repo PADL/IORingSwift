@@ -14,7 +14,6 @@
 // limitations under the License.
 //
 
-import Foundation
 import Glibc
 import IORing
 import IORingUtils
@@ -41,8 +40,8 @@ public struct IORingCopy {
   }
 
   func copy(from: String, to: String) async throws {
-    let infd = try FileHandle(fd: open(from, O_RDONLY))
-    let outfd = try FileHandle(fd: open(to, O_WRONLY | O_CREAT | O_TRUNC, 0o644))
+    let infd = try FileHandle(fileDescriptor: open(from, O_RDONLY))
+    let outfd = try FileHandle(fileDescriptor: open(to, O_WRONLY | O_CREAT | O_TRUNC, 0o644))
 
     let size = try infd.getSize()
     var blocks = size % Self.BlockSize
@@ -53,17 +52,13 @@ public struct IORingCopy {
       let count = nremain > Self.BlockSize ? Self.BlockSize : nremain
       let offset = size - nremain
 
-      try await infd.withDescriptor { infd in
-        try await outfd.withDescriptor { outfd in
-          try await ring.copy(
-            count: count,
-            offset: offset,
-            bufferIndex: 0,
-            from: infd,
-            to: outfd
-          )
-        }
-      }
+      try await ring.copy(
+        count: count,
+        offset: offset,
+        bufferIndex: 0,
+        from: infd,
+        to: outfd
+      )
 
       nremain -= count
     }

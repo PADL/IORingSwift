@@ -14,7 +14,6 @@
 // limitations under the License.
 //
 
-import Foundation
 import Glibc
 import IORing
 import IORingUtils
@@ -45,7 +44,7 @@ public struct IORingCat {
   }
 
   func cat(_ file: String) async throws {
-    let fd = try FileHandle(fd: open(file, O_RDONLY))
+    let fd = try FileHandle(fileDescriptor: open(file, O_RDONLY))
 
     let size = try fd.getSize()
     var blocks = size % blockSize
@@ -54,12 +53,12 @@ public struct IORingCat {
 
     while nremain != 0 {
       let count = nremain > blockSize ? blockSize : nremain
-      let bufferSlice = try await fd.withDescriptor { try await ring.readFixed(
+      let bufferSlice = try await ring.readFixed(
         count: count,
         offset: size - nremain,
         bufferIndex: 0,
-        from: $0
-      ) }
+        from: fd
+      )
       nremain -= count
       outputToConsole(Array(bufferSlice[0..<count]))
     }

@@ -119,7 +119,7 @@ final class Manager {
 
   func prepareAndSubmit<T>(
     _ opcode: UInt8,
-    fd: IORing.FileDescriptor,
+    fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
     length: CUnsignedInt = 0,
     offset: Int = 0,
@@ -150,7 +150,7 @@ final class Manager {
 
   func prepareAndSubmitMultishot<T>(
     _ opcode: UInt8,
-    fd: IORing.FileDescriptor,
+    fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
     length: CUnsignedInt = 0,
     flags: UInt8 = 0,
@@ -182,7 +182,7 @@ final class Manager {
 
   func prepareAndSubmitIovec<T>(
     _ opcode: UInt8,
-    fd: IORing.FileDescriptor,
+    fd: FileDescriptorRepresentable,
     iovecs: [iovec]? = nil,
     offset: Int = 0,
     flags: UInt8 = 0,

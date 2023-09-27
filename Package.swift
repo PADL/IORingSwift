@@ -78,6 +78,10 @@ let package = Package(
                      "AsyncExtensions",
                      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")]
     ),
+    .target(
+      name: "IORingFoundation",
+      dependencies: ["IORingUtils"]
+    ),
     .executableTarget(
       name: "IORingCat",
       dependencies: ["IORing", "IORingUtils"],

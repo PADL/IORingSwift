@@ -24,6 +24,7 @@ final class Submission<T>: CustomStringConvertible {
   weak var manager: Manager?
   weak var group: SubmissionGroup<T>?
 
+  private let fd: FileDescriptorRepresentable
   private let opcode: UInt8 // store this for debugging
   private let ioprio: UInt16 // store this for distinguishing multishot
   private let handler: (io_uring_cqe) throws -> T
@@ -61,7 +62,7 @@ final class Submission<T>: CustomStringConvertible {
   private func prepare(
     _ opcode: UInt8,
     sqe: UnsafeMutablePointer<io_uring_sqe>,
-    fd: IORing.FileDescriptor,
+    fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer?,
     length: CUnsignedInt,
     offset: Int
@@ -69,7 +70,7 @@ final class Submission<T>: CustomStringConvertible {
     io_uring_prep_rw(
       CInt(opcode),
       sqe,
-      fd,
+      fd.fileDescriptor,
       address,
       length,
       offset == -1 ? UInt64(bitPattern: -1) : UInt64(offset)
@@ -107,7 +108,7 @@ final class Submission<T>: CustomStringConvertible {
   init(
     manager: Manager,
     _ opcode: UInt8,
-    fd: IORing.FileDescriptor,
+    fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
     length: CUnsignedInt = 0,
     offset: Int = 0,
@@ -120,6 +121,7 @@ final class Submission<T>: CustomStringConvertible {
     handler: @escaping (io_uring_cqe) throws -> T
   ) async throws {
     sqe = try await manager.getAsyncSqe()
+    self.fd = fd
     self.manager = manager
     self.opcode = opcode
     self.ioprio = ioprio

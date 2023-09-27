@@ -16,16 +16,15 @@
 
 import AsyncAlgorithms
 import AsyncExtensions
-import Foundation
 import Glibc
 import IORing
 
 public struct Socket: CustomStringConvertible, Equatable, Hashable {
-  private let fd: IORingUtils.FileHandle
+  private var fd: FileHandle!
   private let domain: sa_family_t
   private let ring: IORing
 
-  public init(ring: IORing, fd: IORingUtils.FileHandle) {
+  public init(ring: IORing, fd: FileHandle) {
     self.ring = ring
     self.fd = fd
     domain = sa_family_t(AF_UNSPEC)
@@ -33,9 +32,9 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
 
   public var description: String {
     if let localName = try? localName, let peerName = try? peerName {
-      "\(type(of: self))(fd: \(fd), localName: \(localName), peerName: \(peerName))"
+      "\(type(of: self))(fileDescriptor: \(fd.fileDescriptor), localName: \(localName), peerName: \(peerName))"
     } else {
-      "\(type(of: self))(fd: \(fd))"
+      "\(type(of: self))(fileDescriptor: \(fd.fileDescriptor))"
     }
   }
 
@@ -47,7 +46,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
   ) throws {
     self.ring = ring
     let fd = socket(CInt(domain), Int32(type.rawValue), proto)
-    self.fd = try FileHandle(fd: fd)
+    self.fd = try FileHandle(fileDescriptor: fd)
     self.domain = sa_family_t(domain)
   }
 
@@ -56,7 +55,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
   }
 
   private func getName(_ body: @escaping (
-    _ fd: IORing.FileDescriptor,
+    _ fd: CInt,
     UnsafeMutablePointer<sockaddr>,
     UnsafeMutablePointer<socklen_t>
   ) -> CInt) throws -> sockaddr_storage {
@@ -65,10 +64,8 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
 
     _ = try withUnsafeMutablePointer(to: &ss) { pointer in
       try pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
-        try fd.withDescriptor { fd in
-          try Errno.throwingErrno {
-            body(fd, sa, &length)
-          }
+        try Errno.throwingErrno {
+          body(fd.fileDescriptor, sa, &length)
         }
       }
     }
@@ -101,16 +98,14 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
   }
 
   public func setBooleanOption(level: CInt = SOL_SOCKET, option: CInt, to value: Bool) throws {
-    try fd.withDescriptor { fd in
-      var value: CInt = value ? 1 : 0
-      try Errno.throwingErrno { setsockopt(
-        fd,
-        level,
-        option,
-        &value,
-        socklen_t(MemoryLayout<CInt>.size)
-      ) }
-    }
+    var value: CInt = value ? 1 : 0
+    try Errno.throwingErrno { setsockopt(
+      fd.fileDescriptor,
+      level,
+      option,
+      &value,
+      socklen_t(MemoryLayout<CInt>.size)
+    ) }
   }
 
   public func setReuseAddr() throws {
@@ -146,106 +141,96 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
   }
 
   public func bind(to address: any SocketAddress) throws {
-    try fd.withDescriptor { fd in
-      try address.withSockAddr { sa in
-        try Errno.throwingErrno {
-          SwiftGlibc.bind(fd, sa, address.size)
-        }
+    _ = try address.withSockAddr { sa in
+      try Errno.throwingErrno {
+        SwiftGlibc.bind(fd.fileDescriptor, sa, address.size)
       }
     }
   }
 
   public func listen(backlog: Int = 128) throws {
-    try fd.withDescriptor { fd in
-      try Errno.throwingErrno {
-        SwiftGlibc.listen(fd, Int32(backlog))
-      }
+    _ = try Errno.throwingErrno {
+      SwiftGlibc.listen(fd.fileDescriptor, Int32(backlog))
     }
   }
 
   public func accept() async throws -> AnyAsyncSequence<Socket> {
-    try await fd.withDescriptor { fd in
-      try await ring.accept(from: fd).map { try Socket(ring: ring, fd: FileHandle(fd: $0)) }
-        .eraseToAnyAsyncSequence()
-    }
+    try await ring.accept(from: fd).map { Socket(ring: ring, fd: $0 as! FileHandle) }
+      .eraseToAnyAsyncSequence()
   }
 
   public func connect(to address: any SocketAddress) throws {
-    try fd.withDescriptor { fd in
-      try address.withSockAddr { sa in
-        try Errno.throwingErrno {
-          SwiftGlibc.connect(fd, sa, address.size)
-        }
+    _ = try address.withSockAddr { sa in
+      try Errno.throwingErrno {
+        SwiftGlibc.connect(fd.fileDescriptor, sa, address.size)
       }
     }
   }
 
   public func connect(to address: any SocketAddress) async throws {
-    try await fd.withDescriptor { fd in
-      try await ring.connect(fd, to: address)
-    }
+    try await ring.connect(fd, to: address)
   }
 
   public func read(into buffer: inout [UInt8], count: Int) async throws -> Bool {
-    try await fd.withDescriptor { try await ring.read(
+    try await ring.read(
       into: &buffer,
       count: count,
       offset: 0,
-      from: $0
-    ) }
+      from: fd
+    )
   }
 
   public func read(count: Int) async throws -> [UInt8] {
-    try await fd.withDescriptor { try await ring.read(
+    try await ring.read(
       count: count,
-      from: $0
-    ) }
+      from: fd
+    )
   }
 
   public func write(_ buffer: [UInt8], count: Int) async throws {
-    try await fd.withDescriptor { try await ring.write(
+    try await ring.write(
       buffer,
       count: count,
       offset: 0,
-      to: $0
-    ) }
+      to: fd
+    )
   }
 
   public func receive(count: Int) async throws -> [UInt8] {
-    try await fd.withDescriptor { try await ring.receive(
+    try await ring.receive(
       count: count,
-      from: $0
-    ) }
+      from: fd
+    )
   }
 
   public func send(_ data: [UInt8]) async throws {
-    try await fd.withDescriptor { try await ring.send(
+    try await ring.send(
       data,
-      to: $0
-    ) }
+      to: fd
+    )
   }
 
   public func receiveMessages(count: Int) async throws -> AnyAsyncSequence<Message> {
-    try await fd.withDescriptor { try await ring.receiveMessages(
+    try await ring.receiveMessages(
       count: count,
-      from: $0
-    ) }
+      from: fd
+    )
   }
 
   public func sendMessage(_ message: Message) async throws {
-    try await fd.withDescriptor { try await ring.send(
+    try await ring.send(
       message: message,
-      to: $0
-    ) }
+      to: fd
+    )
   }
 
-  public func close() async throws {
-    try await fd.withDescriptor { try await ring.close($0) }
-    fd.invalidate()
+  public mutating func close() async throws {
+    try await ring.close(fd)
+    fd = nil
   }
 
   public var isClosed: Bool {
-    !fd.isValid
+    fd.fileDescriptor < 0
   }
 }
 
@@ -605,41 +590,6 @@ extension sockaddr_storage: SocketAddress {
     try withUnsafePointer(to: self) { ss in
       try ss.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
         try body(sa)
-      }
-    }
-  }
-}
-
-public extension Data {
-  var socketAddress: any SocketAddress {
-    get throws {
-      try withUnsafeBytes { data -> (any SocketAddress) in
-        var family = sa_family_t(AF_UNSPEC)
-
-        try data.withMemoryRebound(to: sockaddr.self) {
-          let sa = $0.baseAddress!.pointee
-          family = sa.sa_family
-          guard sa.size <= self.count else { // ignores trailing bytes
-            throw Errno.addressFamilyNotSupported
-          }
-        }
-
-        switch Int32(family) {
-        case AF_INET:
-          var sin = sockaddr_in()
-          memcpy(&sin, data.baseAddress!, Int(sin.size))
-          return sin
-        case AF_INET6:
-          var sin6 = sockaddr_in6()
-          memcpy(&sin6, data.baseAddress!, Int(sin6.size))
-          return sin6
-        case AF_LOCAL:
-          var sun = sockaddr_un()
-          memcpy(&sun, data.baseAddress!, Int(sun.size))
-          return sun
-        default:
-          throw Errno.addressFamilyNotSupported
-        }
       }
     }
   }
