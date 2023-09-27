@@ -206,3 +206,15 @@ final class Submission<T>: CustomStringConvertible {
     }
   }
 }
+
+extension Submission: Equatable {
+  public static func == (lhs: Submission, rhs: Submission) -> Bool {
+    ObjectIdentifier(lhs) == ObjectIdentifier(rhs)
+  }
+}
+
+extension Submission: Hashable {
+  public func hash(into hasher: inout Hasher) {
+    ObjectIdentifier(self).hash(into: &hasher)
+  }
+}

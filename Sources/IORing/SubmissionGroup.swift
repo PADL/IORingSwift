@@ -61,6 +61,16 @@ actor SubmissionGroup<T> {
     }
   }
 
+  private func allReady() async {
+    let ready = await readinessChannel.collect(max: submissions.count)
+    precondition(Set(ready) == Set(submissions))
+  }
+
+  private func allComplete() async throws -> [T] {
+    defer { resultChannel.finish() }
+    return try await resultChannel.collect(max: submissions.count)
+  }
+
   ///
   /// Call `finish()` once all submissions have been submitted to the submission group.
   ///
@@ -73,11 +83,10 @@ actor SubmissionGroup<T> {
   ///
   func finish() async throws -> [T] {
     await queue.enqueueAndWait { _ in }
-    _ = await readinessChannel.collect(max: submissions.count)
+    await allReady()
     try await ring.submit()
     readinessChannel.finish()
-    defer { resultChannel.finish() }
-    return try await resultChannel.collect(max: submissions.count)
+    return try await allComplete()
   }
 }
 
