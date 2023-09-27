@@ -22,41 +22,41 @@ import IORingUtils
 
 @main
 public struct IORingUDPClient {
-    private let socket: Socket
-    private let ring: IORing
+  private let socket: Socket
+  private let ring: IORing
 
-    public static func main() async throws {
-        guard CommandLine.arguments.count == 3,
-              let address = try? sockaddr_storage(
-                  family: sa_family_t(AF_INET),
-                  presentationAddress: CommandLine.arguments[1]
-              )
-        else {
-            print("Usage: \(CommandLine.arguments[0]) [address:port] [message]")
-            exit(1)
-        }
-
-        let message = CommandLine.arguments[2]
-        let client = try IORingUDPClient()
-        try await client.connect(to: address)
-        try await client.send(message: message)
+  public static func main() async throws {
+    guard CommandLine.arguments.count == 3,
+          let address = try? sockaddr_storage(
+            family: sa_family_t(AF_INET),
+            presentationAddress: CommandLine.arguments[1]
+          )
+    else {
+      print("Usage: \(CommandLine.arguments[0]) [address:port] [message]")
+      exit(1)
     }
 
-    init() throws {
-        ring = try IORing()
-        socket = try Socket(ring: ring, domain: sa_family_t(AF_INET), type: SOCK_DGRAM, protocol: 0)
-    }
+    let message = CommandLine.arguments[2]
+    let client = try IORingUDPClient()
+    try await client.connect(to: address)
+    try await client.send(message: message)
+  }
 
-    func connect(to address: any SocketAddress) async throws {
-        debugPrint("connecting to address \(String(describing: try? address.presentationAddress))")
-        try await socket.connect(to: address)
-    }
+  init() throws {
+    ring = try IORing()
+    socket = try Socket(ring: ring, domain: sa_family_t(AF_INET), type: SOCK_DGRAM, protocol: 0)
+  }
 
-    func send(message: String) async throws {
-        guard let messageData = message.data(using: .utf8) else {
-            throw Errno.invalidArgument
-        }
-        let message = try Message(buffer: [UInt8](messageData + [0]))
-        try await socket.sendMessage(message)
+  func connect(to address: any SocketAddress) async throws {
+    debugPrint("connecting to address \(String(describing: try? address.presentationAddress))")
+    try await socket.connect(to: address)
+  }
+
+  func send(message: String) async throws {
+    guard let messageData = message.data(using: .utf8) else {
+      throw Errno.invalidArgument
     }
+    let message = try Message(buffer: [UInt8](messageData + [0]))
+    try await socket.sendMessage(message)
+  }
 }

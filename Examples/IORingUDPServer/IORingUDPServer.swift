@@ -22,35 +22,35 @@ import IORingUtils
 
 @main
 public struct IORingUDPServer {
-    private let socket: Socket
-    private let ring: IORing
+  private let socket: Socket
+  private let ring: IORing
 
-    public static func main() async throws {
-        guard CommandLine.arguments.count == 2,
-              let port = UInt16(CommandLine.arguments[1])
-        else {
-            print("Usage: \(CommandLine.arguments[0]) [port]")
-            exit(1)
-        }
-
-        let server = try IORingUDPServer()
-        try await server.bind(port: port)
-        try await server.run()
+  public static func main() async throws {
+    guard CommandLine.arguments.count == 2,
+          let port = UInt16(CommandLine.arguments[1])
+    else {
+      print("Usage: \(CommandLine.arguments[0]) [port]")
+      exit(1)
     }
 
-    init() throws {
-        ring = try IORing()
-        socket = try Socket(ring: ring, domain: sa_family_t(AF_INET), type: SOCK_DGRAM, protocol: 0)
-    }
+    let server = try IORingUDPServer()
+    try await server.bind(port: port)
+    try await server.run()
+  }
 
-    func bind(port: UInt16) async throws {
-        try socket.bind(port: port)
-    }
+  init() throws {
+    ring = try IORing()
+    socket = try Socket(ring: ring, domain: sa_family_t(AF_INET), type: SOCK_DGRAM, protocol: 0)
+  }
 
-    func run() async throws {
-        let channel = try await socket.receiveMessages(count: 1500)
-        for try await message in channel {
-            print(message)
-        }
+  func bind(port: UInt16) async throws {
+    try socket.bind(port: port)
+  }
+
+  func run() async throws {
+    let channel = try await socket.receiveMessages(count: 1500)
+    for try await message in channel {
+      print(message)
     }
+  }
 }

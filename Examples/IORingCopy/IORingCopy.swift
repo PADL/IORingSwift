@@ -21,51 +21,51 @@ import IORingUtils
 
 @main
 public struct IORingCopy {
-    static let BlockSize = 64
-    private let ring: IORing
+  static let BlockSize = 64
+  private let ring: IORing
 
-    public static func main() async throws {
-        if CommandLine.arguments.count < 3 {
-            print("Usage: \(CommandLine.arguments[0]) [infile] [outfile]")
-            exit(1)
+  public static func main() async throws {
+    if CommandLine.arguments.count < 3 {
+      print("Usage: \(CommandLine.arguments[0]) [infile] [outfile]")
+      exit(1)
+    }
+
+    let copier = try await IORingCopy()
+    try await copier.copy(from: CommandLine.arguments[1], to: CommandLine.arguments[2])
+  }
+
+  init() async throws {
+    // depth needs to be >= 2 so read and write operation can be submitted in same call
+    ring = try IORing(depth: 2)
+    try await ring.registerFixedBuffers(count: 1, size: Self.BlockSize)
+  }
+
+  func copy(from: String, to: String) async throws {
+    let infd = try FileHandle(fd: open(from, O_RDONLY))
+    let outfd = try FileHandle(fd: open(to, O_WRONLY | O_CREAT | O_TRUNC, 0o644))
+
+    let size = try infd.getSize()
+    var blocks = size % Self.BlockSize
+    if size % blocks != 0 { blocks += 1 }
+    var nremain = size
+
+    while nremain != 0 {
+      let count = nremain > Self.BlockSize ? Self.BlockSize : nremain
+      let offset = size - nremain
+
+      try await infd.withDescriptor { infd in
+        try await outfd.withDescriptor { outfd in
+          try await ring.copy(
+            count: count,
+            offset: offset,
+            bufferIndex: 0,
+            from: infd,
+            to: outfd
+          )
         }
+      }
 
-        let copier = try await IORingCopy()
-        try await copier.copy(from: CommandLine.arguments[1], to: CommandLine.arguments[2])
+      nremain -= count
     }
-
-    init() async throws {
-        // depth needs to be >= 2 so read and write operation can be submitted in same call
-        ring = try IORing(depth: 2)
-        try await ring.registerFixedBuffers(count: 1, size: Self.BlockSize)
-    }
-
-    func copy(from: String, to: String) async throws {
-        let infd = try FileHandle(fd: open(from, O_RDONLY))
-        let outfd = try FileHandle(fd: open(to, O_WRONLY | O_CREAT | O_TRUNC, 0o644))
-
-        let size = try infd.getSize()
-        var blocks = size % Self.BlockSize
-        if size % blocks != 0 { blocks += 1 }
-        var nremain = size
-
-        while nremain != 0 {
-            let count = nremain > Self.BlockSize ? Self.BlockSize : nremain
-            let offset = size - nremain
-
-            try await infd.withDescriptor { infd in
-                try await outfd.withDescriptor { outfd in
-                    try await ring.copy(
-                        count: count,
-                        offset: offset,
-                        bufferIndex: 0,
-                        from: infd,
-                        to: outfd
-                    )
-                }
-            }
-
-            nremain -= count
-        }
-    }
+  }
 }

@@ -22,72 +22,72 @@ import IORingUtils
 
 @main
 public struct IORingTCPEcho {
-    private let socket: Socket
-    private let ring: IORing
-    private let bufferSize: Int
+  private let socket: Socket
+  private let ring: IORing
+  private let bufferSize: Int
 
-    public static func main() async throws {
-        guard CommandLine.arguments.count == 2,
-              let port = UInt16(CommandLine.arguments[1])
-        else {
-            print("Usage: \(CommandLine.arguments[0]) [port]")
-            exit(1)
-        }
-
-        let echo = try IORingTCPEcho(port: port)
-        try await echo.run()
+  public static func main() async throws {
+    guard CommandLine.arguments.count == 2,
+          let port = UInt16(CommandLine.arguments[1])
+    else {
+      print("Usage: \(CommandLine.arguments[0]) [port]")
+      exit(1)
     }
 
-    init(port: UInt16, bufferSize: Int = 32, backlog: Int = 128) throws {
-        self.bufferSize = bufferSize
-        ring = try IORing(depth: backlog)
-        socket = try Socket(
-            ring: ring,
-            domain: sa_family_t(AF_INET),
-            type: SOCK_STREAM,
-            protocol: 0
-        )
-        try socket.setNonBlocking()
-        try socket.setReuseAddr()
-        try socket.setTcpNoDelay()
-        try socket.bind(port: port)
-        try socket.listen(backlog: backlog)
-    }
+    let echo = try IORingTCPEcho(port: port)
+    try await echo.run()
+  }
 
-    func echo(client: Socket) async {
-        do {
-            repeat {
-                let data = try await client.receive(count: bufferSize)
-                try await client.send(data)
-            } while true
-        } catch {
-            debugPrint("closed client \(client)")
-        }
-    }
+  init(port: UInt16, bufferSize: Int = 32, backlog: Int = 128) throws {
+    self.bufferSize = bufferSize
+    ring = try IORing(depth: backlog)
+    socket = try Socket(
+      ring: ring,
+      domain: sa_family_t(AF_INET),
+      type: SOCK_STREAM,
+      protocol: 0
+    )
+    try socket.setNonBlocking()
+    try socket.setReuseAddr()
+    try socket.setTcpNoDelay()
+    try socket.bind(port: port)
+    try socket.listen(backlog: backlog)
+  }
 
-    func run() async throws {
-        let clients = try await socket.accept()
-        for try await client in clients {
-            debugPrint("accepted client \(client)")
-            Task { await echo(client: client) }
-        }
+  func echo(client: Socket) async {
+    do {
+      repeat {
+        let data = try await client.receive(count: bufferSize)
+        try await client.send(data)
+      } while true
+    } catch {
+      debugPrint("closed client \(client)")
     }
+  }
 
-    /*
-     func readWriteEcho(client: Socket) async throws {
-         do {
-             var more = false
-             repeat {
-                 var buffer = [UInt8](repeating: 0, count: bufferSize)
-                 more = try await client.read(into: &buffer, count: bufferSize)
-                 if more {
-                     try await client.write(buffer, count: bufferSize)
-                 }
-             } while more
-         } catch {
-             debugPrint("closed client \(client): error \(error)")
-         }
-         debugPrint("closed client \(client)")
-     }
-     */
+  func run() async throws {
+    let clients = try await socket.accept()
+    for try await client in clients {
+      debugPrint("accepted client \(client)")
+      Task { await echo(client: client) }
+    }
+  }
+
+  /*
+   func readWriteEcho(client: Socket) async throws {
+       do {
+           var more = false
+           repeat {
+               var buffer = [UInt8](repeating: 0, count: bufferSize)
+               more = try await client.read(into: &buffer, count: bufferSize)
+               if more {
+                   try await client.write(buffer, count: bufferSize)
+               }
+           } while more
+       } catch {
+           debugPrint("closed client \(client): error \(error)")
+       }
+       debugPrint("closed client \(client)")
+   }
+   */
 }

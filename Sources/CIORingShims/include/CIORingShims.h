@@ -36,8 +36,10 @@ int io_uring_init_event(void *_Nullable *_Nonnull, struct io_uring *_Nonnull);
 void io_uring_deinit_event(void *_Nullable, struct io_uring *_Nonnull);
 
 /// Private helper API, presently unused
-void CMSG_APPLY(const struct msghdr * _Nonnull,
-    void (^_Nonnull)(struct cmsghdr *_Nonnull, const uint8_t * _Nonnull, size_t));
+void CMSG_APPLY(const struct msghdr *_Nonnull,
+                void (^_Nonnull)(struct cmsghdr *_Nonnull,
+                                 const uint8_t *_Nonnull,
+                                 size_t));
 
 #ifdef __cplusplus
 }

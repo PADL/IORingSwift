@@ -21,51 +21,51 @@ import IORingUtils
 
 @main
 public struct IORingCat {
-    private let blockSize: Int
-    private let ring: IORing
+  private let blockSize: Int
+  private let ring: IORing
 
-    public static func main() async throws {
-        if CommandLine.arguments.count < 2 {
-            print("Usage: \(CommandLine.arguments[0]) [file name] <(file name) ...>")
-            exit(1)
-        }
-
-        let cat = try await IORingCat()
-
-        for file in CommandLine.arguments[1...] {
-            try await cat.cat(file)
-        }
+  public static func main() async throws {
+    if CommandLine.arguments.count < 2 {
+      print("Usage: \(CommandLine.arguments[0]) [file name] <(file name) ...>")
+      exit(1)
     }
 
-    init(blockSize: Int = 64) async throws {
-        ring = try IORing()
-        self.blockSize = blockSize
+    let cat = try await IORingCat()
 
-        try await ring.registerFixedBuffers(count: 1, size: blockSize)
+    for file in CommandLine.arguments[1...] {
+      try await cat.cat(file)
     }
+  }
 
-    func cat(_ file: String) async throws {
-        let fd = try FileHandle(fd: open(file, O_RDONLY))
+  init(blockSize: Int = 64) async throws {
+    ring = try IORing()
+    self.blockSize = blockSize
 
-        let size = try fd.getSize()
-        var blocks = size % blockSize
-        if size % blocks != 0 { blocks += 1 }
-        var nremain = size
+    try await ring.registerFixedBuffers(count: 1, size: blockSize)
+  }
 
-        while nremain != 0 {
-            let count = nremain > blockSize ? blockSize : nremain
-            let bufferSlice = try await fd.withDescriptor { try await ring.readFixed(
-                count: count,
-                offset: size - nremain,
-                bufferIndex: 0,
-                from: $0
-            ) }
-            nremain -= count
-            outputToConsole(Array(bufferSlice[0..<count]))
-        }
+  func cat(_ file: String) async throws {
+    let fd = try FileHandle(fd: open(file, O_RDONLY))
+
+    let size = try fd.getSize()
+    var blocks = size % blockSize
+    if size % blocks != 0 { blocks += 1 }
+    var nremain = size
+
+    while nremain != 0 {
+      let count = nremain > blockSize ? blockSize : nremain
+      let bufferSlice = try await fd.withDescriptor { try await ring.readFixed(
+        count: count,
+        offset: size - nremain,
+        bufferIndex: 0,
+        from: $0
+      ) }
+      nremain -= count
+      outputToConsole(Array(bufferSlice[0..<count]))
     }
+  }
 
-    func outputToConsole(_ data: [UInt8]) {
-        data.forEach { fputc(Int32($0), stdout) }
-    }
+  func outputToConsole(_ data: [UInt8]) {
+    data.forEach { fputc(Int32($0), stdout) }
+  }
 }

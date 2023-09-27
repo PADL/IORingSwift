@@ -20,80 +20,80 @@ import Glibc
 import IORing
 
 private func hexDescription(_ bytes: [UInt8]) -> String {
-    bytes.reduce("") { $0 + String(format: "%02x", $1) }
+  bytes.reduce("") { $0 + String(format: "%02x", $1) }
 }
 
 extension Message: CustomStringConvertible {
-    public convenience init(
-        address: any SocketAddress,
-        buffer: [UInt8],
-        flags: Int32 = 0
-    ) throws {
-        var addressBuffer = [UInt8](repeating: 0, count: Int(address.size))
-        addressBuffer.withUnsafeMutableBytes { bytes in
-            var storage = address.asStorage()
-            _ = memcpy(bytes.baseAddress!, &storage, bytes.count)
-        }
-        try self.init(name: addressBuffer, buffer: buffer, flags: flags)
+  public convenience init(
+    address: any SocketAddress,
+    buffer: [UInt8],
+    flags: Int32 = 0
+  ) throws {
+    var addressBuffer = [UInt8](repeating: 0, count: Int(address.size))
+    addressBuffer.withUnsafeMutableBytes { bytes in
+      var storage = address.asStorage()
+      _ = memcpy(bytes.baseAddress!, &storage, bytes.count)
     }
+    try self.init(name: addressBuffer, buffer: buffer, flags: flags)
+  }
 
-    public var description: String {
-        let address = (try? sockaddr(bytes: name).presentationAddress) ?? "<unknown>"
-        return "\(type(of: self))(address: \(address), buffer: \(hexDescription(buffer)), flags: \(flags))"
-    }
+  public var description: String {
+    let address = (try? sockaddr(bytes: name).presentationAddress) ?? "<unknown>"
+    return "\(type(of: self))(address: \(address), buffer: \(hexDescription(buffer)), flags: \(flags))"
+  }
 }
 
 public extension IORing {
-    struct AsyncByteSequence: AsyncSequence {
-        public typealias Element = UInt8
+  struct AsyncByteSequence: AsyncSequence {
+    public typealias Element = UInt8
 
-        let ring: IORing
-        let fd: IORing.FileDescriptor
+    let ring: IORing
+    let fd: IORing.FileDescriptor
 
-        public struct AsyncIterator: AsyncIteratorProtocol {
-            let ring: IORing
-            let fd: IORing.FileDescriptor
+    public struct AsyncIterator: AsyncIteratorProtocol {
+      let ring: IORing
+      let fd: IORing.FileDescriptor
 
-            public mutating func next() async throws -> Element? {
-                guard !Task.isCancelled else {
-                    return nil
-                }
-
-                var buffer = [UInt8](repeating: 0, count: 1)
-                if try await ring.read(into: &buffer, count: 1, from: fd) == false {
-                    return nil
-                }
-                return buffer.first
-            }
+      public mutating func next() async throws -> Element? {
+        guard !Task.isCancelled else {
+          return nil
         }
 
-        public func makeAsyncIterator() -> AsyncIterator {
-            AsyncIterator(ring: ring, fd: fd)
+        var buffer = [UInt8](repeating: 0, count: 1)
+        if try await ring.read(into: &buffer, count: 1, from: fd) == false {
+          return nil
         }
+        return buffer.first
+      }
     }
 
-    func asyncBytes(
-        from fd: FileDescriptor
-    ) -> AnyAsyncSequence<UInt8> {
-        AsyncByteSequence(ring: self, fd: fd).eraseToAnyAsyncSequence()
+    public func makeAsyncIterator() -> AsyncIterator {
+      AsyncIterator(ring: ring, fd: fd)
     }
+  }
+
+  func asyncBytes(
+    from fd: FileDescriptor
+  ) -> AnyAsyncSequence<UInt8> {
+    AsyncByteSequence(ring: self, fd: fd).eraseToAnyAsyncSequence()
+  }
 }
 
 extension UnsafeMutablePointer {
-    func propertyBasePointer<Property>(to property: KeyPath<Pointee, Property>)
-        -> UnsafePointer<Property>?
-    {
-        guard let offset = MemoryLayout<Pointee>.offset(of: property) else { return nil }
-        return (UnsafeRawPointer(self) + offset).assumingMemoryBound(to: Property.self)
-    }
+  func propertyBasePointer<Property>(to property: KeyPath<Pointee, Property>)
+    -> UnsafePointer<Property>?
+  {
+    guard let offset = MemoryLayout<Pointee>.offset(of: property) else { return nil }
+    return (UnsafeRawPointer(self) + offset).assumingMemoryBound(to: Property.self)
+  }
 }
 
 extension IORing {
-    func connect(_ fd: FileDescriptor, to address: any SocketAddress) async throws {
-        var addressBuffer = [UInt8]()
-        withUnsafeBytes(of: address.asStorage()) {
-            addressBuffer = [UInt8]($0)
-        }
-        try await connect(fd, to: addressBuffer)
+  func connect(_ fd: FileDescriptor, to address: any SocketAddress) async throws {
+    var addressBuffer = [UInt8]()
+    withUnsafeBytes(of: address.asStorage()) {
+      addressBuffer = [UInt8]($0)
     }
+    try await connect(fd, to: addressBuffer)
+  }
 }
