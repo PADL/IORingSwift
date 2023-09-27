@@ -46,7 +46,9 @@ final class Submission<T>: CustomStringConvertible {
     guard let manager else {
       return
     }
-    io_uring_sqe_set_block(sqe) {
+    io_uring_sqe_set_block(sqe) { [fd] in
+      // make sure we capture the file descriptor so it's not closed until we're completed
+      _ = fd
       // FIXME: this could race before io_uring_cqe_seen() is called, although shouldn't happen if on same actor
       handler($0)
       manager.resumePendingSubmission()
