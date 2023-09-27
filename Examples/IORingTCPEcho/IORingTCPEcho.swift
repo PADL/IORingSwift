@@ -37,7 +37,7 @@ public struct IORingTCPEcho {
     try await echo.run()
   }
 
-  init(port: UInt16, bufferSize: Int = 32, backlog: Int = 128) throws {
+  init(port: UInt16, bufferSize: Int = 32, backlog: Int = 64) throws {
     self.bufferSize = bufferSize
     ring = try IORing(depth: backlog)
     socket = try Socket(
@@ -68,19 +68,18 @@ public struct IORingTCPEcho {
     let clients = try await socket.accept()
     for try await client in clients {
       debugPrint("accepted client \(client)")
-      Task { await echo(client: client) }
+      Task { await readWriteEcho(client: client) }
     }
   }
 
-  /*
-   func readWriteEcho(client: Socket) async throws {
+   func readWriteEcho(client: Socket) async {
        do {
            var more = false
            repeat {
-               var buffer = [UInt8](repeating: 0, count: bufferSize)
-               more = try await client.read(into: &buffer, count: bufferSize)
+               var buffer = [UInt8](repeating: 0, count: 1)
+               more = try await client.read(into: &buffer, count: 1)
                if more {
-                   try await client.write(buffer, count: bufferSize)
+                   try await client.write(buffer, count: 1)
                }
            } while more
        } catch {
@@ -88,5 +87,4 @@ public struct IORingTCPEcho {
        }
        debugPrint("closed client \(client)")
    }
-   */
 }

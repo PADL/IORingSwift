@@ -23,5 +23,4 @@
 
 #include "CIORingShims.h"
 
-void invoke_block(struct io_uring_cqe *cqe);
-
+void event_handler_common(struct io_uring *ring);

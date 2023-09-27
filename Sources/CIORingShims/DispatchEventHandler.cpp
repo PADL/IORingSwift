@@ -18,24 +18,14 @@
 
 static void event_handler(dispatch_source_t source) {
   auto ring = static_cast<struct io_uring *>(dispatch_get_context(source));
-  struct io_uring_cqe *cqe;
   eventfd_t value;
-  unsigned int head, i = 0;
   int err;
 
   err = eventfd_read(dispatch_source_get_handle(source), &value);
   if (err)
     return;
 
-  err = io_uring_wait_cqe(ring, &cqe);
-  if (err)
-    return;
-
-  io_uring_for_each_cqe(ring, head, cqe) {
-    invoke_block(cqe);
-    i++;
-  }
-  io_uring_cq_advance(ring, i);
+  event_handler_common(ring);
 }
 
 int io_uring_init_event(void **eventHandle, struct io_uring *ring) {
