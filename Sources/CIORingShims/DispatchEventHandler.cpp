@@ -14,24 +14,7 @@
 // limitations under the License.
 //
 
-#include <sys/eventfd.h>
-#include <liburing.h>
-#include <dispatch/dispatch.h>
-#include <Block/Block.h>
-
-#include "CIORingShims.h"
-
-void io_uring_sqe_set_block(struct io_uring_sqe *sqe,
-                            io_uring_cqe_block block) {
-  io_uring_sqe_set_data(sqe, _Block_copy(block));
-}
-
-static void invoke_block(struct io_uring_cqe *cqe) {
-  auto block = reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
-  block(cqe);
-  if ((cqe->flags & IORING_CQE_F_MORE) == 0)
-    _Block_release(block);
-}
+#include "EventHandlerInternal.hpp"
 
 static void event_handler(dispatch_source_t source) {
   auto ring = static_cast<struct io_uring *>(dispatch_get_context(source));
@@ -104,11 +87,3 @@ void io_uring_deinit_event(void *eventHandle, struct io_uring *ring) {
   }
 }
 
-// private helpers
-void CMSG_APPLY(const struct msghdr *msgh,
-                void (^block)(struct cmsghdr *, const uint8_t *, size_t)) {
-  for (auto cmsg = CMSG_FIRSTHDR(msgh); cmsg != nullptr;
-       cmsg = CMSG_NXTHDR(const_cast<struct msghdr *>(msgh), cmsg)) {
-    block(cmsg, CMSG_DATA(cmsg), cmsg->cmsg_len - CMSG_LEN(0));
-  }
-}
