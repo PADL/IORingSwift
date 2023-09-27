@@ -185,7 +185,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
     return try await ring.read(
       into: &buffer,
       count: count,
-      offset: 0,
+      offset: -1,
       from: fd
     )
   }
@@ -203,7 +203,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
     try await ring.write(
       buffer,
       count: count,
-      offset: 0,
+      offset: -1,
       to: fd
     )
   }
