@@ -131,7 +131,7 @@ final class Manager {
     socketAddress: sockaddr_storage? = nil,
     handler: @escaping (io_uring_cqe) throws -> T
   ) async throws -> T {
-    let submission = try await Submission(
+    try await Submission(
       manager: self,
       opcode,
       fd: fd,
@@ -145,8 +145,7 @@ final class Manager {
       bufferGroup: bufferGroup,
       socketAddress: socketAddress,
       handler: handler
-    )
-    return try await submission.submitSingleshot()
+    ).submitSingleshot()
   }
 
   func prepareAndSubmitMultishot<T>(
