@@ -24,15 +24,14 @@ final class Submission<T>: CustomStringConvertible {
   weak var manager: Manager?
   weak var group: SubmissionGroup<T>?
 
-  private let fd: FileDescriptorRepresentable
+  private let fd: FileDescriptorRepresentable // store this for lifetime
   private let opcode: UInt8 // store this for debugging
-  private let ioprio: UInt16 // store this for distinguishing multishot
   private let handler: (io_uring_cqe) throws -> T
 
   private let sqe: UnsafeMutablePointer<io_uring_sqe>
 
   public var description: String {
-    "\(type(of: self))(opcode: \(opcode), handler: \(String(describing: handler)), inGroup: \(inGroup))"
+    "\(type(of: self))(fd: \(fd.fileDescriptor), opcode: \(opcode), handler: \(String(describing: handler)), inGroup: \(inGroup))"
   }
 
   var inGroup: Bool {
@@ -126,7 +125,6 @@ final class Submission<T>: CustomStringConvertible {
     self.fd = fd
     self.manager = manager
     self.opcode = opcode
-    self.ioprio = ioprio
     self.handler = handler
 
     prepare(opcode, sqe: sqe, fd: fd, address: address, length: length, offset: offset)
@@ -157,7 +155,7 @@ final class Submission<T>: CustomStringConvertible {
           guard cqe.pointee.res >= 0 else {
             Manager
               .logDebug(
-                message: "completion failed: \(Errno(rawValue: cqe.pointee.res))"
+                message: "completion fd \(fd) opcode \(opcode) failed: \(Errno(rawValue: cqe.pointee.res))"
               )
             continuation.resume(throwing: Errno(rawValue: cqe.pointee.res))
             return

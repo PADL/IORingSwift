@@ -78,10 +78,10 @@ final class Manager {
         return sqe
       } catch let error as Errno {
         switch error {
-        case .resourceTemporarilyUnavailable:
+        case .resourceTemporarilyUnavailable: // EAGAIN
           fallthrough
         // FIXME: should we always retry on cancel?
-        case .canceled:
+        case .canceled: // ECANCELED
           break
         default:
           throw error
