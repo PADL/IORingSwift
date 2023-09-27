@@ -20,7 +20,7 @@ import Glibc
 import IORing
 
 public struct Socket: CustomStringConvertible, Equatable, Hashable {
-  private var fd: FileHandle!
+  private var fd: FileHandle?
   private let domain: sa_family_t
   private let ring: IORing
 
@@ -31,10 +31,11 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
   }
 
   public var description: String {
+    let fileDescriptor = fd?.fileDescriptor ?? -1
     if let localName = try? localName, let peerName = try? peerName {
-      "\(type(of: self))(fileDescriptor: \(fd.fileDescriptor), localName: \(localName), peerName: \(peerName))"
+      return "\(type(of: self))(fileDescriptor: \(fileDescriptor), localName: \(localName), peerName: \(peerName))"
     } else {
-      "\(type(of: self))(fileDescriptor: \(fd.fileDescriptor))"
+      return "\(type(of: self))(fileDescriptor: \(fileDescriptor))"
     }
   }
 
@@ -51,6 +52,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
   }
 
   public func setNonBlocking() throws {
+    guard let fd else { throw Errno.badFileDescriptor }
     try fd.setNonBlocking()
   }
 
@@ -59,6 +61,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
     UnsafeMutablePointer<sockaddr>,
     UnsafeMutablePointer<socklen_t>
   ) -> CInt) throws -> sockaddr_storage {
+    guard let fd else { throw Errno.badFileDescriptor }
     var ss = sockaddr_storage()
     var length = ss.size
 
@@ -98,6 +101,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
   }
 
   public func setBooleanOption(level: CInt = SOL_SOCKET, option: CInt, to value: Bool) throws {
+    guard let fd else { throw Errno.badFileDescriptor }
     var value: CInt = value ? 1 : 0
     try Errno.throwingErrno { setsockopt(
       fd.fileDescriptor,
@@ -141,6 +145,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
   }
 
   public func bind(to address: any SocketAddress) throws {
+    guard let fd else { throw Errno.badFileDescriptor }
     _ = try address.withSockAddr { sa in
       try Errno.throwingErrno {
         SwiftGlibc.bind(fd.fileDescriptor, sa, address.size)
@@ -149,17 +154,20 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
   }
 
   public func listen(backlog: Int = 128) throws {
+    guard let fd else { throw Errno.badFileDescriptor }
     _ = try Errno.throwingErrno {
       SwiftGlibc.listen(fd.fileDescriptor, Int32(backlog))
     }
   }
 
   public func accept() async throws -> AnyAsyncSequence<Socket> {
-    try await ring.accept(from: fd).map { Socket(ring: ring, fd: $0 as! FileHandle) }
+    guard let fd else { throw Errno.badFileDescriptor }
+    return try await ring.accept(from: fd).map { Socket(ring: ring, fd: $0 as! FileHandle) }
       .eraseToAnyAsyncSequence()
   }
 
   public func connect(to address: any SocketAddress) throws {
+    guard let fd else { throw Errno.badFileDescriptor }
     _ = try address.withSockAddr { sa in
       try Errno.throwingErrno {
         SwiftGlibc.connect(fd.fileDescriptor, sa, address.size)
@@ -168,11 +176,13 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
   }
 
   public func connect(to address: any SocketAddress) async throws {
+    guard let fd else { throw Errno.badFileDescriptor }
     try await ring.connect(fd, to: address)
   }
 
   public func read(into buffer: inout [UInt8], count: Int) async throws -> Bool {
-    try await ring.read(
+    guard let fd else { throw Errno.badFileDescriptor }
+    return try await ring.read(
       into: &buffer,
       count: count,
       offset: 0,
@@ -181,13 +191,15 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
   }
 
   public func read(count: Int) async throws -> [UInt8] {
-    try await ring.read(
+    guard let fd else { throw Errno.badFileDescriptor }
+    return try await ring.read(
       count: count,
       from: fd
     )
   }
 
   public func write(_ buffer: [UInt8], count: Int) async throws {
+    guard let fd else { throw Errno.badFileDescriptor }
     try await ring.write(
       buffer,
       count: count,
@@ -197,13 +209,15 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
   }
 
   public func receive(count: Int) async throws -> [UInt8] {
-    try await ring.receive(
+    guard let fd else { throw Errno.badFileDescriptor }
+    return try await ring.receive(
       count: count,
       from: fd
     )
   }
 
   public func send(_ data: [UInt8]) async throws {
+    guard let fd else { throw Errno.badFileDescriptor }
     try await ring.send(
       data,
       to: fd
@@ -211,13 +225,15 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
   }
 
   public func receiveMessages(count: Int) async throws -> AnyAsyncSequence<Message> {
-    try await ring.receiveMessages(
+    guard let fd else { throw Errno.badFileDescriptor }
+    return try await ring.receiveMessages(
       count: count,
       from: fd
     )
   }
 
   public func sendMessage(_ message: Message) async throws {
+    guard let fd else { throw Errno.badFileDescriptor }
     try await ring.send(
       message: message,
       to: fd
@@ -225,12 +241,14 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
   }
 
   public mutating func close() async throws {
-    try await ring.close(fd)
+    guard fd != nil else { throw Errno.badFileDescriptor }
+    // just release reference, in case there are outstanding operations
     fd = nil
   }
 
   public var isClosed: Bool {
-    fd.fileDescriptor < 0
+    guard let fd else { return true }
+    return fd.fileDescriptor < 0
   }
 }
 
