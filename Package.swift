@@ -34,6 +34,10 @@ let package = Package(
       name: "IORingUtils",
       targets: ["IORingUtils"]
     ),
+    .library(
+      name: "IORingFoundation",
+      targets: ["IORingFoundation"]
+    ),
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-async-algorithms", from: "0.1.0"),
