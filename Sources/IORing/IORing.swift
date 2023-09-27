@@ -635,7 +635,40 @@ public extension IORing {
     bufferOffset: Int = 0,
     fd: FileDescriptor,
     _ body: (inout ArraySlice<UInt8>) throws -> ()
-  ) async throws {}
+  ) async throws {
+    let count = try count ?? manager.registeredBuffersSize
+
+    try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: 0)
+
+    let result = try await withSubmissionGroup { (group: SubmissionGroup<Int>) in
+      let writeSubmission = try await Submission(
+        manager: manager,
+        UInt8(IORING_OP_WRITE_FIXED),
+        fd: fd,
+        address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: 0),
+        length: CUnsignedInt(count),
+        offset: offset,
+        flags: IORing.IOSqeIOLink,
+        bufferIndex: bufferIndex
+      ) { cqe in Int(cqe.res) }
+      await group.enqueue(submission: writeSubmission)
+
+      let readSubmission = try await Submission(
+        manager: manager,
+        UInt8(IORING_OP_READ_FIXED),
+        fd: fd,
+        address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: 0),
+        length: CUnsignedInt(count),
+        offset: offset,
+        bufferIndex: bufferIndex
+      ) { cqe in Int(cqe.res) }
+      await group.enqueue(submission: readSubmission)
+    }
+
+    guard result.count == 2, result[0] == result[1] else {
+      throw Errno.resourceTemporarilyUnavailable
+    }
+  }
 
   func copy(
     count: Int? = nil,
