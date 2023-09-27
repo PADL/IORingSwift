@@ -8,7 +8,8 @@ It was originally designed to support [SPI](https://en.wikipedia.org/wiki/Serial
 The package consists of two libraries:
 
 * [IORing](Sources/IORing), which provides `async/await` Swift concurrency-aware wrappers for making `io_uring` requests
-* [IORingUtils](Sources/IORingUtils), an optional library providing for managing file descriptor lifetimes and handling socket addresses
+* [IORingUtils](Sources/IORingUtils), an optional library of helper functions
+* [IORingFoundation](Sources/IORingFoundation), an optional library for using with Foundation
 
 The intention is that this will also eventually support the real-time I/O subsystem in Zephyr, for use with SwiftIO.
 
