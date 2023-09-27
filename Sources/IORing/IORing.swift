@@ -311,8 +311,7 @@ private extension IORing {
   func io_uring_op_recvmsg_multishot(
     fd: FileDescriptor,
     count: Int,
-    flags: UInt32 = 0,
-    link: Bool = false
+    flags: UInt32 = 0
   ) async throws -> AsyncThrowingChannel<Message, Error> {
     let message = Message(capacity: count)
     return try await message.withUnsafeMutablePointer { pointer in
@@ -320,7 +319,6 @@ private extension IORing {
         UInt8(IORING_OP_RECVMSG),
         fd: fd,
         address: pointer,
-        flags: link ? IORing.IOSqeIOLink : 0,
         ioprio: RecvSendIoPrio.multishot,
         moreFlags: flags
       ) { [message] _ in
@@ -370,13 +368,11 @@ private extension IORing {
 
   func io_uring_op_multishot_accept(
     fd: FileDescriptor,
-    flags: UInt32 = 0,
-    link: Bool = false
+    flags: UInt32 = 0
   ) async throws -> AsyncThrowingChannel<FileDescriptor, Error> {
     try await manager.prepareAndSubmitMultishot(
       UInt8(IORING_OP_ACCEPT),
       fd: fd,
-      flags: link ? IORing.IOSqeIOLink : 0,
       ioprio: AcceptIoPrio.multishot,
       moreFlags: flags
     ) { cqe in
