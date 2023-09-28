@@ -418,8 +418,7 @@ private extension IORing {
       IORING_OP_ACCEPT,
       fd: fd,
       address: &ss,
-      length: CUnsignedInt(MemoryLayout<sockaddr_storage>.size),
-      offset: 0,
+      offset: MemoryLayout<sockaddr_storage>.size,
       flags: IORing.SqeFlags(link: link),
       moreFlags: flags
     ) { [ss] cqe in

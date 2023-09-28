@@ -34,7 +34,7 @@ public struct IORingTCPEcho {
     }
 
     let echo = try IORingTCPEcho(port: port)
-    try await echo.runMultishot()
+    try await echo.runSingleshot()
   }
 
   init(port: UInt16, bufferSize: Int = 32, backlog: Int = 3) throws {
