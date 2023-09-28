@@ -14,14 +14,14 @@
 // limitations under the License.
 //
 
-#include "EventHandlerInternal.hpp"
+#include "CQHandlerInternal.hpp"
 
 void io_uring_sqe_set_block(struct io_uring_sqe *sqe,
                             io_uring_cqe_block block) {
   io_uring_sqe_set_data(sqe, _Block_copy(block));
 }
 
-void io_uring_event_handle_completion(struct io_uring *ring, struct io_uring_cqe *cqe) {
+void io_uring_cq_invoke_blocks(struct io_uring *ring, struct io_uring_cqe *cqe) {
   unsigned int head, i = 0;
 
   io_uring_for_each_cqe(ring, head, cqe) {
@@ -34,22 +34,22 @@ void io_uring_event_handle_completion(struct io_uring *ring, struct io_uring_cqe
   io_uring_cq_advance(ring, i);
 }
 
-int io_uring_init_event(void **eventHandle, struct io_uring *ring) {
+int io_uring_init_cq_handler(void **handle, struct io_uring *ring) {
 #if DISPATCH_IO_URING
-  return dispatch_io_uring_init_event(eventHandle, ring);
+  return dispatch_io_uring_init_cq_handler(handle, ring);
 #elif PTHREAD_IO_URING
-  return pthread_io_uring_init_event(eventHandle, ring);
+  return pthread_io_uring_init_cq_handler(handle, ring);
 #else
-#error implement io_uring_init_event() for your platform
+#error implement io_uring_init_cq_handler() for your platform
 #endif
 }
 
-void io_uring_deinit_event(void *eventHandle, struct io_uring *ring) {
+void io_uring_deinit_cq_handler(void *handle, struct io_uring *ring) {
 #if DISPATCH_IO_URING
-  dispatch_io_uring_deinit_event(eventHandle, ring);
+  dispatch_io_uring_deinit_cq_handler(handle, ring);
 #elif PTHREAD_IO_URING
-  pthread_io_uring_deinit_event(eventHandle, ring);
+  pthread_io_uring_deinit_cq_handler(handle, ring);
 #else
-#error implement io_uring_deinit_event() for your platform
+#error implement io_uring_deinit_cq_handler() for your platform
 #endif
 }

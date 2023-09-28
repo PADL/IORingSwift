@@ -30,10 +30,10 @@ void io_uring_sqe_set_block(struct io_uring_sqe *_Nonnull sqe,
                             _Nonnull io_uring_cqe_block block);
 
 /// Enrol a `io_uring` for `io_uring_cqe_block` processing
-int io_uring_init_event(void *_Nullable *_Nonnull, struct io_uring *_Nonnull);
+int io_uring_init_cq_handler(void *_Nullable *_Nonnull, struct io_uring *_Nonnull);
 
 /// De-enroll `io_uring` from block processing
-void io_uring_deinit_event(void *_Nullable, struct io_uring *_Nonnull);
+void io_uring_deinit_cq_handler(void *_Nullable, struct io_uring *_Nonnull);
 
 /// Private helper API, presently unused
 void CMSG_APPLY(const struct msghdr *_Nonnull,

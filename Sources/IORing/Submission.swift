@@ -113,7 +113,7 @@ final class Submission<T>: CustomStringConvertible {
     address: UnsafeRawPointer? = nil,
     length: CUnsignedInt = 0,
     offset: Int = 0,
-    flags: UInt8 = 0,
+    flags: IORing.SqeFlags = IORing.SqeFlags(),
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
     bufferIndex: UInt16 = 0,
@@ -130,7 +130,7 @@ final class Submission<T>: CustomStringConvertible {
     prepare(opcode, sqe: sqe, fd: fd, address: address, length: length, offset: offset)
     setFlags(
       sqe: sqe,
-      flags: flags,
+      flags: flags.rawValue,
       ioprio: ioprio,
       moreFlags: moreFlags,
       bufferIndex: bufferIndex,

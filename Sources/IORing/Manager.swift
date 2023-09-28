@@ -25,8 +25,9 @@ import Glibc
 final class Manager {
   private typealias Continuation = CheckedContinuation<(), Error>
 
-  var ring: io_uring
+  private var ring: io_uring
   private var eventHandle: UnsafeMutableRawPointer?
+  private let suspendIfSubmissionQueueFull: Bool
   private var pendingSubmissions = Queue<Continuation>()
 
   fileprivate typealias FixedBuffer = [UInt8]
@@ -37,21 +38,22 @@ final class Manager {
     debugPrint("IORing.Manager.\(functionName): \(message)")
   }
 
-  init(depth: CUnsignedInt, flags: CUnsignedInt) throws {
+  init(depth: CUnsignedInt, flags: CUnsignedInt, suspendIfSubmissionQueueFull: Bool) throws {
     var ring = io_uring()
 
+    self.suspendIfSubmissionQueueFull = suspendIfSubmissionQueueFull
     try Errno.throwingErrno {
       io_uring_queue_init(depth, &ring, flags)
     }
     self.ring = ring
     try Errno.throwingErrno {
-      io_uring_init_event(&self.eventHandle, &self.ring)
+      io_uring_init_cq_handler(&self.eventHandle, &self.ring)
     }
   }
 
   deinit {
     cancelPendingSubmissions()
-    io_uring_deinit_event(eventHandle, &ring)
+    io_uring_deinit_cq_handler(eventHandle, &ring)
     if hasRegisteredBuffers {
       try? unregisterBuffers()
     }
@@ -59,35 +61,24 @@ final class Manager {
     io_uring_queue_exit(&ring)
   }
 
-  private func getSqe() throws -> UnsafeMutablePointer<io_uring_sqe> {
-    guard let sqe = io_uring_get_sqe(&ring) else {
-      throw Errno.resourceTemporarilyUnavailable
-    }
-    return sqe
-  }
-
   func getAsyncSqe() async throws -> UnsafeMutablePointer<io_uring_sqe> {
-    repeat {
-      do {
-        guard let sqe = try? getSqe() else {
-          // queue is full, suspend
-          try await suspendPendingSubmission()
-          continue
-        }
+    var sqe: UnsafeMutablePointer<io_uring_sqe>!
 
-        return sqe
-      } catch let error as Errno {
-        switch error {
-        case .resourceTemporarilyUnavailable: // EAGAIN
-          fallthrough
-        // FIXME: should we always retry on cancel?
-        case .canceled: // ECANCELED
-          break
-        default:
-          throw error
-        }
+    repeat {
+      sqe = io_uring_get_sqe(&ring)
+      if sqe != nil {
+        break
       }
-    } while true
+
+      if suspendIfSubmissionQueueFull {
+        try await suspendPendingSubmission()
+        continue
+      } else {
+        throw Errno.resourceTemporarilyUnavailable
+      }
+    } while sqe == nil
+
+    return sqe
   }
 
   func submit() throws {
@@ -123,7 +114,7 @@ final class Manager {
     address: UnsafeRawPointer? = nil,
     length: CUnsignedInt = 0,
     offset: Int = 0,
-    flags: UInt8 = 0,
+    flags: IORing.SqeFlags = IORing.SqeFlags(),
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
     bufferIndex: UInt16 = 0,
@@ -153,7 +144,7 @@ final class Manager {
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
     length: CUnsignedInt = 0,
-    flags: UInt8 = 0,
+    flags: IORing.SqeFlags = IORing.SqeFlags(),
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
     bufferIndex: UInt16 = 0,
@@ -185,7 +176,7 @@ final class Manager {
     fd: FileDescriptorRepresentable,
     iovecs: [iovec]? = nil,
     offset: Int = 0,
-    flags: UInt8 = 0,
+    flags: IORing.SqeFlags = IORing.SqeFlags(),
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
     handler: @escaping (io_uring_cqe) throws -> T

@@ -20,18 +20,18 @@ import Glibc
 import IORing
 
 public struct Socket: CustomStringConvertible, Equatable, Hashable {
-  private var fd: FileHandle?
+  private var fileHandle: FileHandle?
   private let domain: sa_family_t
   private let ring: IORing
 
-  public init(ring: IORing, fd: FileHandle) {
+  public init(ring: IORing, fileHandle: FileHandle) {
     self.ring = ring
-    self.fd = fd
+    self.fileHandle = fileHandle
     domain = sa_family_t(AF_UNSPEC)
   }
 
   public var description: String {
-    let fileDescriptor = fd?.fileDescriptor ?? -1
+    let fileDescriptor = fileHandle?.fileDescriptor ?? -1
     if let localName = try? localName, let peerName = try? peerName {
       return "\(type(of: self))(fileDescriptor: \(fileDescriptor), localName: \(localName), peerName: \(peerName))"
     } else {
@@ -46,29 +46,29 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
     protocol proto: CInt = 0
   ) throws {
     self.ring = ring
-    let fd = socket(CInt(domain), Int32(type.rawValue), proto)
-    self.fd = try FileHandle(fileDescriptor: fd)
+    let fileHandle = socket(CInt(domain), Int32(type.rawValue), proto)
+    self.fileHandle = try FileHandle(fileDescriptor: fileHandle, closeOnDealloc: true)
     self.domain = sa_family_t(domain)
   }
 
   public func setNonBlocking() throws {
-    guard let fd else { throw Errno.badFileDescriptor }
-    try fd.setNonBlocking()
+    guard let fileHandle else { throw Errno.badFileDescriptor }
+    try fileHandle.setNonBlocking()
   }
 
   private func getName(_ body: @escaping (
-    _ fd: CInt,
+    Int32,
     UnsafeMutablePointer<sockaddr>,
     UnsafeMutablePointer<socklen_t>
   ) -> CInt) throws -> sockaddr_storage {
-    guard let fd else { throw Errno.badFileDescriptor }
+    guard let fileHandle else { throw Errno.badFileDescriptor }
     var ss = sockaddr_storage()
     var length = ss.size
 
     _ = try withUnsafeMutablePointer(to: &ss) { pointer in
       try pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
         try Errno.throwingErrno {
-          body(fd.fileDescriptor, sa, &length)
+          body(fileHandle.fileDescriptor, sa, &length)
         }
       }
     }
@@ -101,10 +101,10 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
   }
 
   public func setBooleanOption(level: CInt = SOL_SOCKET, option: CInt, to value: Bool) throws {
-    guard let fd else { throw Errno.badFileDescriptor }
+    guard let fileHandle else { throw Errno.badFileDescriptor }
     var value: CInt = value ? 1 : 0
     try Errno.throwingErrno { setsockopt(
-      fd.fileDescriptor,
+      fileHandle.fileDescriptor,
       level,
       option,
       &value,
@@ -128,10 +128,12 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
     switch Int32(domain) {
     case AF_INET:
       var sin = sockaddr_in()
+      sin.sin_family = domain
       sin.sin_port = port.bigEndian
       try bind(to: sin)
     case AF_INET6:
       var sin6 = sockaddr_in6()
+      sin6.sin6_family = domain
       sin6.sin6_port = port.bigEndian
       try bind(to: sin6)
     default:
@@ -145,134 +147,110 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
   }
 
   public func bind(to address: any SocketAddress) throws {
-    guard let fd else { throw Errno.badFileDescriptor }
+    guard let fileHandle else { throw Errno.badFileDescriptor }
     _ = try address.withSockAddr { sa in
       try Errno.throwingErrno {
-        SwiftGlibc.bind(fd.fileDescriptor, sa, address.size)
+        SwiftGlibc.bind(fileHandle.fileDescriptor, sa, address.size)
       }
     }
   }
 
   public func listen(backlog: Int = 128) throws {
-    guard let fd else { throw Errno.badFileDescriptor }
+    guard let fileHandle else { throw Errno.badFileDescriptor }
     _ = try Errno.throwingErrno {
-      SwiftGlibc.listen(fd.fileDescriptor, Int32(backlog))
+      SwiftGlibc.listen(fileHandle.fileDescriptor, Int32(backlog))
     }
   }
 
   public func accept() async throws -> AnyAsyncSequence<Socket> {
-    guard let fd else { throw Errno.badFileDescriptor }
-    return try await ring.accept(from: fd).map { Socket(ring: ring, fd: $0 as! FileHandle) }
+    guard let fileHandle else { throw Errno.badFileDescriptor }
+    return try await ring.accept(from: fileHandle).map { Socket(ring: ring, fileHandle: $0 as! FileHandle) }
       .eraseToAnyAsyncSequence()
   }
 
   public func connect(to address: any SocketAddress) throws {
-    guard let fd else { throw Errno.badFileDescriptor }
+    guard let fileHandle else { throw Errno.badFileDescriptor }
     _ = try address.withSockAddr { sa in
       try Errno.throwingErrno {
-        SwiftGlibc.connect(fd.fileDescriptor, sa, address.size)
+        SwiftGlibc.connect(fileHandle.fileDescriptor, sa, address.size)
       }
     }
   }
 
   public func connect(to address: any SocketAddress) async throws {
-    guard let fd else { throw Errno.badFileDescriptor }
-    try await ring.connect(fd, to: address)
+    guard let fileHandle else { throw Errno.badFileDescriptor }
+    try await ring.connect(fileHandle, to: address)
   }
 
   public func read(into buffer: inout [UInt8], count: Int) async throws -> Bool {
-    guard let fd else { throw Errno.badFileDescriptor }
+    guard let fileHandle else { throw Errno.badFileDescriptor }
     return try await ring.read(
       into: &buffer,
       count: count,
       offset: -1,
-      from: fd
+      from: fileHandle
     )
   }
 
   public func read(count: Int) async throws -> [UInt8] {
-    guard let fd else { throw Errno.badFileDescriptor }
+    guard let fileHandle else { throw Errno.badFileDescriptor }
     return try await ring.read(
       count: count,
-      from: fd
+      from: fileHandle
     )
   }
 
   public func write(_ buffer: [UInt8], count: Int) async throws {
-    guard let fd else { throw Errno.badFileDescriptor }
+    guard let fileHandle else { throw Errno.badFileDescriptor }
     try await ring.write(
       buffer,
       count: count,
       offset: -1,
-      to: fd
+      to: fileHandle
     )
   }
 
   public func receive(count: Int) async throws -> [UInt8] {
-    guard let fd else { throw Errno.badFileDescriptor }
+    guard let fileHandle else { throw Errno.badFileDescriptor }
     return try await ring.receive(
       count: count,
-      from: fd
+      from: fileHandle
     )
   }
 
   public func send(_ data: [UInt8]) async throws {
-    guard let fd else { throw Errno.badFileDescriptor }
+    guard let fileHandle else { throw Errno.badFileDescriptor }
     try await ring.send(
       data,
-      to: fd
+      to: fileHandle
     )
   }
 
   public func receiveMessages(count: Int) async throws -> AnyAsyncSequence<Message> {
-    guard let fd else { throw Errno.badFileDescriptor }
+    guard let fileHandle else { throw Errno.badFileDescriptor }
     return try await ring.receiveMessages(
       count: count,
-      from: fd
+      from: fileHandle
     )
   }
 
   public func sendMessage(_ message: Message) async throws {
-    guard let fd else { throw Errno.badFileDescriptor }
+    guard let fileHandle else { throw Errno.badFileDescriptor }
     try await ring.send(
       message: message,
-      to: fd
+      to: fileHandle
     )
   }
 
   public mutating func close() async throws {
-    guard fd != nil else { throw Errno.badFileDescriptor }
+    guard fileHandle != nil else { throw Errno.badFileDescriptor }
     // just release reference, in case there are outstanding operations
-    fd = nil
+    fileHandle = nil
   }
 
   public var isClosed: Bool {
-    guard let fd else { return true }
-    return fd.fileDescriptor < 0
-  }
-}
-
-public protocol InternetSocketAddress {
-  static func any(port: UInt16) -> Self
-}
-
-extension sockaddr_in: InternetSocketAddress {
-  public static func any(port: UInt16) -> Self {
-    var sin = Self()
-    sin.sin_family = sa_family_t(AF_INET)
-    sin.sin_port = port.bigEndian
-    sin.sin_addr = in_addr(s_addr: INADDR_ANY)
-    return sin
-  }
-}
-
-extension sockaddr_in6: InternetSocketAddress {
-  public static func any(port: UInt16) -> Self {
-    var sin6 = Self()
-    sin6.sin6_family = sa_family_t(AF_INET6)
-    sin6.sin6_port = port.bigEndian
-    sin6.sin6_addr = in6_addr()
-    return sin6
+    guard let fileHandle else { return true }
+    return fileHandle.fileDescriptor < 0
   }
 }
 

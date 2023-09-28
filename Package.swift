@@ -53,7 +53,7 @@ let package = Package(
       name: "CIORingShims",
       dependencies: ["CIOURing"],
       cSettings: [
-        .define("DISPATCH_IO_URING=1"),
+        .define("PTHREAD_IO_URING=1"),
         .unsafeFlags(["-I", SwiftLibRoot]),
       ],
       cxxSettings: [

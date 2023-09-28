@@ -14,9 +14,9 @@
 // limitations under the License.
 //
 
-#include "EventHandlerInternal.hpp"
+#include "CQHandlerInternal.hpp"
 
-static void event_handler(dispatch_source_t source) {
+static void cqe_handler(dispatch_source_t source) {
   auto ring = static_cast<struct io_uring *>(dispatch_get_context(source));
   struct io_uring_cqe *cqe;
   eventfd_t value;
@@ -30,11 +30,11 @@ static void event_handler(dispatch_source_t source) {
   if (err)
     return;
 
-  io_uring_event_handle_completion(ring, cqe);
+  io_uring_cq_invoke_blocks(ring, cqe);
 }
 
-int dispatch_io_uring_init_event(void **eventHandle, struct io_uring *ring) {
-  *eventHandle = nullptr;
+int dispatch_io_uring_init_cq_handler(void **handle, struct io_uring *ring) {
+  *handle = nullptr;
 
   // previously, we spun up a thread to wait on cqe notifications.
   // however we can use eventfd to integrate this with libdispatch
@@ -59,7 +59,7 @@ int dispatch_io_uring_init_event(void **eventHandle, struct io_uring *ring) {
   dispatch_set_context(source, ring);
 
   dispatch_source_set_event_handler(source, ^{
-    event_handler(source);
+    cqe_handler(source);
   });
 
   dispatch_source_set_cancel_handler(source, ^{
@@ -69,14 +69,14 @@ int dispatch_io_uring_init_event(void **eventHandle, struct io_uring *ring) {
 
   dispatch_resume(source);
 
-  *eventHandle = static_cast<void *>(source);
+  *handle = static_cast<void *>(source);
 
   return 0;
 }
 
-void dispatch_io_uring_deinit_event(void *eventHandle, struct io_uring *ring) {
-  if (eventHandle) {
-    auto source = static_cast<dispatch_source_t>(eventHandle);
+void dispatch_io_uring_deinit_cq_handler(void *handle, struct io_uring *ring) {
+  if (handle) {
+    auto source = static_cast<dispatch_source_t>(handle);
     dispatch_cancel(source);
     dispatch_release(source);
   }

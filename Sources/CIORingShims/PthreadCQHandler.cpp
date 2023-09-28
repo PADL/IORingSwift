@@ -14,9 +14,9 @@
 // limitations under the License.
 //
 
-#include "EventHandlerInternal.hpp"
+#include "CQHandlerInternal.hpp"
 
-static void *event_thread(void *arg) {
+static void *cqe_thread(void *arg) {
   auto ring = static_cast<struct io_uring *>(arg);
 
   for (;;) {
@@ -32,36 +32,36 @@ static void *event_thread(void *arg) {
     else if (err)
       break;
 
-    io_uring_event_handle_completion(ring, cqe);
+    io_uring_cq_invoke_blocks(ring, cqe);
   }
 
   return nullptr;
 }
 
-int pthread_io_uring_init_event(void **eventHandle, struct io_uring *ring) {
+int pthread_io_uring_init_cq_handler(void **handle, struct io_uring *ring) {
   pthread_attr_t attr;
   pthread_t thread;
   int err;
 
-  *eventHandle = nullptr;
+  *handle = nullptr;
 
   err = pthread_attr_init(&attr);
   if (err)
     return -err;
 
-  err = pthread_create(&thread, &attr, event_thread, ring);
+  err = pthread_create(&thread, &attr, cqe_thread, ring);
   if (err) {
     pthread_attr_destroy(&attr);
     return -err;
   }
 
   pthread_attr_destroy(&attr);
-  *eventHandle = reinterpret_cast<void *>(thread);
+  *handle = reinterpret_cast<void *>(thread);
   return 0;
 }
 
-void pthread_io_uring_deinit_event(void *eventHandle, struct io_uring *ring) {
-  auto thread = reinterpret_cast<pthread_t>(eventHandle);
+void pthread_io_uring_deinit_cq_handler(void *handle, struct io_uring *ring) {
+  auto thread = reinterpret_cast<pthread_t>(handle);
   int err;
   void *retval;
 

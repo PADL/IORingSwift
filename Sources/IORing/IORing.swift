@@ -28,12 +28,29 @@ import Glibc
 public actor IORing: CustomStringConvertible {
   public static let shared = try? IORing()
 
-  public static let IOSqeFixedFile: UInt8 = (1 << IOSQE_FIXED_FILE_BIT)
-  public static let IOSqeIODrain: UInt8 = (1 << IOSQE_IO_DRAIN_BIT)
-  public static let IOSqeIOLink: UInt8 = (1 << IOSQE_IO_LINK_BIT)
-  public static let IOSqeIOHardLink: UInt8 = (1 << IOSQE_IO_HARDLINK_BIT)
-  public static let IOSqeAsync: UInt8 = (1 << IOSQE_ASYNC_BIT)
-  public static let IOSqeBufferSelect: UInt8 = (1 << IOSQE_BUFFER_SELECT_BIT)
+  public struct SqeFlags: OptionSet {
+    public typealias RawValue = UInt8
+    public let rawValue: RawValue
+
+    public init(rawValue: RawValue) {
+      self.rawValue = rawValue
+    }
+
+    public init(link: Bool) {
+      if link {
+        self = SqeFlags.ioLink
+      } else {
+        self = SqeFlags()
+      }
+    }
+
+    public static let fixedFile = SqeFlags(rawValue: 1 << IOSQE_FIXED_FILE_BIT)
+    public static let ioDrain = SqeFlags(rawValue: 1 << IOSQE_IO_DRAIN_BIT)
+    public static let ioLink = SqeFlags(rawValue: 1 << IOSQE_IO_LINK_BIT)
+    public static let ioHardLink = SqeFlags(rawValue: 1 << IOSQE_IO_HARDLINK_BIT)
+    public static let async = SqeFlags(rawValue: 1 << IOSQE_ASYNC_BIT)
+    public static let bufferSelect = SqeFlags(rawValue: 1 << IOSQE_BUFFER_SELECT_BIT)
+  }
 
   private let manager: Manager
 
@@ -57,8 +74,16 @@ public actor IORing: CustomStringConvertible {
   }
 
   // FIXME: should we make default depth >1?
-  public init(depth: Int = 1, flags: UInt32 = 0) throws {
-    manager = try Manager(depth: CUnsignedInt(depth), flags: flags)
+  public init(
+    depth: Int = 1,
+    flags: UInt32 = 0,
+    suspendIfSubmissionQueueFull: Bool = true
+  ) throws {
+    manager = try Manager(
+      depth: CUnsignedInt(depth),
+      flags: flags,
+      suspendIfSubmissionQueueFull: suspendIfSubmissionQueueFull
+    )
   }
 
   public nonisolated var description: String {
@@ -91,7 +116,7 @@ private extension IORing {
     try await manager.prepareAndSubmit(
       UInt8(IORING_OP_ASYNC_CANCEL),
       fd: fd,
-      flags: link ? IORing.IOSqeIOLink : 0,
+      flags: IORing.SqeFlags(link: link),
       moreFlags: flags
     ) { _ in }
   }
@@ -103,7 +128,7 @@ private extension IORing {
     try await manager.prepareAndSubmit(
       UInt8(IORING_OP_CLOSE),
       fd: fd,
-      flags: link ? IORing.IOSqeIOLink : 0
+      flags: IORing.SqeFlags(link: link)
     ) { _ in }
   }
 
@@ -118,7 +143,7 @@ private extension IORing {
       fd: fd,
       iovecs: iovecs,
       offset: offset,
-      flags: link ? IORing.IOSqeIOLink : 0
+      flags: IORing.SqeFlags(link: link)
     ) { cqe in
       Int(cqe.res)
     }
@@ -136,7 +161,7 @@ private extension IORing {
       fd: fd,
       iovecs: iovecs,
       offset: offset,
-      flags: link ? IORing.IOSqeIOLink : 0
+      flags: IORing.SqeFlags(link: link)
     ) { cqe in
       Int(cqe.res)
     }
@@ -155,7 +180,7 @@ private extension IORing {
       address: buffer,
       length: CUnsignedInt(count),
       offset: offset,
-      flags: link ? IORing.IOSqeIOLink : 0
+      flags: IORing.SqeFlags(link: link)
     ) { [buffer] cqe in
       _ = buffer
       return Int(cqe.res)
@@ -175,7 +200,7 @@ private extension IORing {
       address: buffer,
       length: CUnsignedInt(count),
       offset: offset,
-      flags: link ? IORing.IOSqeIOLink : 0
+      flags: IORing.SqeFlags(link: link)
     ) { [buffer] cqe in
       _ = buffer
       return Int(cqe.res)
@@ -197,7 +222,7 @@ private extension IORing {
       address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
       length: CUnsignedInt(count),
       offset: offset,
-      flags: link ? IORing.IOSqeIOLink : 0,
+      flags: IORing.SqeFlags(link: link),
       bufferIndex: bufferIndex
     ) { cqe in
       Int(cqe.res)
@@ -238,7 +263,7 @@ private extension IORing {
       address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
       length: CUnsignedInt(count),
       offset: offset,
-      flags: link ? IORing.IOSqeIOLink : 0,
+      flags: IORing.SqeFlags(link: link),
       bufferIndex: bufferIndex
     ) { cqe in
       Int(cqe.res)
@@ -277,7 +302,7 @@ private extension IORing {
       address: buffer,
       length: CUnsignedInt(buffer.count),
       offset: 0,
-      flags: link ? IORing.IOSqeIOLink : 0,
+      flags: IORing.SqeFlags(link: link),
       moreFlags: flags,
       socketAddress: socketAddress
     ) { [buffer] _ in
@@ -298,7 +323,7 @@ private extension IORing {
       address: buffer,
       length: CUnsignedInt(buffer.count),
       offset: 0,
-      flags: link ? IORing.IOSqeIOLink : 0,
+      flags: IORing.SqeFlags(link: link),
       moreFlags: flags
     ) { [buffer] _ in
       _ = buffer
@@ -318,7 +343,7 @@ private extension IORing {
       fd: fd,
       address: &buffer[0],
       length: CUnsignedInt(count),
-      flags: link ? IORing.IOSqeIOLink : 0,
+      flags: IORing.SqeFlags(link: link),
       ioprio: RecvSendIoPrio.multishot
     ) { [buffer] _ in
       buffer
@@ -338,7 +363,7 @@ private extension IORing {
         address: pointer,
         length: 1,
         offset: 0,
-        flags: link ? IORing.IOSqeIOLink : 0,
+        flags: IORing.SqeFlags(link: link),
         moreFlags: flags
       ) { _ in }
     }
@@ -376,7 +401,7 @@ private extension IORing {
         address: pointer,
         length: 1,
         offset: 0,
-        flags: link ? IORing.IOSqeIOLink : 0,
+        flags: IORing.SqeFlags(link: link),
         moreFlags: flags
       ) { _ in }
     }
@@ -394,7 +419,7 @@ private extension IORing {
       address: &ss,
       length: CUnsignedInt(MemoryLayout<sockaddr_storage>.size),
       offset: 0,
-      flags: link ? IORing.IOSqeIOLink : 0,
+      flags: IORing.SqeFlags(link: link),
       moreFlags: flags
     ) { [ss] cqe in
       _ = ss
@@ -427,7 +452,7 @@ private extension IORing {
       fd: fd,
       address: &address,
       offset: Int(address.size),
-      flags: link ? IORing.IOSqeIOLink : 0
+      flags: IORing.SqeFlags(link: link)
     ) { [address] _ in
       _ = address
     }

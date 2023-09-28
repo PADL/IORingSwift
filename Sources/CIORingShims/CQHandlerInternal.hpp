@@ -23,12 +23,12 @@
 
 #include "CIORingShims.h"
 
-void io_uring_event_handle_completion(struct io_uring *ring, struct io_uring_cqe *cqe);
+void io_uring_cq_invoke_blocks(struct io_uring *ring, struct io_uring_cqe *cqe);
 
 // enabled with DISPATCH_IO_URING
-void dispatch_io_uring_deinit_event(void *eventHandle, struct io_uring *ring);
-int dispatch_io_uring_init_event(void **eventHandle, struct io_uring *ring);
+void dispatch_io_uring_deinit_cq_handler(void *handle, struct io_uring *ring);
+int dispatch_io_uring_init_cq_handler(void **handle, struct io_uring *ring);
 
 // enabled with PTHREAD_IO_URING
-void pthread_io_uring_deinit_event(void *eventHandle, struct io_uring *ring);
-int pthread_io_uring_init_event(void **eventHandle, struct io_uring *ring);
+void pthread_io_uring_deinit_cq_handler(void *handle, struct io_uring *ring);
+int pthread_io_uring_init_cq_handler(void **handle, struct io_uring *ring);
