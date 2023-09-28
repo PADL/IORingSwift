@@ -1,0 +1,3 @@
+module CIOURing {
+    umbrella header "../liburing/src/include/liburing.h"
+}

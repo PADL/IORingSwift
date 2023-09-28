@@ -1,4 +1,0 @@
-module CIOURing {
-    header "CIOURing.h"
-    link "uring"
-}

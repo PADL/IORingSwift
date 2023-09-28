@@ -52,9 +52,23 @@ let package = Package(
     .package(url: "https://github.com/dfed/swift-async-queue", from: "0.4.0"),
   ],
   targets: [
-    .systemLibrary(
+    .target(
       name: "CIOURing",
-      providers: [.apt(["liburing-dev"])]
+      exclude: [
+        "liburing/examples",
+        "liburing/test",
+        "liburing/man",
+        "liburing/debian",
+        "liburing/src/nolibc.c",
+      ],
+      cSettings: [
+        .define("_GNU_SOURCE"),
+        .define("_LARGEFILE_SOURCE"),
+        .define("_FILE_OFFSET_BITS=64"),
+        .define("_XOPEN_SOURCE=500"),
+        .headerSearchPath("include"),
+        .headerSearchPath("liburing/src/include")
+      ]
     ),
     .target(
       name: "CIORingShims",
@@ -62,23 +76,32 @@ let package = Package(
       cSettings: [
         .define("\(cqHandlerType.rawValue)=1"),
         .unsafeFlags(["-I", SwiftLibRoot]),
+        .headerSearchPath("../CIOURing/include"),
+        .headerSearchPath("../CIOURing/liburing/src/include")
       ],
       cxxSettings: [
         .define("\(cqHandlerType.rawValue)=1"),
         .unsafeFlags(["-I", SwiftLibRoot]),
+        .headerSearchPath("../CIOURing/include"),
+        .headerSearchPath("../CIOURing/liburing/src/include")
       ]
     ),
     .target(
       name: "IORing",
-      dependencies: ["CIORingShims",
+      dependencies: ["CIOURing",
+                     "CIORingShims",
                      "AsyncExtensions",
                      .product(name: "AsyncQueue", package: "swift-async-queue"),
                      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")],
       cSettings: [
         .define("_XOPEN_SOURCE=500"),
+        .headerSearchPath("../CIOURing/include"),
+        .headerSearchPath("../CIOURing/liburing/src/include")
       ],
       cxxSettings: [
         .define("_XOPEN_SOURCE=500"),
+        .headerSearchPath("../CIOURing/include"),
+        .headerSearchPath("../CIOURing/liburing/src/include")
       ]
     ),
     .testTarget(

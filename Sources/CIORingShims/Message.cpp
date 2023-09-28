@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+#include <inttypes.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 
