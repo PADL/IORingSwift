@@ -25,7 +25,7 @@ enum CQHandlerType: String {
   case pthread = "PTHREAD_IO_URING"
 }
 
-let cqHandlerType: CQHandlerType = .pthread
+let cqHandlerType: CQHandlerType = .dispatch
 
 let package = Package(
   name: "IORingSwift",

@@ -73,6 +73,7 @@ final class Submission<T>: CustomStringConvertible {
     } else {
       try manager.submit()
     }
+    precondition(sqe.pointee.user_data != 0)
   }
 
   private func prepare(
@@ -188,6 +189,7 @@ final class Submission<T>: CustomStringConvertible {
     }
   }
 
+/*
   private func resubmitMultishot(_ channel: AsyncThrowingChannel<T, Error>) async {
     Manager.logDebug(message: "resubmitting multishot fd \(fd) opcode \(opcode) after cancelation")
     do {
@@ -197,22 +199,19 @@ final class Submission<T>: CustomStringConvertible {
       channel.fail(error)
     }
   }
+*/
 
   func submitMultishot(_ channel: AsyncThrowingChannel<T, Error>) throws {
     try setBlock(sqe: sqe) { [self] cqe in
       guard cqe.pointee.res >= 0 else {
         let error = Errno(rawValue: cqe.pointee.res)
-        if error == .canceled {
-          Task { await resubmitMultishot(channel) }
-        } else {
-          Manager.logDebug(message: "completion fd \(fd) opcode \(opcode) failed: \(error)")
-          if error == .invalidArgument {
-            print(
-              "IORingSwift: multishot io_uring submission failed, are you running a recent enough kernel?"
-            )
-          }
-          channel.fail(error)
+        Manager.logDebug(message: "completion fd \(fd) opcode \(opcode) failed: \(error)")
+        if error == .invalidArgument {
+          print(
+            "IORingSwift: multishot io_uring submission failed, are you running a recent enough kernel?"
+          )
         }
+        channel.fail(error)
         return
       }
       do {
