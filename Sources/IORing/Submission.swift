@@ -189,6 +189,7 @@ final class Submission<T>: CustomStringConvertible {
   }
 
   private func resubmitMultishot(_ channel: AsyncThrowingChannel<T, Error>) async {
+    Manager.logDebug(message: "resubmitting multishot fd \(fd) opcode \(opcode) after cancelation")
     do {
       let submission = try await copy()
       try submission.submitMultishot(channel)
@@ -200,20 +201,17 @@ final class Submission<T>: CustomStringConvertible {
   func submitMultishot(_ channel: AsyncThrowingChannel<T, Error>) throws {
     try setBlock(sqe: sqe) { [self] cqe in
       guard cqe.pointee.res >= 0 else {
-        if cqe.pointee.res == -ECANCELED {
-          // apparently this is an error that can legitimately happen in multishot accept
+        let error = Errno(rawValue: cqe.pointee.res)
+        if error == .canceled {
           Task { await resubmitMultishot(channel) }
         } else {
-          Manager
-            .logDebug(
-              message: "completion fd \(fd) opcode \(opcode) failed: \(Errno(rawValue: cqe.pointee.res))"
-            )
-          if cqe.pointee.res == -EINVAL {
+          Manager.logDebug(message: "completion fd \(fd) opcode \(opcode) failed: \(error)")
+          if error == .invalidArgument {
             print(
               "IORingSwift: multishot io_uring submission failed, are you running a recent enough kernel?"
             )
           }
-          channel.fail(Errno(rawValue: cqe.pointee.res))
+          channel.fail(error)
         }
         return
       }
