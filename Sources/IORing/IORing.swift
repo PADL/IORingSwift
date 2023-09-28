@@ -412,18 +412,14 @@ private extension IORing {
     fd: FileDescriptorRepresentable,
     flags: UInt32 = 0,
     link: Bool = false
-  ) async throws -> (FileDescriptorRepresentable, sockaddr_storage) {
-    var ss = sockaddr_storage()
-    return try await manager.prepareAndSubmit(
+  ) async throws -> FileDescriptorRepresentable {
+    try await manager.prepareAndSubmit(
       IORING_OP_ACCEPT,
       fd: fd,
-      address: &ss,
-      offset: MemoryLayout<sockaddr_storage>.size,
       flags: IORing.SqeFlags(link: link),
       moreFlags: flags
-    ) { [ss] cqe in
-      _ = ss
-      return try (FileHandle(fileDescriptor: cqe.res, closeOnDealloc: true), ss)
+    ) { cqe in
+      try FileHandle(fileDescriptor: cqe.res, closeOnDealloc: true)
     }
   }
 
@@ -559,7 +555,7 @@ public extension IORing {
   func accept(from fd: FileDescriptorRepresentable) async throws
     -> any FileDescriptorRepresentable
   {
-    try await io_uring_op_accept(fd: fd).0
+    try await io_uring_op_accept(fd: fd)
   }
 
   func accept(from fd: FileDescriptorRepresentable) async throws
