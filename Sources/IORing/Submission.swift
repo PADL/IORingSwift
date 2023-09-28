@@ -25,7 +25,7 @@ final class Submission<T>: CustomStringConvertible {
   weak var group: SubmissionGroup<T>?
 
   private let fd: FileDescriptorRepresentable // store this for lifetime
-  private let opcode: UInt8 // store this for debugging
+  private let opcode: io_uring_op // store this for debugging
   private let handler: (io_uring_cqe) throws -> T
 
   private let sqe: UnsafeMutablePointer<io_uring_sqe>
@@ -76,7 +76,7 @@ final class Submission<T>: CustomStringConvertible {
   }
 
   private func prepare(
-    _ opcode: UInt8,
+    _ opcode: io_uring_op,
     sqe: UnsafeMutablePointer<io_uring_sqe>,
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer?,
@@ -84,7 +84,7 @@ final class Submission<T>: CustomStringConvertible {
     offset: Int
   ) {
     io_uring_prep_rw(
-      CInt(opcode),
+      io_uring_op_to_int(opcode),
       sqe,
       fd.fileDescriptor,
       address,
@@ -123,7 +123,7 @@ final class Submission<T>: CustomStringConvertible {
 
   init(
     manager: Manager,
-    _ opcode: UInt8,
+    _ opcode: io_uring_op,
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
     length: CUnsignedInt = 0,

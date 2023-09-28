@@ -115,7 +115,7 @@ private extension IORing {
     flags: UInt32 = 0
   ) async throws {
     try await manager.prepareAndSubmit(
-      UInt8(IORING_OP_ASYNC_CANCEL),
+      IORING_OP_ASYNC_CANCEL,
       fd: fd,
       flags: IORing.SqeFlags(link: link),
       moreFlags: flags
@@ -127,7 +127,7 @@ private extension IORing {
     link: Bool = false
   ) async throws {
     try await manager.prepareAndSubmit(
-      UInt8(IORING_OP_CLOSE),
+      IORING_OP_CLOSE,
       fd: fd,
       flags: IORing.SqeFlags(link: link)
     ) { _ in }
@@ -140,7 +140,7 @@ private extension IORing {
     link: Bool = false
   ) async throws -> Int {
     try await manager.prepareAndSubmitIovec(
-      UInt8(IORING_OP_READV),
+      IORING_OP_READV,
       fd: fd,
       iovecs: iovecs,
       offset: offset,
@@ -158,7 +158,7 @@ private extension IORing {
     link: Bool = false
   ) async throws -> Int {
     try await manager.prepareAndSubmitIovec(
-      UInt8(IORING_OP_WRITEV),
+      IORING_OP_WRITEV,
       fd: fd,
       iovecs: iovecs,
       offset: offset,
@@ -176,7 +176,7 @@ private extension IORing {
     link: Bool = false
   ) async throws -> Int {
     try await manager.prepareAndSubmit(
-      UInt8(IORING_OP_READ),
+      IORING_OP_READ,
       fd: fd,
       address: buffer,
       length: CUnsignedInt(count),
@@ -196,7 +196,7 @@ private extension IORing {
     link: Bool = false
   ) async throws -> Int {
     try await manager.prepareAndSubmit(
-      UInt8(IORING_OP_WRITE),
+      IORING_OP_WRITE,
       fd: fd,
       address: buffer,
       length: CUnsignedInt(count),
@@ -218,7 +218,7 @@ private extension IORing {
   ) async throws -> Submission<Int> {
     try await Submission(
       manager: manager,
-      UInt8(IORING_OP_READ_FIXED),
+      IORING_OP_READ_FIXED,
       fd: fd,
       address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
       length: CUnsignedInt(count),
@@ -259,7 +259,7 @@ private extension IORing {
   ) async throws -> Submission<Int> {
     try await Submission(
       manager: manager,
-      UInt8(IORING_OP_WRITE_FIXED),
+      IORING_OP_WRITE_FIXED,
       fd: fd,
       address: manager.unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
       length: CUnsignedInt(count),
@@ -298,7 +298,7 @@ private extension IORing {
     link: Bool = false
   ) async throws {
     try await manager.prepareAndSubmit(
-      UInt8(IORING_OP_SEND),
+      IORING_OP_SEND,
       fd: fd,
       address: buffer,
       length: CUnsignedInt(buffer.count),
@@ -319,7 +319,7 @@ private extension IORing {
     link: Bool = false
   ) async throws {
     try await manager.prepareAndSubmit(
-      UInt8(IORING_OP_RECV),
+      IORING_OP_RECV,
       fd: fd,
       address: buffer,
       length: CUnsignedInt(buffer.count),
@@ -340,7 +340,7 @@ private extension IORing {
     // FIXME: check this will be captured or do we need to
     var buffer = [UInt8](repeating: 0, count: count)
     return try await manager.prepareAndSubmitMultishot(
-      UInt8(IORING_OP_RECV),
+      IORING_OP_RECV,
       fd: fd,
       address: &buffer[0],
       length: CUnsignedInt(count),
@@ -359,7 +359,7 @@ private extension IORing {
   ) async throws {
     try await message.withUnsafeMutablePointer { pointer in
       try await manager.prepareAndSubmit(
-        UInt8(IORING_OP_RECVMSG),
+        IORING_OP_RECVMSG,
         fd: fd,
         address: pointer,
         length: 1,
@@ -378,7 +378,7 @@ private extension IORing {
     let message = Message(capacity: count)
     return try await message.withUnsafeMutablePointer { pointer in
       try await manager.prepareAndSubmitMultishot(
-        UInt8(IORING_OP_RECVMSG),
+        IORING_OP_RECVMSG,
         fd: fd,
         address: pointer,
         ioprio: RecvSendIoPrio.multishot,
@@ -397,7 +397,7 @@ private extension IORing {
   ) async throws {
     try await message.withUnsafePointer { pointer in
       try await manager.prepareAndSubmit(
-        UInt8(IORING_OP_SENDMSG),
+        IORING_OP_SENDMSG,
         fd: fd,
         address: pointer,
         length: 1,
@@ -415,7 +415,7 @@ private extension IORing {
   ) async throws -> (FileDescriptorRepresentable, sockaddr_storage) {
     var ss = sockaddr_storage()
     return try await manager.prepareAndSubmit(
-      UInt8(IORING_OP_ACCEPT),
+      IORING_OP_ACCEPT,
       fd: fd,
       address: &ss,
       length: CUnsignedInt(MemoryLayout<sockaddr_storage>.size),
@@ -433,7 +433,7 @@ private extension IORing {
     flags: UInt32 = 0
   ) async throws -> AsyncThrowingChannel<FileDescriptorRepresentable, Error> {
     try await manager.prepareAndSubmitMultishot(
-      UInt8(IORING_OP_ACCEPT),
+      IORING_OP_ACCEPT,
       fd: fd,
       ioprio: AcceptIoPrio.multishot,
       moreFlags: flags
@@ -449,7 +449,7 @@ private extension IORing {
   ) async throws {
     var address = address // FIXME: check lifetime
     try await manager.prepareAndSubmit(
-      UInt8(IORING_OP_CONNECT),
+      IORING_OP_CONNECT,
       fd: fd,
       address: &address,
       offset: Int(address.size),
