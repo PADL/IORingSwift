@@ -159,8 +159,11 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
 
   public func accept() async throws -> AnyAsyncSequence<Socket> {
     guard let fileHandle else { throw Errno.badFileDescriptor }
-    return try await ring.accept(from: fileHandle).map { Socket(ring: ring, fileHandle: $0 as! FileHandle) }
-      .eraseToAnyAsyncSequence()
+    return try await ring.accept(from: fileHandle).map { Socket(
+      ring: ring,
+      fileHandle: $0 as! FileHandle
+    ) }
+    .eraseToAnyAsyncSequence()
   }
 
   public func connect(to address: any SocketAddress) throws {

@@ -100,7 +100,7 @@ extension IORing {
 public extension FileDescriptorRepresentable {
   func set(flags: Int32, mask: Int32) throws {
     var flags = try Errno.throwingErrno { fcntl(self.fileDescriptor, F_GETFL, 0) }
-    flags &= ~(mask)
+    flags &= ~mask
     flags |= mask
     try Errno.throwingErrno { fcntl(self.fileDescriptor, F_SETFL, flags) }
   }
