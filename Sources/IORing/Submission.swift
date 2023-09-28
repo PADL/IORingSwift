@@ -177,12 +177,10 @@ final class Submission<T>: CustomStringConvertible {
     try setBlock(sqe: sqe) { [self] cqe in
       guard cqe.pointee.res >= 0 else {
         if cqe.pointee.res == -ECANCELED {
-          Task {
-            do {
-              try submitMultishot(channel)
-            } catch {
-              channel.fail(error)
-            }
+          do {
+            try submitMultishot(channel)
+          } catch {
+            channel.fail(error)
           }
         } else {
           Manager
