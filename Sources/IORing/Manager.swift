@@ -81,10 +81,11 @@ final class Manager {
     return sqe
   }
 
-  func submit() throws {
-    try Errno.throwingErrno {
+  @discardableResult
+  func submit() throws -> Int {
+    try Int(Errno.throwingErrno {
       io_uring_submit(&self.ring)
-    }
+    })
   }
 
   private func suspendPendingSubmission() async throws {

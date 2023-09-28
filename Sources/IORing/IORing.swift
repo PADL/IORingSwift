@@ -92,7 +92,8 @@ public actor IORing: CustomStringConvertible {
     }
   }
 
-  func submit() throws {
+  @discardableResult
+  func submit() throws -> Int {
     try manager.submit()
   }
 

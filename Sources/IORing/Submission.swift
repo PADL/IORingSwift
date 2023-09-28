@@ -38,6 +38,21 @@ final class Submission<T>: CustomStringConvertible {
     group != nil
   }
 
+  private init(_ submission: Submission) async throws {
+    self.manager = submission.manager
+    precondition(submission.group == nil)
+
+    fd = submission.fd
+    opcode = submission.opcode
+    guard let manager else { throw Errno.invalidArgument }
+    sqe = try await manager.getAsyncSqe()
+    handler = submission.handler
+  }
+
+  private func copy() async throws -> Self {
+    try await Self(self)
+  }
+
   private func setBlock(
     sqe: UnsafeMutablePointer<io_uring_sqe>,
     handler: @escaping (UnsafePointer<io_uring_cqe>) -> ()
@@ -173,15 +188,21 @@ final class Submission<T>: CustomStringConvertible {
     }
   }
 
+  private func resubmitMultishot(_ channel: AsyncThrowingChannel<T, Error>) async {
+    do {
+      let submission = try await copy()
+      try submission.submitMultishot(channel)
+    } catch {
+      channel.fail(error)
+    }
+  }
+
   func submitMultishot(_ channel: AsyncThrowingChannel<T, Error>) throws {
     try setBlock(sqe: sqe) { [self] cqe in
       guard cqe.pointee.res >= 0 else {
         if cqe.pointee.res == -ECANCELED {
-          do {
-            try submitMultishot(channel)
-          } catch {
-            channel.fail(error)
-          }
+          // apparently this is an error that can legitimately happen in multishot accept
+          Task { await resubmitMultishot(channel) }
         } else {
           Manager
             .logDebug(
