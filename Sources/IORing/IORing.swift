@@ -77,7 +77,7 @@ public actor IORing: CustomStringConvertible {
   public init(
     depth: Int = 1,
     flags: UInt32 = 0,
-    suspendIfSubmissionQueueFull: Bool = true
+    suspendIfSubmissionQueueFull: Bool = false
   ) throws {
     manager = try Manager(
       depth: CUnsignedInt(depth),
