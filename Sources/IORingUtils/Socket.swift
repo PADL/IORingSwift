@@ -51,11 +51,6 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
     self.domain = sa_family_t(domain)
   }
 
-  public func setNonBlocking() throws {
-    guard let fileHandle else { throw Errno.badFileDescriptor }
-    try fileHandle.setNonBlocking()
-  }
-
   private func getName(_ body: @escaping (
     Int32,
     UnsafeMutablePointer<sockaddr>,
@@ -170,11 +165,13 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
 
   public func connect(to address: any SocketAddress) throws {
     guard let fileHandle else { throw Errno.badFileDescriptor }
+    try fileHandle.setBlocking(false)
     _ = try address.withSockAddr { sa in
       try Errno.throwingErrno {
         SwiftGlibc.connect(fileHandle.fileDescriptor, sa, address.size)
       }
     }
+    try fileHandle.setBlocking(true)
   }
 
   public func connect(to address: any SocketAddress) async throws {

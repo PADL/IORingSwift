@@ -46,7 +46,6 @@ public struct IORingTCPEcho {
       type: SOCK_STREAM,
       protocol: 0
     )
-    try socket.setNonBlocking()
     try socket.setReuseAddr()
     try socket.setTcpNoDelay()
     try socket.bind(port: port)

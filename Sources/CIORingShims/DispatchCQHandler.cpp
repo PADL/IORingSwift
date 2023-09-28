@@ -38,7 +38,7 @@ int dispatch_io_uring_init_cq_handler(void **handle, struct io_uring *ring) {
 
   // previously, we spun up a thread to wait on cqe notifications.
   // however we can use eventfd to integrate this with libdispatch
-  auto fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+  auto fd = eventfd(0, EFD_CLOEXEC);
   if (fd < 0)
     return -errno;
 

@@ -21,14 +21,16 @@ void io_uring_sqe_set_block(struct io_uring_sqe *sqe,
   io_uring_sqe_set_data(sqe, _Block_copy(block));
 }
 
-void io_uring_cq_invoke_blocks(struct io_uring *ring, struct io_uring_cqe *cqe) {
+void io_uring_cq_invoke_blocks(struct io_uring *ring,
+                               struct io_uring_cqe *cqe) {
   unsigned int head, i = 0;
 
   io_uring_for_each_cqe(ring, head, cqe) {
-    auto block = reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
+    auto block =
+        reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
     block(cqe);
     if ((cqe->flags & IORING_CQE_F_MORE) == 0)
-        _Block_release(block);
+      _Block_release(block);
     i++;
   }
   io_uring_cq_advance(ring, i);

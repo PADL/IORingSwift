@@ -20,6 +20,13 @@ func tryGuessSwiftLibRoot() -> String {
 
 let SwiftLibRoot = tryGuessSwiftLibRoot()
 
+enum CQHandlerType: String {
+  case dispatch = "DISPATCH_IO_URING"
+  case pthread = "PTHREAD_IO_URING"
+}
+
+let cqHandlerType: CQHandlerType = .pthread
+
 let package = Package(
   name: "IORingSwift",
   platforms: [
@@ -53,10 +60,11 @@ let package = Package(
       name: "CIORingShims",
       dependencies: ["CIOURing"],
       cSettings: [
-        .define("PTHREAD_IO_URING=1"),
+        .define("\(cqHandlerType.rawValue)=1"),
         .unsafeFlags(["-I", SwiftLibRoot]),
       ],
       cxxSettings: [
+        .define("\(cqHandlerType.rawValue)=1"),
         .unsafeFlags(["-I", SwiftLibRoot]),
       ]
     ),

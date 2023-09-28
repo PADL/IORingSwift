@@ -98,9 +98,30 @@ extension IORing {
 }
 
 public extension FileDescriptorRepresentable {
-  func setNonBlocking() throws {
+  func set(flags: Int32, mask: Int32) throws {
+    var flags = try Errno.throwingErrno { fcntl(self.fileDescriptor, F_GETFL, 0) }
+    flags &= ~(mask)
+    flags |= mask
+    try Errno.throwingErrno { fcntl(self.fileDescriptor, F_SETFL, flags) }
+  }
+
+  func get(flag: Int32) throws -> Bool {
     let flags = try Errno.throwingErrno { fcntl(self.fileDescriptor, F_GETFL, 0) }
-    try Errno.throwingErrno { fcntl(self.fileDescriptor, F_SETFL, flags | O_NONBLOCK) }
+    return flags & flag != 0
+  }
+
+  func set(flag: Int32, to enabled: Bool) throws {
+    try set(flags: enabled ? flag : 0, mask: flag)
+  }
+
+  func setBlocking(_ enabled: Bool) throws {
+    try set(flag: O_NONBLOCK, to: enabled)
+  }
+
+  var isBlocking: Bool {
+    get throws {
+      try get(flag: O_NONBLOCK)
+    }
   }
 
   func getSize() throws -> Int {
