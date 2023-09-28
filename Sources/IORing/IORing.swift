@@ -558,6 +558,12 @@ public extension IORing {
   }
 
   func accept(from fd: FileDescriptorRepresentable) async throws
+    -> any FileDescriptorRepresentable
+  {
+    try await io_uring_op_accept(fd: fd).0
+  }
+
+  func accept(from fd: FileDescriptorRepresentable) async throws
     -> AnyAsyncSequence<FileDescriptorRepresentable>
   {
     try await io_uring_op_multishot_accept(fd: fd).eraseToAnyAsyncSequence()

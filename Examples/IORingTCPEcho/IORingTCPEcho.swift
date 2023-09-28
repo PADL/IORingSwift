@@ -34,7 +34,7 @@ public struct IORingTCPEcho {
     }
 
     let echo = try IORingTCPEcho(port: port)
-    try await echo.run()
+    try await echo.runMultishot()
   }
 
   init(port: UInt16, bufferSize: Int = 32, backlog: Int = 3) throws {
@@ -79,8 +79,16 @@ public struct IORingTCPEcho {
     }
   }
 
-  func run() async throws {
-    let clients = try await socket.accept()
+  func runSingleshot() async throws {
+    repeat {
+      let client: Socket = try await socket.accept()
+      debugPrint("accepted client \(client)")
+      Task { await readWriteEcho(client: client) }
+    } while true
+  }
+
+  func runMultishot() async throws {
+    let clients: AnyAsyncSequence<Socket> = try await socket.accept()
     for try await client in clients {
       debugPrint("accepted client \(client)")
       Task { await readWriteEcho(client: client) }
