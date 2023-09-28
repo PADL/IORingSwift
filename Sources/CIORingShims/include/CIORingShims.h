@@ -35,12 +35,6 @@ int io_uring_init_cq_handler(void *_Nullable *_Nonnull, struct io_uring *_Nonnul
 /// De-enroll `io_uring` from block processing
 void io_uring_deinit_cq_handler(void *_Nullable, struct io_uring *_Nonnull);
 
-/// Private helper API, presently unused
-void CMSG_APPLY(const struct msghdr *_Nonnull,
-                void (^_Nonnull)(struct cmsghdr *_Nonnull,
-                                 const uint8_t *_Nonnull,
-                                 size_t));
-
 #ifdef __cplusplus
 }
 #endif
