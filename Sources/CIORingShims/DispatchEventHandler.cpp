@@ -18,6 +18,7 @@
 
 static void event_handler(dispatch_source_t source) {
   auto ring = static_cast<struct io_uring *>(dispatch_get_context(source));
+  struct io_uring_cqe *cqe;
   eventfd_t value;
   int err;
 
@@ -25,10 +26,14 @@ static void event_handler(dispatch_source_t source) {
   if (err)
     return;
 
-  event_handler_common(ring);
+  err = io_uring_wait_cqe(ring, &cqe);
+  if (err)
+    return;
+
+  io_uring_event_handle_completion(ring, cqe);
 }
 
-int io_uring_init_event(void **eventHandle, struct io_uring *ring) {
+int dispatch_io_uring_init_event(void **eventHandle, struct io_uring *ring) {
   *eventHandle = nullptr;
 
   // previously, we spun up a thread to wait on cqe notifications.
@@ -69,11 +74,10 @@ int io_uring_init_event(void **eventHandle, struct io_uring *ring) {
   return 0;
 }
 
-void io_uring_deinit_event(void *eventHandle, struct io_uring *ring) {
+void dispatch_io_uring_deinit_event(void *eventHandle, struct io_uring *ring) {
   if (eventHandle) {
     auto source = static_cast<dispatch_source_t>(eventHandle);
     dispatch_cancel(source);
     dispatch_release(source);
   }
 }
-
