@@ -19,18 +19,10 @@
 static void cqe_handler(dispatch_source_t source) {
   auto ring = static_cast<struct io_uring *>(dispatch_get_context(source));
   struct io_uring_cqe *cqe;
-  eventfd_t value;
   int err;
 
-  err = eventfd_read(dispatch_source_get_handle(source), &value);
-  if (err)
-    return;
-
-  err = io_uring_wait_cqe(ring, &cqe);
-  if (err)
-    return;
-
-  io_uring_cq_invoke_blocks(ring, cqe);
+  if (io_uring_wait_cqe(ring, &cqe) == 0)
+    io_uring_cq_invoke_blocks(ring, cqe);
 }
 
 int dispatch_io_uring_init_cq_handler(void **handle, struct io_uring *ring) {
