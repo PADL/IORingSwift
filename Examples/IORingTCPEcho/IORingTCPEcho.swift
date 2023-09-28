@@ -37,9 +37,9 @@ public struct IORingTCPEcho {
     try await echo.run()
   }
 
-  init(port: UInt16, bufferSize: Int = 32, backlog: Int = 64) throws {
+  init(port: UInt16, bufferSize: Int = 32, backlog: Int = 3) throws {
     self.bufferSize = bufferSize
-    ring = try IORing(depth: backlog)
+    ring = try IORing(depth: 2)
     socket = try Socket(
       ring: ring,
       domain: sa_family_t(AF_INET),
@@ -50,25 +50,6 @@ public struct IORingTCPEcho {
     try socket.setTcpNoDelay()
     try socket.bind(port: port)
     try socket.listen(backlog: backlog)
-  }
-
-  func echo(client: Socket) async {
-    do {
-      repeat {
-        let data = try await client.receive(count: bufferSize)
-        try await client.send(data)
-      } while true
-    } catch {
-      debugPrint("closed client \(client)")
-    }
-  }
-
-  func run() async throws {
-    let clients = try await socket.accept()
-    for try await client in clients {
-      debugPrint("accepted client \(client)")
-      Task { await readWriteEcho(client: client) }
-    }
   }
 
   func readWriteEcho(client: Socket) async {
@@ -85,5 +66,24 @@ public struct IORingTCPEcho {
       debugPrint("closed client \(client): error \(error)")
     }
     debugPrint("closed client \(client)")
+  }
+
+  func receiveSendEcho(client: Socket) async {
+    do {
+      repeat {
+        let data = try await client.receive(count: bufferSize)
+        try await client.send(data)
+      } while true
+    } catch {
+      debugPrint("closed client \(client)")
+    }
+  }
+
+  func run() async throws {
+    let clients = try await socket.accept()
+    for try await client in clients {
+      debugPrint("accepted client \(client)")
+      Task { await readWriteEcho(client: client) }
+    }
   }
 }
