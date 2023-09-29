@@ -38,6 +38,8 @@ final class Manager {
     debugPrint("IORing.Manager.\(functionName): \(message)")
   }
 
+  /// suspendIfSubmissionQueueFull: true allows an unbounded number of submissions
+  /// to be queued regardless of ring depth. Don't use this: make the ring big enough.
   init(depth: CUnsignedInt, flags: CUnsignedInt, suspendIfSubmissionQueueFull: Bool) throws {
     var ring = io_uring()
 
@@ -61,7 +63,7 @@ final class Manager {
     io_uring_queue_exit(&ring)
   }
 
-  func getAsyncSqe() async throws -> UnsafeMutablePointer<io_uring_sqe> {
+  func getSqe() async throws -> UnsafeMutablePointer<io_uring_sqe> {
     var sqe: UnsafeMutablePointer<io_uring_sqe>!
 
     repeat {
@@ -71,7 +73,7 @@ final class Manager {
       }
 
       if suspendIfSubmissionQueueFull {
-        try await suspendPendingSubmission()
+        try await suspendSubmission()
         continue
       } else {
         throw Errno.resourceTemporarilyUnavailable
@@ -88,13 +90,13 @@ final class Manager {
     })
   }
 
-  private func suspendPendingSubmission() async throws {
+  private func suspendSubmission() async throws {
     try await withCheckedThrowingContinuation { continuation in
       pendingSubmissions.enqueue(continuation)
     }
   }
 
-  func resumePendingSubmission() {
+  func resumeSubmission() {
     Task {
       guard let continuation = pendingSubmissions.dequeue() else {
         return
@@ -121,9 +123,9 @@ final class Manager {
     bufferIndex: UInt16 = 0,
     bufferGroup: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
-    handler: @escaping (io_uring_cqe) throws -> T
+    handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) async throws -> T {
-    try await Submission(
+    try await SingleshotSubmission(
       manager: self,
       opcode,
       fd: fd,
@@ -137,7 +139,7 @@ final class Manager {
       bufferGroup: bufferGroup,
       socketAddress: socketAddress,
       handler: handler
-    ).submitSingleshot()
+    ).submit()
   }
 
   func prepareAndSubmitMultishot<T>(
@@ -150,10 +152,9 @@ final class Manager {
     moreFlags: UInt32 = 0,
     bufferIndex: UInt16 = 0,
     bufferGroup: UInt16 = 0,
-    handler: @escaping (io_uring_cqe) throws -> T
+    handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) async throws -> AsyncThrowingChannel<T, Error> {
-    let channel = AsyncThrowingChannel<T, Error>()
-    let submission = try await Submission(
+    try await MultishotSubmission(
       manager: self,
       opcode,
       fd: fd,
@@ -167,9 +168,7 @@ final class Manager {
       bufferGroup: bufferGroup,
       socketAddress: nil,
       handler: handler
-    )
-    try submission.submitMultishot(channel)
-    return channel
+    ).submit()
   }
 
   func prepareAndSubmitIovec<T>(
@@ -180,7 +179,7 @@ final class Manager {
     flags: IORing.SqeFlags = IORing.SqeFlags(),
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
-    handler: @escaping (io_uring_cqe) throws -> T
+    handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) async throws -> T {
     // FIXME: surely there's a better way, but can't pass async function to withUnsafeBufferPointer
     let iovecs = iovecs ?? []

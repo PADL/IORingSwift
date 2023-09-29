@@ -20,61 +20,28 @@ import AsyncAlgorithms
 import CIORingShims
 import Glibc
 
-final class Submission<T>: CustomStringConvertible {
-  weak var manager: Manager?
-  weak var group: SubmissionGroup<T>?
+class Submission<T>: CustomStringConvertible {
+  // reference to owner which owns ring
+  fileprivate let manager: Manager
+  /// user-supplied callback to transform a completion queue entry to a result
+  fileprivate let handler: @Sendable (io_uring_cqe) throws -> T
 
-  private let fd: FileDescriptorRepresentable // store this for lifetime
-  private let opcode: io_uring_op // store this for debugging
-  private let handler: (io_uring_cqe) throws -> T
-
+  /// file descriptor, stored so that it is not closed before the completion handler is run
+  private let fd: FileDescriptorRepresentable
+  /// opcode, useful for debugging
+  private let opcode: io_uring_op
+  /// assigned submission queue entry for this object
   private let sqe: UnsafeMutablePointer<io_uring_sqe>
 
+  fileprivate var id: ObjectIdentifier {
+    ObjectIdentifier(self)
+  }
+
   public var description: String {
-    "\(type(of: self))(fd: \(fd.fileDescriptor), opcode: \(opcode), handler: \(String(describing: handler)), inGroup: \(inGroup))"
+    "(\(type(of: self)): \(id))(fd: \(fd.fileDescriptor), opcode: \(opcodeDescription(opcode)), handler: \(String(describing: handler)))"
   }
 
-  var inGroup: Bool {
-    group != nil
-  }
-
-  private init(_ submission: Submission) async throws {
-    self.manager = submission.manager
-    precondition(submission.group == nil)
-
-    fd = submission.fd
-    opcode = submission.opcode
-    guard let manager else { throw Errno.invalidArgument }
-    sqe = try await manager.getAsyncSqe()
-    handler = submission.handler
-  }
-
-  private func copy() async throws -> Self {
-    try await Self(self)
-  }
-
-  private func setBlock(
-    sqe: UnsafeMutablePointer<io_uring_sqe>,
-    handler: @escaping (UnsafePointer<io_uring_cqe>) -> ()
-  ) throws {
-    guard let manager else {
-      return
-    }
-    io_uring_sqe_set_block(sqe) { [fd] in
-      // make sure we capture the file descriptor so it's not closed until we're completed
-      _ = fd
-      // FIXME: this could race before io_uring_cqe_seen() is called, although shouldn't happen if on same actor
-      handler($0)
-      manager.resumePendingSubmission()
-    }
-    if inGroup {
-      ready() // don't submit yet, but indicate to submission group that this submission has
-      // registered continuation
-    } else {
-      try manager.submit()
-    }
-    precondition(sqe.pointee.user_data != 0)
-  }
+  // MARK: - initializer helpers
 
   private func prepare(
     _ opcode: io_uring_op,
@@ -135,9 +102,9 @@ final class Submission<T>: CustomStringConvertible {
     bufferIndex: UInt16 = 0,
     bufferGroup: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
-    handler: @escaping (io_uring_cqe) throws -> T
+    handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) async throws {
-    sqe = try await manager.getAsyncSqe()
+    sqe = try await manager.getSqe()
     self.fd = fd
     self.manager = manager
     self.opcode = opcode
@@ -157,82 +124,199 @@ final class Submission<T>: CustomStringConvertible {
         try setSocketAddress(sqe: sqe, socketAddress: socketAddress)
       }
     }
-  }
 
-  func submitSingleshot() async throws -> T {
-    try await withCheckedThrowingContinuation { (
-      continuation: CheckedContinuation<
-        T,
-        Error
-      >
-    ) in
-      do {
-        try setBlock(sqe: sqe) { [self] cqe in
-          guard cqe.pointee.res >= 0 else {
-            Manager
-              .logDebug(
-                message: "completion fd \(fd) opcode \(opcode) failed: \(Errno(rawValue: cqe.pointee.res))"
-              )
-            continuation.resume(throwing: Errno(rawValue: cqe.pointee.res))
-            return
-          }
-          do {
-            try continuation.resume(returning: handler(cqe.pointee))
-          } catch {
-            Manager.logDebug(message: "handler failed: \(error)")
-            continuation.resume(throwing: error)
-          }
-        }
-      } catch {
-        continuation.resume(throwing: error)
-      }
+    // once a SQE is assigned, we cannot suspend until its callback is set, otherwise
+    // the IORing actor (that owns the submission queue) could re-enter
+    io_uring_sqe_set_block(sqe) { [self] in
+      onCompletion(cqe: $0)
+      // FIXME: this could race before io_uring_cqe_seen() is called
+      manager.resumeSubmission()
     }
   }
 
-/*
-  private func resubmitMultishot(_ channel: AsyncThrowingChannel<T, Error>) async {
-    Manager.logDebug(message: "resubmitting multishot fd \(fd) opcode \(opcode) after cancelation")
-    do {
-      let submission = try await copy()
-      try submission.submitMultishot(channel)
-    } catch {
-      channel.fail(error)
-    }
+  fileprivate func onCompletion(cqe: UnsafePointer<io_uring_cqe>) {
+    fatalError("handle(cqe:) must be implemented by subclass")
   }
-*/
 
-  func submitMultishot(_ channel: AsyncThrowingChannel<T, Error>) throws {
-    try setBlock(sqe: sqe) { [self] cqe in
-      guard cqe.pointee.res >= 0 else {
-        let error = Errno(rawValue: cqe.pointee.res)
-        Manager.logDebug(message: "completion fd \(fd) opcode \(opcode) failed: \(error)")
-        if error == .invalidArgument {
-          print(
-            "IORingSwift: multishot io_uring submission failed, are you running a recent enough kernel?"
-          )
-        }
-        channel.fail(error)
-        return
-      }
-      do {
-        let result = try handler(cqe.pointee)
-        Task { await channel.send(result) }
-      } catch {
-        Manager.logDebug(message: "handler failed: \(error)")
-        channel.fail(error)
-      }
+  fileprivate func throwingErrno(
+    cqe: UnsafePointer<io_uring_cqe>,
+    _ body: @escaping @Sendable (_: io_uring_cqe) throws -> T
+  ) throws -> T {
+    guard cqe.pointee.res >= 0 else {
+      Manager
+        .logDebug(
+          message: "\(type(of: self)) completion fileDescriptor: \(fd) opcode: \(opcodeDescription(opcode)) error: \(Errno(rawValue: cqe.pointee.res))"
+        )
+      throw (Errno(rawValue: cqe.pointee.res))
     }
+    return try body(cqe.pointee)
   }
 }
 
 extension Submission: Equatable {
   public static func == (lhs: Submission, rhs: Submission) -> Bool {
-    ObjectIdentifier(lhs) == ObjectIdentifier(rhs)
+    lhs.id == rhs.id
   }
 }
 
 extension Submission: Hashable {
   public func hash(into hasher: inout Hasher) {
-    ObjectIdentifier(self).hash(into: &hasher)
+    id.hash(into: &hasher)
+  }
+}
+
+final class SingleshotSubmission<T>: Submission<T> {
+  typealias Continuation = CheckedContinuation<T, Error>
+
+  weak var group: SubmissionGroup<T>?
+  private var continuation: Continuation!
+
+  func submit() async throws -> T {
+    try await withCheckedThrowingContinuation { (continuation: Continuation) in
+      self.continuation = continuation
+      do {
+        if group != nil {
+          ready()
+        } else {
+          try manager.submit()
+        }
+      } catch {
+        continuation.resume(throwing: error)
+        self.continuation = nil
+      }
+    }
+  }
+
+  override fileprivate func onCompletion(cqe: UnsafePointer<io_uring_cqe>) {
+    do {
+      try continuation.resume(returning: throwingErrno(cqe: cqe, handler))
+    } catch {
+      continuation.resume(throwing: error)
+    }
+  }
+}
+
+final class MultishotSubmission<T>: Submission<T> {
+  private var channel = AsyncThrowingChannel<T, Error>()
+
+  func submit() throws -> AsyncThrowingChannel<T, Error> {
+    try manager.submit()
+    return channel
+  }
+
+  override fileprivate func onCompletion(cqe: UnsafePointer<io_uring_cqe>) {
+    do {
+      let result = try throwingErrno(cqe: cqe, handler)
+      Task { await channel.send(result) }
+    } catch {
+      channel.fail(error)
+    }
+  }
+}
+
+private func opcodeDescription(_ opcode: io_uring_op) -> String {
+  switch opcode {
+  case IORING_OP_NOP:
+    "nop"
+  case IORING_OP_READV:
+    "readv"
+  case IORING_OP_WRITEV:
+    "writev"
+  case IORING_OP_FSYNC:
+    "fsync"
+  case IORING_OP_READ_FIXED:
+    "read_fixed"
+  case IORING_OP_WRITE_FIXED:
+    "write_fixed"
+  case IORING_OP_POLL_ADD:
+    "add"
+  case IORING_OP_POLL_REMOVE:
+    "remove"
+  case IORING_OP_SYNC_FILE_RANGE:
+    "sync_file_range"
+  case IORING_OP_SENDMSG:
+    "sendmsg"
+  case IORING_OP_RECVMSG:
+    "recvmsg"
+  case IORING_OP_TIMEOUT:
+    "timeout"
+  case IORING_OP_TIMEOUT_REMOVE:
+    "timeout_remove"
+  case IORING_OP_ACCEPT:
+    "accept"
+  case IORING_OP_ASYNC_CANCEL:
+    "async_cancel"
+  case IORING_OP_LINK_TIMEOUT:
+    "link_timeout"
+  case IORING_OP_CONNECT:
+    "connect"
+  case IORING_OP_FALLOCATE:
+    "fallocate"
+  case IORING_OP_OPENAT:
+    "openat"
+  case IORING_OP_CLOSE:
+    "close"
+  case IORING_OP_FILES_UPDATE:
+    "files_update"
+  case IORING_OP_STATX:
+    "statx"
+  case IORING_OP_READ:
+    "read"
+  case IORING_OP_WRITE:
+    "write"
+  case IORING_OP_FADVISE:
+    "fadvise"
+  case IORING_OP_MADVISE:
+    "madvise"
+  case IORING_OP_SEND:
+    "send"
+  case IORING_OP_RECV:
+    "recv"
+  case IORING_OP_OPENAT2:
+    "openat2"
+  case IORING_OP_EPOLL_CTL:
+    "epoll_ctl"
+  case IORING_OP_SPLICE:
+    "splice"
+  case IORING_OP_PROVIDE_BUFFERS:
+    "provide_buffers"
+  case IORING_OP_REMOVE_BUFFERS:
+    "remove_buffers"
+  case IORING_OP_TEE:
+    "tee"
+  case IORING_OP_SHUTDOWN:
+    "shutdown"
+  case IORING_OP_RENAMEAT:
+    "renameat"
+  case IORING_OP_UNLINKAT:
+    "unlinkat"
+  case IORING_OP_MKDIRAT:
+    "mkdirat"
+  case IORING_OP_SYMLINKAT:
+    "symlinkat"
+  case IORING_OP_LINKAT:
+    "linkat"
+  /*
+   case IORING_OP_MSG_RING:
+   return "msg_ring"
+   case IORING_OP_FSETXATTR:
+   return "fsetxattr"
+   case IORING_OP_SETXATTR:
+   return "setxattr"
+   case IORING_OP_FGETXATTR:
+   return "fgetxattr"
+   case IORING_OP_GETXATTR:
+   return "getxattr"
+   case IORING_OP_SOCKET:
+   return "socket"
+   case IORING_OP_URING_CMD:
+   return "uring_cmd"
+   case IORING_OP_SEND_ZC:
+   return "send_zc"
+   case IORING_OP_SENDMSG_ZC:
+   return "sendmsg_zc"
+   */
+  default:
+    "unknown"
   }
 }

@@ -73,7 +73,6 @@ public actor IORing: CustomStringConvertible {
     static let zcReportUsage = UInt16(1 << 3)
   }
 
-  // FIXME: should we make default depth >1?
   public init(
     depth: Int = 1,
     flags: UInt32 = 0,
@@ -215,8 +214,8 @@ private extension IORing {
     bufferIndex: UInt16,
     bufferOffset: Int, // offset into the fixed buffer
     link: Bool = false
-  ) async throws -> Submission<Int> {
-    try await Submission(
+  ) async throws -> SingleshotSubmission<Int> {
+    try await SingleshotSubmission(
       manager: manager,
       IORING_OP_READ_FIXED,
       fd: fd,
@@ -246,7 +245,7 @@ private extension IORing {
       bufferIndex: bufferIndex,
       bufferOffset: bufferOffset,
       link: link
-    ).submitSingleshot()
+    ).submit()
   }
 
   func io_uring_op_write_fixed(
@@ -256,8 +255,8 @@ private extension IORing {
     bufferIndex: UInt16,
     bufferOffset: Int, // offset into the fixed buffer
     link: Bool = false
-  ) async throws -> Submission<Int> {
-    try await Submission(
+  ) async throws -> SingleshotSubmission<Int> {
+    try await SingleshotSubmission(
       manager: manager,
       IORING_OP_WRITE_FIXED,
       fd: fd,
@@ -287,7 +286,7 @@ private extension IORing {
       bufferIndex: bufferIndex,
       bufferOffset: bufferOffset,
       link: link
-    ).submitSingleshot()
+    ).submit()
   }
 
   func io_uring_op_send(
@@ -337,7 +336,6 @@ private extension IORing {
     count: Int,
     link: Bool = false
   ) async throws -> AsyncThrowingChannel<[UInt8], Error> {
-    // FIXME: check this will be captured or do we need to
     var buffer = [UInt8](repeating: 0, count: count)
     return try await manager.prepareAndSubmitMultishot(
       IORING_OP_RECV,
@@ -442,7 +440,7 @@ private extension IORing {
     address: sockaddr_storage,
     link: Bool = false
   ) async throws {
-    var address = address // FIXME: check lifetime
+    var address = address
     try await manager.prepareAndSubmit(
       IORING_OP_CONNECT,
       fd: fd,
@@ -703,7 +701,7 @@ public extension IORing {
     try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: 0)
 
     let result = try await withSubmissionGroup { (group: SubmissionGroup<Int>) in
-      let writeSubmission: Submission<Int> = try await io_uring_op_write_fixed(
+      let writeSubmission: SingleshotSubmission<Int> = try await io_uring_op_write_fixed(
         fd: fd,
         count: count,
         offset: offset,
@@ -713,7 +711,7 @@ public extension IORing {
       )
       await group.enqueue(submission: writeSubmission)
 
-      let readSubmission: Submission<Int> = try await io_uring_op_read_fixed(
+      let readSubmission: SingleshotSubmission<Int> = try await io_uring_op_read_fixed(
         fd: fd,
         count: count,
         offset: offset,
@@ -740,7 +738,7 @@ public extension IORing {
     try manager.validateFixedBuffer(at: bufferIndex, length: count, offset: 0)
 
     let result = try await withSubmissionGroup { (group: SubmissionGroup<Int>) in
-      let readSubmission: Submission<Int> = try await io_uring_op_read_fixed(
+      let readSubmission: SingleshotSubmission<Int> = try await io_uring_op_read_fixed(
         fd: fd1,
         count: count,
         offset: offset,
@@ -750,7 +748,7 @@ public extension IORing {
       )
       await group.enqueue(submission: readSubmission)
 
-      let writeSubmission: Submission<Int> = try await io_uring_op_write_fixed(
+      let writeSubmission: SingleshotSubmission<Int> = try await io_uring_op_write_fixed(
         fd: fd2,
         count: count,
         offset: offset,

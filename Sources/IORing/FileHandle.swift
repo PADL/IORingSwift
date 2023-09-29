@@ -18,13 +18,13 @@ import Glibc
 
 /// FileDescriptorRepresentable is required for lifecycle management so file
 /// descriptors are not closed whilst there are outstanding completions
-public protocol FileDescriptorRepresentable {
+public protocol FileDescriptorRepresentable: Sendable {
   var fileDescriptor: Int32 { get }
 }
 
 /// Include our own FileHandle for accept() so we do not need to import Foundation
-public final class FileHandle: FileDescriptorRepresentable, CustomStringConvertible {
-  public private(set) var fileDescriptor: Int32
+public final class FileHandle: FileDescriptorRepresentable, CustomStringConvertible, Sendable {
+  public let fileDescriptor: Int32
   private let closeOnDealloc: Bool
 
   public init(fileDescriptor: Int32, closeOnDealloc: Bool = false) throws {
@@ -46,15 +46,8 @@ public final class FileHandle: FileDescriptorRepresentable, CustomStringConverti
 
   deinit {
     if closeOnDealloc, fileDescriptor != -1 {
-      try? _close()
+      close(self.fileDescriptor)
     }
-  }
-
-  private func _close() throws {
-    try Errno.throwingErrno {
-      SwiftGlibc.close(self.fileDescriptor)
-    }
-    fileDescriptor = -1
   }
 }
 

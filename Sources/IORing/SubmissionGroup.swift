@@ -20,10 +20,10 @@ import AsyncQueue
 import AsyncAlgorithms
 import Glibc
 
-extension Submission {
+extension SingleshotSubmission {
   func enqueue() async {
     do {
-      let result = try await submitSingleshot()
+      let result = try await submit()
       await group?.resultChannel.send(result)
     } catch {
       group?.resultChannel.fail(error)
@@ -38,9 +38,9 @@ extension Submission {
 actor SubmissionGroup<T> {
   private let ring: IORing
   private let queue = ActorQueue<SubmissionGroup>()
-  private var submissions = [Submission<T>]()
+  private var submissions = [SingleshotSubmission<T>]()
 
-  fileprivate let readinessChannel = AsyncChannel<Submission<T>>()
+  fileprivate let readinessChannel = AsyncChannel<SingleshotSubmission<T>>()
   fileprivate let resultChannel = AsyncThrowingChannel<T, Error>()
 
   init(@_inheritActorContext ring: IORing) async throws {
@@ -53,7 +53,7 @@ actor SubmissionGroup<T> {
   /// its continuation is registered in the SQE `user_data` otherwise the group
   /// will never be submitted.
   ///
-  func enqueue(submission: Submission<T>) {
+  func enqueue(submission: SingleshotSubmission<T>) {
     submission.group = self
     submissions.append(submission)
     queue.enqueue { _ in

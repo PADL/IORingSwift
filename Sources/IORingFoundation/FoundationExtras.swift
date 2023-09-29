@@ -53,4 +53,4 @@ public extension Data {
   }
 }
 
-extension Foundation.FileHandle: FileDescriptorRepresentable {}
+extension Foundation.FileHandle: FileDescriptorRepresentable, @unchecked Sendable {}
