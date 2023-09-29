@@ -49,15 +49,23 @@ int io_uring_cq_handler(struct io_uring *ring) {
   }
   io_uring_cq_advance(ring, i);
 #else
-  if (cqe) {
+  do {
     auto user_data = io_uring_cqe_get_data(cqe);
+#if PTHREAD_IO_URING
+    if (user_data == nullptr) {
+      err = ECANCELED;
+      break;
+    }
+#endif
     auto block = reinterpret_cast<io_uring_cqe_block>(user_data);
     block(cqe);
     if ((cqe->flags & IORING_CQE_F_MORE) == 0)
       _Block_release(block);
-  }
-  io_uring_cqe_seen(ring, cqe);
+    io_uring_cqe_seen(ring, cqe);
+  } while ((err = io_uring_peek_cqe(ring, &cqe)) == 0);
 #endif
+  if (err == EAGAIN)
+    err = 0;
 
   return err;
 }
