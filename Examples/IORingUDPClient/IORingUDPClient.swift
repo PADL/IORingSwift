@@ -42,7 +42,7 @@ public struct IORingUDPClient {
   }
 
   init() throws {
-    ring = try IORing()
+    ring = IORing.shared
     socket = try Socket(ring: ring, domain: sa_family_t(AF_INET), type: SOCK_DGRAM, protocol: 0)
   }
 

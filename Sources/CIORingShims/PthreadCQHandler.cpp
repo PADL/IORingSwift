@@ -63,6 +63,7 @@ void pthread_io_uring_deinit_cq_handler(void *handle, struct io_uring *ring) {
     ;
 
   io_uring_prep_nop(sqe);
+  io_uring_sqe_set_data(sqe, reinterpret_cast<void *>(~0ULL));
   io_uring_submit(ring);
 
   pthread_join(thread, &retval);

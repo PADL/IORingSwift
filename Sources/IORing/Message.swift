@@ -23,7 +23,13 @@ import CIORingShims
 import CIOURing
 import Glibc
 
-public final class Message {
+public struct Control {
+  public var level: Int32
+  public var type: Int32
+  public var data: [UInt8]
+}
+
+public final class Message: @unchecked Sendable {
   // FIXME: again, this is a workaround for _XOPEN_SOURCE=500 clang importer issues
   public var name: [UInt8] {
     get {
@@ -39,8 +45,8 @@ public final class Message {
   public var address: sockaddr_storage {
     didSet {
       Swift.withUnsafeMutablePointer(to: &address) { pointer in
-        __storage.msg_name = UnsafeMutableRawPointer(pointer)
-        __storage.msg_namelen = (try? pointer.pointee.size) ?? 0
+        storage.msg_name = UnsafeMutableRawPointer(pointer)
+        storage.msg_namelen = (try? pointer.pointee.size) ?? 0
       }
     }
   }
@@ -48,56 +54,40 @@ public final class Message {
   public var buffer: [UInt8] {
     didSet {
       buffer.withUnsafeMutableBytes { bytes in
-        __iov_storage.iov_base = bytes.baseAddress
-        __iov_storage.iov_len = bytes.count
+        iov_storage.iov_base = bytes.baseAddress
+        iov_storage.iov_len = bytes.count
       }
     }
   }
 
-  public struct Control {
-    public var level: Int32
-    public var type: Int32
-    public var data: [UInt8]
-  }
-
   public var control = [Control]()
 
-  public var flags: Int32 {
+  public var flags: UInt32 {
     get {
-      __storage.msg_flags
+      UInt32(storage.msg_flags)
     }
     set {
-      __storage.msg_flags = newValue
+      storage.msg_flags = Int32(newValue)
     }
   }
 
-  private var __storage = msghdr()
-  private var __iov_storage = iovec()
+  private var storage = msghdr()
+  private var iov_storage = iovec()
 
   func withUnsafeMutablePointer<T>(
-    _ body: (UnsafeMutablePointer<msghdr>) async throws
+    @_inheritActorContext _ body: (UnsafeMutablePointer<msghdr>) async throws
       -> T
   ) async rethrows
     -> T
   {
-    try await body(&__storage)
+    try await body(&storage)
   }
 
-  func withUnsafePointer<T>(
-    _ body: (UnsafePointer<msghdr>) async throws
-      -> T
-  ) async rethrows
-    -> T
-  {
-    var storage = __storage
-    return try await body(&storage)
-  }
-
-  init(address: sockaddr_storage, buffer: [UInt8] = [], flags: Int32 = 0) {
+  init(address: sockaddr_storage, buffer: [UInt8] = [], flags: UInt32 = 0) {
     self.address = address
     self.buffer = buffer
     self.flags = flags
-    __init_storage()
+    init_storage()
   }
 
   func copy() -> Self {
@@ -108,7 +98,7 @@ public final class Message {
   public convenience init(
     name: [UInt8]? = nil,
     buffer: [UInt8] = [],
-    flags: Int32 = 0
+    flags: UInt32 = 0
   ) throws {
     let ss: sockaddr_storage = if let name {
       try sockaddr_storage(bytes: name)
@@ -118,47 +108,17 @@ public final class Message {
     self.init(address: ss, buffer: buffer, flags: 0)
   }
 
-  public convenience init(capacity: Int, flags: Int32 = 0) {
+  public convenience init(capacity: Int, flags: UInt32 = 0) {
     self.init(
       address: sockaddr_storage(),
       buffer: [UInt8](repeating: 0, count: capacity),
       flags: flags
     )
     // special case for receiving messages
-    __storage.msg_namelen = socklen_t(MemoryLayout<sockaddr_storage>.size)
+    storage.msg_namelen = socklen_t(MemoryLayout<sockaddr_storage>.size)
   }
 
-  /*
-   private init(_ msg: UnsafePointer<msghdr>) throws {
-       let name = UnsafeRawBufferPointer(
-           start: msg.pointee.msg_name,
-           count: Int(msg.pointee.msg_namelen)
-       )
-       address = try sockaddr_storage(bytes: Array(name))
-       var buffer = [UInt8]()
-       let iov = UnsafeBufferPointer(start: msg.pointee.msg_iov, count: msg.pointee.msg_iovlen)
-       for iovec in iov {
-           let ptr = unsafeBitCast(iovec.iov_base, to: UnsafePointer<UInt8>.self)
-           let data = UnsafeBufferPointer(start: ptr, count: iovec.iov_len)
-           buffer.append(contentsOf: data)
-       }
-       self.buffer = buffer
-       var control = [Control]()
-       CMSG_APPLY(msg) { cmsg, data, len in
-           let data = UnsafeBufferPointer(start: data, count: len)
-           control.append(Control(
-               level: cmsg.pointee.cmsg_level,
-               type: cmsg.pointee.cmsg_type,
-               data: Array(data)
-           ))
-       }
-       flags = msg.pointee.msg_flags
-       self.control = control
-       __init_storage()
-   }
-   */
-
-  func __init_storage() {
+  func init_storage() {
     Swift.withUnsafeMutablePointer(to: &address) { pointer in
       // forces didSet to be called
       _ = pointer
@@ -167,9 +127,87 @@ public final class Message {
       // forces didSet to be called
       _ = bytes
     }
-    Swift.withUnsafeMutablePointer(to: &__iov_storage) { iov_storage in
-      __storage.msg_iov = iov_storage
-      __storage.msg_iovlen = 1
+    Swift.withUnsafeMutablePointer(to: &iov_storage) { iov_storage in
+      storage.msg_iov = iov_storage
+      storage.msg_iovlen = 1
     }
+  }
+}
+
+final class MessageHolder {
+  private let size: Int
+  private var storage = msghdr()
+  private var bufferSubmission: BufferSubmission<UInt8>
+  let bufferGroup: UInt16
+
+  init(ring: IORing, size: Int, count: Int) async throws {
+    if size % MemoryLayout<io_uring_recvmsg_out>.alignment != 0 {
+      throw Errno.invalidArgument
+    }
+    self.size = size + MemoryLayout<io_uring_recvmsg_out>.size + MemoryLayout<sockaddr_storage>.size
+    bufferSubmission = try await BufferSubmission(ring: ring, size: size, count: count)
+    bufferGroup = bufferSubmission.bufferGroup
+    try await bufferSubmission.submit()
+  }
+
+  deinit {
+    let ring = bufferSubmission.ring
+    let count = bufferSubmission.count
+    let bufferGroup = bufferGroup
+    Task {
+      try await BufferSubmission<UInt8>(
+        ring: ring,
+        removing: count,
+        from: bufferGroup
+      ).submit()
+    }
+  }
+
+  func receive(id bufferID: Int, count: Int? = nil) throws -> Message {
+    try bufferSubmission.withUnsafeRawBufferPointer(id: bufferID) { pointer in
+      guard let out = io_uring_recvmsg_validate(
+        pointer.baseAddress!,
+        Int32(count ?? size),
+        &storage
+      ) else {
+        throw Errno.invalidArgument
+      }
+
+      // make the buffer available for reuse once we've copied the contents
+      defer {
+        Task { @IORing in
+          try await bufferSubmission.reprovideAndSubmit(id: bufferID)
+        }
+      }
+
+      var address = sockaddr_storage()
+      if out.pointee.namelen != 0 {
+        guard let name = io_uring_recvmsg_name(out) else {
+          throw Errno.noMemory
+        }
+        name.withMemoryRebound(to: sockaddr_storage.self, capacity: 1) { name in
+          address = name.pointee
+        }
+      }
+
+      var buffer = [UInt8]()
+      if out.pointee.payloadlen != 0 {
+        guard let payload = io_uring_recvmsg_payload(out, &storage) else {
+          throw Errno.noMemory
+        }
+        buffer = Array(UnsafeRawBufferPointer(start: payload, count: Int(out.pointee.payloadlen)))
+      }
+      return Message(address: address, buffer: buffer, flags: out.pointee.flags)
+    }
+  }
+
+  @IORing
+  func withUnsafeMutablePointer<T>(
+    _ body: (UnsafeMutablePointer<msghdr>) async throws
+      -> T
+  ) async rethrows
+    -> T
+  {
+    try await body(&storage)
   }
 }

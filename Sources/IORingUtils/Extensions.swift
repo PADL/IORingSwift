@@ -26,7 +26,7 @@ extension Message: CustomStringConvertible {
   public convenience init(
     address: any SocketAddress,
     buffer: [UInt8],
-    flags: Int32 = 0
+    flags: UInt32 = 0
   ) throws {
     var addressBuffer = [UInt8](repeating: 0, count: Int(address.size))
     addressBuffer.withUnsafeMutableBytes { bytes in
