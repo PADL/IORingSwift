@@ -16,23 +16,17 @@
 
 #include "CQHandlerInternal.hpp"
 
+#include <pthread.h>
+
 static void *cqe_thread(void *arg) {
   auto ring = static_cast<struct io_uring *>(arg);
 
-  for (;;) {
-    struct io_uring_cqe *cqe;
-    int oldstate;
-
-    pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &oldstate);
-    pthread_testcancel();
-    auto err = io_uring_wait_cqe(ring, &cqe);
-    pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldstate);
+  while (true) {
+    auto err = io_uring_cq_handler(ring);
     if (err == -EINTR)
       continue;
     else if (err)
       break;
-
-    io_uring_cq_invoke_blocks(ring, cqe);
   }
 
   return nullptr;
@@ -62,10 +56,14 @@ int pthread_io_uring_init_cq_handler(void **handle, struct io_uring *ring) {
 
 void pthread_io_uring_deinit_cq_handler(void *handle, struct io_uring *ring) {
   auto thread = reinterpret_cast<pthread_t>(handle);
-  int err;
+  struct io_uring_sqe *sqe;
   void *retval;
 
-  err = pthread_cancel(thread);
-  if (err == 0)
-    err = pthread_join(thread, &retval);
+  while ((sqe = io_uring_get_sqe(ring)) == nullptr)
+    ;
+
+  io_uring_prep_nop(sqe);
+  io_uring_submit(ring);
+
+  pthread_join(thread, &retval);
 }

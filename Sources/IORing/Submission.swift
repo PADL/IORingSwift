@@ -144,6 +144,7 @@ class Submission<T>: CustomStringConvertible {
     opcode = submission.opcode
     sqe = try await manager.getSqe()
     setBlock()
+    precondition(sqe.pointee.user_data != 0)
   }
 
   fileprivate func onCompletion(cqe: UnsafePointer<io_uring_cqe>) {

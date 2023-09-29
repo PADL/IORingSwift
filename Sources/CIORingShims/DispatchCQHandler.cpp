@@ -16,13 +16,11 @@
 
 #include "CQHandlerInternal.hpp"
 
+#include <sys/eventfd.h>
+
 static void cqe_handler(dispatch_source_t source) {
   auto ring = static_cast<struct io_uring *>(dispatch_get_context(source));
-  struct io_uring_cqe *cqe;
-  int err;
-
-  if (io_uring_wait_cqe(ring, &cqe) == 0)
-    io_uring_cq_invoke_blocks(ring, cqe);
+  io_uring_cq_handler(ring);
 }
 
 int dispatch_io_uring_init_cq_handler(void **handle, struct io_uring *ring) {

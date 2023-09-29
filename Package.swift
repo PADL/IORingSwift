@@ -19,13 +19,23 @@ func tryGuessSwiftLibRoot() -> String {
 }
 
 let SwiftLibRoot = tryGuessSwiftLibRoot()
+let EnableASAN = false
+var ASANCFlags: [String] = []
+var ASANSwiftFlags: [String] = []
+var ASANLinkerSettings: [LinkerSetting] = []
+
+if EnableASAN {
+  ASANCFlags.append("-fsanitize=address")
+  ASANSwiftFlags.append("-sanitize=address")
+  ASANLinkerSettings.append(LinkerSetting.linkedLibrary("asan"))
+}
 
 enum CQHandlerType: String {
   case dispatch = "DISPATCH_IO_URING"
   case pthread = "PTHREAD_IO_URING"
 }
 
-let cqHandlerType: CQHandlerType = .pthread
+let cqHandlerType: CQHandlerType = .dispatch
 
 let package = Package(
   name: "IORingSwift",
@@ -61,11 +71,11 @@ let package = Package(
       dependencies: ["CIOURing"],
       cSettings: [
         .define("\(cqHandlerType.rawValue)=1"),
-        .unsafeFlags(["-I", SwiftLibRoot, "-fsanitize=address"]),
+        .unsafeFlags(["-I", SwiftLibRoot] + ASANCFlags),
       ],
       cxxSettings: [
         .define("\(cqHandlerType.rawValue)=1"),
-        .unsafeFlags(["-I", SwiftLibRoot, "-fsanitize=address"]),
+        .unsafeFlags(["-I", SwiftLibRoot] + ASANCFlags),
       ]
     ),
     .target(
@@ -79,7 +89,11 @@ let package = Package(
       ],
       cxxSettings: [
         .define("_XOPEN_SOURCE=500"),
+      ],
+      swiftSettings: [
+        .unsafeFlags(ASANSwiftFlags),
       ]
+
     ),
     .testTarget(
       name: "IORingTests",
@@ -98,27 +112,32 @@ let package = Package(
     .executableTarget(
       name: "IORingCat",
       dependencies: ["IORing", "IORingUtils"],
-      path: "Examples/IORingCat"
+      path: "Examples/IORingCat",
+      linkerSettings: [] + ASANLinkerSettings
     ),
     .executableTarget(
       name: "IORingCopy",
       dependencies: ["IORing", "IORingUtils"],
-      path: "Examples/IORingCopy"
+      path: "Examples/IORingCopy",
+      linkerSettings: [] + ASANLinkerSettings
     ),
     .executableTarget(
       name: "IORingTCPEcho",
       dependencies: ["IORing", "IORingUtils"],
-      path: "Examples/IORingTCPEcho"
+      path: "Examples/IORingTCPEcho",
+      linkerSettings: [] + ASANLinkerSettings
     ),
     .executableTarget(
       name: "IORingUDPClient",
       dependencies: ["IORing", "IORingUtils"],
-      path: "Examples/IORingUDPClient"
+      path: "Examples/IORingUDPClient",
+      linkerSettings: [] + ASANLinkerSettings
     ),
     .executableTarget(
       name: "IORingUDPServer",
       dependencies: ["IORing", "IORingUtils"],
-      path: "Examples/IORingUDPServer"
+      path: "Examples/IORingUDPServer",
+      linkerSettings: [] + ASANLinkerSettings
     ),
   ],
   cLanguageStandard: .c18,

@@ -16,14 +16,16 @@
 
 #pragma once
 
-#include <sys/eventfd.h>
 #include <liburing.h>
 #include <dispatch/dispatch.h>
 #include <Block/Block.h>
+#include <cassert>
 
 #include "CIORingShims.h"
 
-void io_uring_cq_invoke_blocks(struct io_uring *ring, struct io_uring_cqe *cqe);
+int io_uring_cq_handler(struct io_uring *ring);
+
+extern void *IO_URING_CANCEL_USER_DATA;
 
 // enabled with DISPATCH_IO_URING
 void dispatch_io_uring_deinit_cq_handler(void *handle, struct io_uring *ring);
