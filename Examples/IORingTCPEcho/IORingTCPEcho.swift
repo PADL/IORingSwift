@@ -88,10 +88,14 @@ public struct IORingTCPEcho {
   }
 
   func runMultishot() async throws {
-    let clients: AnyAsyncSequence<Socket> = try await socket.accept()
-    for try await client in clients {
-      debugPrint("accepted client \(client)")
-      Task { await readWriteEcho(client: client) }
-    }
+    repeat {
+      do {
+        let clients: AnyAsyncSequence<Socket> = try await socket.accept()
+        for try await client in clients {
+          debugPrint("accepted client \(client)")
+          Task { await readWriteEcho(client: client) }
+        }
+      } catch Errno.canceled {}
+    } while true
   }
 }
