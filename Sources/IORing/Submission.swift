@@ -89,6 +89,16 @@ class Submission<T>: CustomStringConvertible {
     sqe.pointee.buf_group = bufferGroup
   }
 
+  /// because actors are reentrant, `setBlock()` must be called immediately after
+  /// the manager assigned a SQE (or, at least before any suspension point)
+  private func setBlock() {
+    io_uring_sqe_set_block(sqe) { [self] in
+      onCompletion(cqe: $0)
+      // FIXME: this could race before io_uring_cqe_seen() is called
+      manager.resumeSubmission()
+    }
+  }
+
   init(
     manager: Manager,
     _ opcode: io_uring_op,
@@ -109,6 +119,7 @@ class Submission<T>: CustomStringConvertible {
     self.manager = manager
     self.opcode = opcode
     self.handler = handler
+    setBlock()
 
     prepare(opcode, sqe: sqe, fd: fd, address: address, length: length, offset: offset)
     setFlags(
@@ -124,14 +135,6 @@ class Submission<T>: CustomStringConvertible {
         try setSocketAddress(sqe: sqe, socketAddress: socketAddress)
       }
     }
-
-    // once a SQE is assigned, we cannot suspend until its callback is set, otherwise
-    // the IORing actor (that owns the submission queue) could re-enter
-    io_uring_sqe_set_block(sqe) { [self] in
-      onCompletion(cqe: $0)
-      // FIXME: this could race before io_uring_cqe_seen() is called
-      manager.resumeSubmission()
-    }
   }
 
   fileprivate init(_ submission: Submission) async throws {
@@ -140,6 +143,7 @@ class Submission<T>: CustomStringConvertible {
     fd = submission.fd
     opcode = submission.opcode
     sqe = try await manager.getSqe()
+    setBlock()
   }
 
   fileprivate func onCompletion(cqe: UnsafePointer<io_uring_cqe>) {
@@ -262,7 +266,7 @@ final class MultishotSubmission<T>: Submission<T> {
         .logDebug(
           message: "resubmitting multishot submission failed: \(error)"
         )
-       channel.fail(error)
+      channel.fail(error)
     }
   }
 
