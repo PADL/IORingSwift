@@ -281,11 +281,11 @@ final class MultishotSubmission<T>: Submission<T> {
           await resubmit()
         }
       }
-/*
-    } catch Errno.canceled {
-      // for some reason accept() likes to cancel, try to resubmit
-      Task { await resubmit() }
-*/
+      /*
+       } catch Errno.canceled {
+         // for some reason accept() likes to cancel, try to resubmit
+         Task { await resubmit() }
+       */
     } catch {
       channel.fail(error)
     }

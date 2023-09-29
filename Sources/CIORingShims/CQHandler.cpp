@@ -16,8 +16,6 @@
 
 #include "CQHandlerInternal.hpp"
 
-void *IO_URING_CANCEL_USER_DATA = reinterpret_cast<void *>(~0);
-
 void io_uring_sqe_set_block(struct io_uring_sqe *sqe,
                             io_uring_cqe_block block) {
   io_uring_sqe_set_data(sqe, _Block_copy(block));
@@ -25,28 +23,41 @@ void io_uring_sqe_set_block(struct io_uring_sqe *sqe,
 
 int io_uring_cq_handler(struct io_uring *ring) {
   unsigned int head, i = 0;
-  struct io_uring_cqe *cqe = nullptr;
+  struct io_uring_cqe *cqe;
 
   auto err = io_uring_wait_cqe(ring, &cqe);
   if (err)
     return err;
 
+#if 0
   io_uring_for_each_cqe(ring, head, cqe) {
     assert(cqe != nullptr);
     i++;
     auto user_data = io_uring_cqe_get_data(cqe);
-    assert(user_data != nullptr);
-    if (user_data == IO_URING_CANCEL_USER_DATA) {
+#if PTHREAD_IO_URING
+    if (user_data == nullptr) {
       // used by pthreads backend to signal thread ending
       err = ECANCELED;
       break;
     }
+#endif
+    assert(user_data != nullptr);
     auto block = reinterpret_cast<io_uring_cqe_block>(user_data);
     block(cqe);
     if ((cqe->flags & IORING_CQE_F_MORE) == 0)
       _Block_release(block);
   }
   io_uring_cq_advance(ring, i);
+#else
+  if (cqe) {
+    auto user_data = io_uring_cqe_get_data(cqe);
+    auto block = reinterpret_cast<io_uring_cqe_block>(user_data);
+    block(cqe);
+    if ((cqe->flags & IORING_CQE_F_MORE) == 0)
+      _Block_release(block);
+  }
+  io_uring_cqe_seen(ring, cqe);
+#endif
 
   return err;
 }

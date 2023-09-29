@@ -25,8 +25,6 @@
 
 int io_uring_cq_handler(struct io_uring *ring);
 
-extern void *IO_URING_CANCEL_USER_DATA;
-
 // enabled with DISPATCH_IO_URING
 void dispatch_io_uring_deinit_cq_handler(void *handle, struct io_uring *ring);
 int dispatch_io_uring_init_cq_handler(void **handle, struct io_uring *ring);
