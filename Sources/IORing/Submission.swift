@@ -119,7 +119,6 @@ class Submission<T>: CustomStringConvertible {
     self.manager = manager
     self.opcode = opcode
     self.handler = handler
-    setBlock()
 
     prepare(opcode, sqe: sqe, fd: fd, address: address, length: length, offset: offset)
     setFlags(
@@ -135,6 +134,7 @@ class Submission<T>: CustomStringConvertible {
         try setSocketAddress(sqe: sqe, socketAddress: socketAddress)
       }
     }
+    setBlock()
   }
 
   fileprivate init(_ submission: Submission) async throws {
@@ -211,6 +211,7 @@ final class SingleshotSubmission<T>: Submission<T> {
 
 final class MultishotSubmission<T>: Submission<T> {
   private var channel = AsyncThrowingChannel<T, Error>()
+  private let resubmissionCount: UInt8
 
   override init(
     manager: Manager,
@@ -227,6 +228,7 @@ final class MultishotSubmission<T>: Submission<T> {
     socketAddress: sockaddr_storage? = nil,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) async throws {
+    resubmissionCount = 0
     try await super.init(
       manager: manager,
       opcode,
@@ -244,6 +246,7 @@ final class MultishotSubmission<T>: Submission<T> {
   }
 
   fileprivate init(_ submission: MultishotSubmission) async throws {
+    self.resubmissionCount = submission.resubmissionCount + 1
     try await super.init(submission)
     channel = submission.channel
   }
@@ -254,6 +257,8 @@ final class MultishotSubmission<T>: Submission<T> {
   }
 
   private func resubmit() async {
+    guard self.resubmissionCount < 2 else { return }
+
     do {
       // this will allocate a new SQE with the same channel, fd, opcode and handler
       let resubmission = try await MultishotSubmission(self)
