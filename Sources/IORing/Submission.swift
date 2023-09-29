@@ -207,7 +207,18 @@ final class MultishotSubmission<T>: Submission<T> {
   override fileprivate func onCompletion(cqe: UnsafePointer<io_uring_cqe>) {
     do {
       let result = try throwingErrno(cqe: cqe, handler)
-      Task { await channel.send(result) }
+      Task {
+        await channel.send(result)
+        if cqe.pointee.flags & IORING_CQE_F_MORE == 0 {
+          // if IORING_CQE_F_MORE is not set, we need to issue a new request
+          // try to do this implictily
+          do {
+            _ = try submit()
+          } catch {
+            channel.fail(error)
+          }
+        }
+      }
     } catch {
       channel.fail(error)
     }
