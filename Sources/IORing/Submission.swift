@@ -16,22 +16,23 @@
 
 @_implementationOnly
 import AsyncAlgorithms
+import AsyncExtensions
 @_implementationOnly
 import CIORingShims
 import Glibc
 
 class Submission<T>: CustomStringConvertible {
   // reference to owner which owns ring
-  fileprivate let manager: Manager
+  let manager: Manager
   /// user-supplied callback to transform a completion queue entry to a result
   fileprivate let handler: @Sendable (io_uring_cqe) throws -> T
-
   /// file descriptor, stored so that it is not closed before the completion handler is run
-  private let fd: FileDescriptorRepresentable
+  fileprivate let fd: FileDescriptorRepresentable
+
   /// opcode, useful for debugging
-  private let opcode: io_uring_op
+  fileprivate let opcode: io_uring_op
   /// assigned submission queue entry for this object
-  private let sqe: UnsafeMutablePointer<io_uring_sqe>
+  fileprivate let sqe: UnsafeMutablePointer<io_uring_sqe>
 
   fileprivate var id: ObjectIdentifier {
     ObjectIdentifier(self)
@@ -92,11 +93,7 @@ class Submission<T>: CustomStringConvertible {
   /// because actors are reentrant, `setBlock()` must be called immediately after
   /// the manager assigned a SQE (or, at least before any suspension point)
   private func setBlock() {
-    io_uring_sqe_set_block(sqe) { [self] in
-      onCompletion(cqe: $0)
-      // FIXME: this could race before io_uring_cqe_seen() is called
-      manager.resumeSubmission()
-    }
+    io_uring_sqe_set_block(sqe, onCompletion)
   }
 
   init(
@@ -112,9 +109,9 @@ class Submission<T>: CustomStringConvertible {
     bufferIndex: UInt16 = 0,
     bufferGroup: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
-    handler: @escaping @Sendable (io_uring_cqe) throws -> T
-  ) async throws {
-    sqe = try await manager.getSqe()
+    @_inheritActorContext handler: @escaping @Sendable (io_uring_cqe) throws -> T
+  ) throws {
+    sqe = try manager.getSqe()
     self.fd = fd
     self.manager = manager
     self.opcode = opcode
@@ -137,31 +134,34 @@ class Submission<T>: CustomStringConvertible {
     setBlock()
   }
 
-  fileprivate init(_ submission: Submission) async throws {
+  fileprivate init(_ submission: Submission) throws {
     manager = submission.manager
     handler = submission.handler
     fd = submission.fd
     opcode = submission.opcode
-    sqe = try await manager.getSqe()
+    sqe = try manager.getSqe()
     setBlock()
   }
 
-  fileprivate func onCompletion(cqe: UnsafePointer<io_uring_cqe>) {
+  fileprivate func onCompletion(cqe: UnsafeMutablePointer<io_uring_cqe>) {
     fatalError("handle(cqe:) must be implemented by subclass")
   }
 
   fileprivate func throwingErrno(
-    cqe: UnsafePointer<io_uring_cqe>,
-    _ body: @escaping @Sendable (_: io_uring_cqe) throws -> T
+    cqe: io_uring_cqe,
+    @_inheritActorContext _ body: @escaping @Sendable (_: io_uring_cqe) throws -> T
   ) throws -> T {
-    guard cqe.pointee.res >= 0 else {
-      Manager
-        .logDebug(
-          message: "\(type(of: self)) completion fileDescriptor: \(fd) opcode: \(opcodeDescription(opcode)) error: \(Errno(rawValue: cqe.pointee.res))"
-        )
-      throw (Errno(rawValue: cqe.pointee.res))
+    guard cqe.res >= 0 else {
+      let error = Errno(rawValue: cqe.res)
+      if error != .brokenPipe {
+        Manager
+          .logDebug(
+            message: "\(type(of: self)) completion fileDescriptor: \(fd) opcode: \(opcodeDescription(opcode)) error: \(Errno(rawValue: cqe.res))"
+          )
+      }
+      throw error
     }
-    return try body(cqe.pointee)
+    return try body(cqe)
   }
 }
 
@@ -178,32 +178,135 @@ extension Submission: Hashable {
 }
 
 final class SingleshotSubmission<T>: Submission<T> {
-  typealias Continuation = CheckedContinuation<T, Error>
-
   weak var group: SubmissionGroup<T>?
-  private var continuation: Continuation!
+  private var channel = AsyncThrowingChannel<T, Error>()
 
   func submit() async throws -> T {
-    try await withCheckedThrowingContinuation { (continuation: Continuation) in
-      self.continuation = continuation
+    if group != nil {
+      ready()
+    } else {
+      try manager.submit()
+    }
+
+    for try await value in channel {
+      return value
+    }
+    throw Errno.invalidArgument
+  }
+
+  override fileprivate func onCompletion(cqe: UnsafeMutablePointer<io_uring_cqe>) {
+    manager.perform { [self] _ in
       do {
-        if group != nil {
-          ready()
-        } else {
-          try manager.submit()
-        }
+        try await channel.send(throwingErrno(cqe: cqe.pointee, handler))
+        channel.finish()
       } catch {
-        continuation.resume(throwing: error)
-        self.continuation = nil
+        channel.fail(error)
       }
     }
   }
+}
 
-  override fileprivate func onCompletion(cqe: UnsafePointer<io_uring_cqe>) {
-    do {
-      try continuation.resume(returning: throwingErrno(cqe: cqe, handler))
-    } catch {
-      continuation.resume(throwing: error)
+struct BufferCount: FileDescriptorRepresentable {
+  let count: Int
+
+  var fileDescriptor: Int32 {
+    Int32(count)
+  }
+}
+
+final class BufferSubmission<T>: Submission<()> {
+  var count: Int {
+    Int(fd.fileDescriptor)
+  }
+
+  let size: Int
+  let bufferGroup: UInt16
+  let buffer: UnsafeMutablePointer<T>?
+  let deallocate: Bool
+
+  init(
+    manager: Manager,
+    size: Int,
+    count: Int,
+    flags: IORing.SqeFlags = IORing.SqeFlags()
+  ) throws {
+    self.size = size
+    bufferGroup = manager.getNextBufferGroup()
+    buffer = UnsafeMutablePointer<T>.allocate(capacity: MemoryLayout<T>.stride * size * count)
+    deallocate = true
+
+    // equivalent of io_uring_prep_provide_buffers
+    try super.init(
+      manager: manager,
+      IORING_OP_PROVIDE_BUFFERS,
+      fd: BufferCount(count: count), // FIXME: well this is ugly
+      address: buffer,
+      length: UInt32(size),
+      bufferGroup: bufferGroup
+    ) { _ in }
+  }
+
+  override fileprivate func onCompletion(cqe: UnsafeMutablePointer<io_uring_cqe>) {}
+
+  func submit() throws {
+    try manager.submit()
+  }
+
+  func bufferPointer(id bufferID: Int) -> UnsafeMutablePointer<T> {
+    precondition(bufferID < count)
+    return buffer! + (bufferID * size)
+  }
+
+  init(reproviding bufferID: Int, from submission: BufferSubmission<T>) throws {
+    guard submission.deallocate == true && bufferID < submission.count
+    else { throw Errno.invalidArgument }
+    size = submission.size
+    bufferGroup = submission.bufferGroup
+    buffer = submission.bufferPointer(id: bufferID)
+    deallocate = false
+    try super.init(
+      manager: submission.manager,
+      IORING_OP_PROVIDE_BUFFERS,
+      fd: BufferCount(count: 1),
+      address: buffer,
+      length: UInt32(size),
+      offset: bufferID,
+      bufferGroup: bufferGroup
+    ) { _ in }
+  }
+
+  init(manager: Manager, removing count: Int, from bufferGroup: UInt16) throws {
+    size = 0
+    self.bufferGroup = bufferGroup
+    buffer = nil
+    deallocate = false
+    try super.init(
+      manager: manager, IORING_OP_REMOVE_BUFFERS, fd: BufferCount(count: count),
+      bufferGroup: bufferGroup
+    )
+      { _ in }
+  }
+
+  func withUnsafeRawBufferPointer<U>(
+    id bufferID: Int,
+    _ body: (UnsafeMutableRawBufferPointer) throws -> U
+  ) throws -> U {
+    guard bufferID < count else { throw Errno.invalidArgument }
+    let bufferPointer = UnsafeMutableRawBufferPointer(
+      start: bufferPointer(id: bufferID),
+      count: size
+    )
+    return try body(bufferPointer)
+  }
+
+  func reprovideAndSubmit(id bufferID: Int) throws {
+    let submission = try BufferSubmission(reproviding: bufferID, from: self)
+    try submission.submit()
+  }
+
+  deinit {
+    if deallocate, let buffer {
+      buffer.deallocate()
     }
   }
 }
@@ -224,9 +327,9 @@ final class MultishotSubmission<T>: Submission<T> {
     bufferIndex: UInt16 = 0,
     bufferGroup: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
-    handler: @escaping @Sendable (io_uring_cqe) throws -> T
-  ) async throws {
-    try await super.init(
+    @_inheritActorContext handler: @escaping @Sendable (io_uring_cqe) throws -> T
+  ) throws {
+    try super.init(
       manager: manager,
       opcode,
       fd: fd,
@@ -242,8 +345,8 @@ final class MultishotSubmission<T>: Submission<T> {
     )
   }
 
-  fileprivate init(_ submission: MultishotSubmission) async throws {
-    try await super.init(submission)
+  fileprivate init(_ submission: MultishotSubmission) throws {
+    try super.init(submission)
     channel = submission.channel
   }
 
@@ -252,13 +355,13 @@ final class MultishotSubmission<T>: Submission<T> {
     return channel
   }
 
-  private func resubmit() async {
+  private func resubmit() {
     do {
       // this will allocate a new SQE with the same channel, fd, opcode and handler
-      let resubmission = try await MultishotSubmission(self)
+      let resubmission = try MultishotSubmission(self)
       Manager
         .logDebug(
-          message: "resubmitting multishot submission \(resubmission) after cancel received"
+          message: "resubmitting multishot submission \(resubmission)"
         )
       _ = try resubmission.submit()
     } catch {
@@ -270,22 +373,18 @@ final class MultishotSubmission<T>: Submission<T> {
     }
   }
 
-  override fileprivate func onCompletion(cqe: UnsafePointer<io_uring_cqe>) {
+  override fileprivate func onCompletion(cqe: UnsafeMutablePointer<io_uring_cqe>) {
     do {
+      let cqe = cqe.pointee
       let result = try throwingErrno(cqe: cqe, handler)
       Task {
         await channel.send(result)
-        if cqe.pointee.flags & IORING_CQE_F_MORE == 0 {
+        if cqe.flags & IORING_CQE_F_MORE == 0 {
           // if IORING_CQE_F_MORE is not set, we need to issue a new request
           // try to do this implictily
-          await resubmit()
+          manager.perform { [self] _ in resubmit() }
         }
       }
-      /*
-       } catch Errno.canceled {
-         // for some reason accept() likes to cancel, try to resubmit
-         Task { await resubmit() }
-       */
     } catch {
       channel.fail(error)
     }

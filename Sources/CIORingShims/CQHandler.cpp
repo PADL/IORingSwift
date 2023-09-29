@@ -21,50 +21,41 @@ void io_uring_sqe_set_block(struct io_uring_sqe *sqe,
   io_uring_sqe_set_data(sqe, _Block_copy(block));
 }
 
+static void invoke_cqe_block(struct io_uring_cqe *cqe) {
+  auto block = reinterpret_cast<io_uring_cqe_block>(_Block_copy(io_uring_cqe_get_data(cqe)));
+  assert(block);
+  block(cqe);
+  if ((cqe->flags & IORING_CQE_F_MORE) == 0) {
+    _Block_release(block);
+    cqe->user_data = ~0ULL; // should never happen, will cause ECANCELED
+  }
+  _Block_release(cqe);
+}
+
 int io_uring_cq_handler(struct io_uring *ring) {
-  unsigned int head, i = 0;
   struct io_uring_cqe *cqe;
+  unsigned head, seen = 0;
 
   auto err = io_uring_wait_cqe(ring, &cqe);
   if (err)
     return err;
 
-#if 0
   io_uring_for_each_cqe(ring, head, cqe) {
     assert(cqe != nullptr);
-    i++;
-    auto user_data = io_uring_cqe_get_data(cqe);
-#if PTHREAD_IO_URING
-    if (user_data == nullptr) {
+    seen++;
+    if (cqe->user_data == ~0ULL) {
       // used by pthreads backend to signal thread ending
-      err = ECANCELED;
+      err = -ECANCELED;
       break;
     }
-#endif
-    assert(user_data != nullptr);
-    auto block = reinterpret_cast<io_uring_cqe_block>(user_data);
-    block(cqe);
-    if ((cqe->flags & IORING_CQE_F_MORE) == 0)
-      _Block_release(block);
+    if (cqe->user_data)
+        invoke_cqe_block(cqe);
+    else
+        fprintf(stderr, "Warning: io_uring_cq_handler: CQE %d:%p missing completion block!\n", seen, cqe);
   }
-  io_uring_cq_advance(ring, i);
-#else
-  do {
-    auto user_data = io_uring_cqe_get_data(cqe);
-#if PTHREAD_IO_URING
-    if (user_data == nullptr) {
-      err = ECANCELED;
-      break;
-    }
-#endif
-    auto block = reinterpret_cast<io_uring_cqe_block>(user_data);
-    block(cqe);
-    if ((cqe->flags & IORING_CQE_F_MORE) == 0)
-      _Block_release(block);
-    io_uring_cqe_seen(ring, cqe);
-  } while ((err = io_uring_peek_cqe(ring, &cqe)) == 0);
-#endif
-  if (err == EAGAIN)
+  io_uring_cq_advance(ring, seen);
+
+  if (err == -EAGAIN)
     err = 0;
 
   return err;

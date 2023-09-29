@@ -27,23 +27,23 @@ final class Manager {
 
   private var ring: io_uring
   private var eventHandle: UnsafeMutableRawPointer?
-  private let suspendIfSubmissionQueueFull: Bool
-  private var pendingSubmissions = Queue<Continuation>()
 
   fileprivate typealias FixedBuffer = [UInt8]
   private var buffers: [FixedBuffer]?
   private var iov: [iovec]?
+  private var nextBufferGroup: UInt16 = 1
+
+  weak var ioRing: IORing?
+  let depth: Int
 
   static func logDebug(message: String, functionName: String = #function) {
     debugPrint("IORing.Manager.\(functionName): \(message)")
   }
 
-  /// suspendIfSubmissionQueueFull: true allows an unbounded number of submissions
-  /// to be queued regardless of ring depth. Don't use this: make the ring big enough.
-  init(depth: CUnsignedInt, flags: CUnsignedInt, suspendIfSubmissionQueueFull: Bool) throws {
+  init(depth: CUnsignedInt, flags: CUnsignedInt) throws {
     var ring = io_uring()
 
-    self.suspendIfSubmissionQueueFull = suspendIfSubmissionQueueFull
+    self.depth = Int(depth)
     try Errno.throwingErrno {
       io_uring_queue_init(depth, &ring, flags)
     }
@@ -53,8 +53,11 @@ final class Manager {
     }
   }
 
+  func perform(_ body: @escaping (isolated IORing) async throws -> ()) {
+    Task { try await ioRing?.perform(body) }
+  }
+
   deinit {
-    cancelPendingSubmissions()
     io_uring_deinit_cq_handler(eventHandle, &ring)
     if hasRegisteredBuffers {
       try? unregisterBuffers()
@@ -63,24 +66,18 @@ final class Manager {
     io_uring_queue_exit(&ring)
   }
 
-  func getSqe() async throws -> UnsafeMutablePointer<io_uring_sqe> {
-    var sqe: UnsafeMutablePointer<io_uring_sqe>!
-
-    repeat {
-      sqe = io_uring_get_sqe(&ring)
-      if sqe != nil {
-        break
-      }
-
-      if suspendIfSubmissionQueueFull {
-        try await suspendSubmission()
-        continue
-      } else {
-        throw Errno.resourceTemporarilyUnavailable
-      }
-    } while sqe == nil
+  func getSqe() throws -> UnsafeMutablePointer<io_uring_sqe> {
+    let sqe = io_uring_get_sqe(&ring)
+    guard let sqe else {
+      throw Errno.resourceTemporarilyUnavailable
+    }
 
     return sqe
+  }
+
+  func getNextBufferGroup() -> UInt16 {
+    defer { nextBufferGroup += 1 }
+    return nextBufferGroup
   }
 
   @discardableResult
@@ -88,27 +85,6 @@ final class Manager {
     try Int(Errno.throwingErrno {
       io_uring_submit(&self.ring)
     })
-  }
-
-  private func suspendSubmission() async throws {
-    try await withCheckedThrowingContinuation { continuation in
-      pendingSubmissions.enqueue(continuation)
-    }
-  }
-
-  func resumeSubmission() {
-    Task {
-      guard let continuation = pendingSubmissions.dequeue() else {
-        return
-      }
-      continuation.resume()
-    }
-  }
-
-  private func cancelPendingSubmissions() {
-    while let continuation = pendingSubmissions.dequeue() {
-      continuation.resume(throwing: Errno.canceled)
-    }
   }
 
   func prepareAndSubmit<T>(
@@ -123,7 +99,7 @@ final class Manager {
     bufferIndex: UInt16 = 0,
     bufferGroup: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
-    handler: @escaping @Sendable (io_uring_cqe) throws -> T
+    @_inheritActorContext handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) async throws -> T {
     try await SingleshotSubmission(
       manager: self,
@@ -152,9 +128,9 @@ final class Manager {
     moreFlags: UInt32 = 0,
     bufferIndex: UInt16 = 0,
     bufferGroup: UInt16 = 0,
-    handler: @escaping @Sendable (io_uring_cqe) throws -> T
-  ) async throws -> AsyncThrowingChannel<T, Error> {
-    try await MultishotSubmission(
+    @_inheritActorContext handler: @escaping @Sendable (io_uring_cqe) throws -> T
+  ) throws -> AsyncThrowingChannel<T, Error> {
+    try MultishotSubmission(
       manager: self,
       opcode,
       fd: fd,
@@ -179,38 +155,26 @@ final class Manager {
     flags: IORing.SqeFlags = IORing.SqeFlags(),
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
-    handler: @escaping @Sendable (io_uring_cqe) throws -> T
+    @_inheritActorContext handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) async throws -> T {
-    // FIXME: surely there's a better way, but can't pass async function to withUnsafeBufferPointer
     let iovecs = iovecs ?? []
-    return try await withCheckedThrowingContinuation { (
-      continuation: CheckedContinuation<
-        T,
-        Error
-      >
-    ) in
-      _ = iovecs.withUnsafeBufferPointer { pointer in
-        Task {
-          try await prepareAndSubmit(
-            opcode,
-            fd: fd,
-            address: pointer.baseAddress,
-            length: CUnsignedInt(pointer.count),
-            offset: offset,
-            flags: flags,
-            ioprio: ioprio,
-            moreFlags: moreFlags
-          ) { cqe in
-            do {
-              try continuation.resume(returning: handler(cqe))
-            } catch {
-              continuation.resume(throwing: error)
-            }
-          }
-        }
-      }
-      return ()
+    var submission: SingleshotSubmission<T>!
+
+    try iovecs.withUnsafeBufferPointer { pointer in
+      submission = try SingleshotSubmission(
+        manager: self,
+        opcode,
+        fd: fd,
+        address: pointer.baseAddress,
+        length: CUnsignedInt(pointer.count),
+        offset: offset,
+        flags: flags,
+        ioprio: ioprio,
+        moreFlags: moreFlags,
+        handler: handler
+      )
     }
+    return try await submission.submit()
   }
 }
 

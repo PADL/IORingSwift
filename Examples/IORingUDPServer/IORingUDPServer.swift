@@ -38,7 +38,7 @@ public struct IORingUDPServer {
   }
 
   init() throws {
-    ring = try IORing()
+    ring = IORing.shared
     socket = try Socket(ring: ring, domain: sa_family_t(AF_INET), type: SOCK_DGRAM, protocol: 0)
   }
 
@@ -47,9 +47,13 @@ public struct IORingUDPServer {
   }
 
   func run() async throws {
-    let channel = try await socket.receiveMessages(count: 1500)
-    for try await message in channel {
-      print(message)
-    }
+    repeat {
+      do {
+        let channel = try await socket.receiveMessages(count: 1500)
+        for try await message in channel {
+          print(message)
+        }
+      } catch Errno.canceled {}
+    } while true
   }
 }

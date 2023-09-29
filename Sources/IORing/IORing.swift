@@ -26,17 +26,17 @@ import Glibc
 // MARK: - actor
 
 public actor IORing: CustomStringConvertible {
-  public static let shared = try? IORing()
+  public static let shared = try! IORing()
 
-  public struct SqeFlags: OptionSet {
-    public typealias RawValue = UInt8
-    public let rawValue: RawValue
+  struct SqeFlags: OptionSet {
+    typealias RawValue = UInt8
+    let rawValue: RawValue
 
-    public init(rawValue: RawValue) {
+    init(rawValue: RawValue) {
       self.rawValue = rawValue
     }
 
-    public init(link: Bool) {
+    init(link: Bool) {
       if link {
         self = SqeFlags.ioLink
       } else {
@@ -44,15 +44,15 @@ public actor IORing: CustomStringConvertible {
       }
     }
 
-    public static let fixedFile = SqeFlags(rawValue: 1 << IOSQE_FIXED_FILE_BIT)
-    public static let ioDrain = SqeFlags(rawValue: 1 << IOSQE_IO_DRAIN_BIT)
-    public static let ioLink = SqeFlags(rawValue: 1 << IOSQE_IO_LINK_BIT)
-    public static let ioHardLink = SqeFlags(rawValue: 1 << IOSQE_IO_HARDLINK_BIT)
-    public static let async = SqeFlags(rawValue: 1 << IOSQE_ASYNC_BIT)
-    public static let bufferSelect = SqeFlags(rawValue: 1 << IOSQE_BUFFER_SELECT_BIT)
+    static let fixedFile = SqeFlags(rawValue: 1 << IOSQE_FIXED_FILE_BIT)
+    static let ioDrain = SqeFlags(rawValue: 1 << IOSQE_IO_DRAIN_BIT)
+    static let ioLink = SqeFlags(rawValue: 1 << IOSQE_IO_LINK_BIT)
+    static let ioHardLink = SqeFlags(rawValue: 1 << IOSQE_IO_HARDLINK_BIT)
+    static let async = SqeFlags(rawValue: 1 << IOSQE_ASYNC_BIT)
+    static let bufferSelect = SqeFlags(rawValue: 1 << IOSQE_BUFFER_SELECT_BIT)
   }
 
-  private let manager: Manager
+  let manager: Manager
 
   private struct AcceptIoPrio: OptionSet {
     typealias RawValue = UInt16
@@ -74,15 +74,14 @@ public actor IORing: CustomStringConvertible {
   }
 
   public init(
-    depth: Int = 1,
-    flags: UInt32 = 0,
-    suspendIfSubmissionQueueFull: Bool = false
+    depth: Int = 128,
+    flags: UInt32 = 0
   ) throws {
     manager = try Manager(
       depth: CUnsignedInt(depth),
-      flags: flags,
-      suspendIfSubmissionQueueFull: suspendIfSubmissionQueueFull
+      flags: flags
     )
+    manager.ioRing = self
   }
 
   public nonisolated var description: String {
@@ -102,6 +101,10 @@ public actor IORing: CustomStringConvertible {
     let submissionGroup = try await SubmissionGroup<T>(ring: self)
     try await body(submissionGroup)
     return try await submissionGroup.finish()
+  }
+
+  func perform<T>(_ body: @escaping (isolated IORing) async throws -> T) async throws -> T {
+    try await body(self)
   }
 }
 
@@ -215,7 +218,7 @@ private extension IORing {
     bufferOffset: Int, // offset into the fixed buffer
     link: Bool = false
   ) async throws -> SingleshotSubmission<Int> {
-    try await SingleshotSubmission(
+    try SingleshotSubmission(
       manager: manager,
       IORING_OP_READ_FIXED,
       fd: fd,
@@ -256,7 +259,7 @@ private extension IORing {
     bufferOffset: Int, // offset into the fixed buffer
     link: Bool = false
   ) async throws -> SingleshotSubmission<Int> {
-    try await SingleshotSubmission(
+    try SingleshotSubmission(
       manager: manager,
       IORING_OP_WRITE_FIXED,
       fd: fd,
@@ -335,9 +338,9 @@ private extension IORing {
     fd: FileDescriptorRepresentable,
     count: Int,
     link: Bool = false
-  ) async throws -> AsyncThrowingChannel<[UInt8], Error> {
+  ) throws -> AsyncThrowingChannel<[UInt8], Error> {
     var buffer = [UInt8](repeating: 0, count: count)
-    return try await manager.prepareAndSubmitMultishot(
+    return try manager.prepareAndSubmitMultishot(
       IORING_OP_RECV,
       fd: fd,
       address: &buffer[0],
@@ -371,20 +374,27 @@ private extension IORing {
   func io_uring_op_recvmsg_multishot(
     fd: FileDescriptorRepresentable,
     count: Int,
+    capacity: Int,
     flags: UInt32 = 0
-  ) async throws -> AsyncThrowingChannel<Message, Error> {
-    let message = Message(capacity: count)
-    return try await message.withUnsafeMutablePointer { pointer in
-      try await manager.prepareAndSubmitMultishot(
+  ) throws -> AsyncThrowingChannel<Message, Error> {
+    // FIXME: combine message holder buffer registration with multishot registration to avoid extra system call
+    let holder = try MessageHolder(manager: manager, size: count, count: capacity)
+    return try holder.withUnsafeMutablePointer { pointer in
+      try MultishotSubmission(
+        manager: manager,
         IORING_OP_RECVMSG,
         fd: fd,
         address: pointer,
+        flags: SqeFlags.bufferSelect,
         ioprio: RecvSendIoPrio.multishot,
-        moreFlags: flags
-      ) { [message] _ in
-        message.copy()
+        moreFlags: flags,
+        bufferGroup: holder.bufferGroup
+      ) { [holder] cqe in
+        // because the default for multishots is to resubmit when IORING_CQE_F_MORE is unset,
+        // we don't need to deallocate the buffer here. FIXME: do this when channel closes.
+        try holder.receive(id: Int(cqe.flags >> 16), count: Int(cqe.res))
       }
-    }
+    }.submit()
   }
 
   func io_uring_op_sendmsg(
@@ -393,7 +403,7 @@ private extension IORing {
     flags: UInt32 = 0,
     link: Bool = false
   ) async throws {
-    try await message.withUnsafePointer { pointer in
+    try await message.withUnsafeMutablePointer { pointer in
       try await manager.prepareAndSubmit(
         IORING_OP_SENDMSG,
         fd: fd,
@@ -424,8 +434,8 @@ private extension IORing {
   func io_uring_op_multishot_accept(
     fd: FileDescriptorRepresentable,
     flags: UInt32 = 0
-  ) async throws -> AsyncThrowingChannel<FileDescriptorRepresentable, Error> {
-    try await manager.prepareAndSubmitMultishot(
+  ) throws -> AsyncThrowingChannel<FileDescriptorRepresentable, Error> {
+    try manager.prepareAndSubmitMultishot(
       IORING_OP_ACCEPT,
       fd: fd,
       ioprio: AcceptIoPrio.multishot,
@@ -519,8 +529,8 @@ public extension IORing {
   func receive(
     count: Int,
     from fd: FileDescriptorRepresentable
-  ) async throws -> AnyAsyncSequence<[UInt8]> {
-    try await io_uring_op_recv_multishot(fd: fd, count: count).eraseToAnyAsyncSequence()
+  ) throws -> AnyAsyncSequence<[UInt8]> {
+    try io_uring_op_recv_multishot(fd: fd, count: count).eraseToAnyAsyncSequence()
   }
 
   func receive(count: Int, from fd: FileDescriptorRepresentable) async throws -> [UInt8] {
@@ -535,9 +545,14 @@ public extension IORing {
 
   func receiveMessages(
     count: Int,
+    capacity: Int? = nil,
     from fd: FileDescriptorRepresentable
-  ) async throws -> AnyAsyncSequence<Message> {
-    try await io_uring_op_recvmsg_multishot(fd: fd, count: count).eraseToAnyAsyncSequence()
+  ) throws -> AnyAsyncSequence<Message> {
+    try io_uring_op_recvmsg_multishot(
+      fd: fd,
+      count: count,
+      capacity: capacity ?? manager.depth
+    ).eraseToAnyAsyncSequence()
   }
 
   func receiveMessage(count: Int, from fd: FileDescriptorRepresentable) async throws -> Message {
@@ -556,10 +571,10 @@ public extension IORing {
     try await io_uring_op_accept(fd: fd)
   }
 
-  func accept(from fd: FileDescriptorRepresentable) async throws
+  func accept(from fd: FileDescriptorRepresentable) throws
     -> AnyAsyncSequence<FileDescriptorRepresentable>
   {
-    try await io_uring_op_multishot_accept(fd: fd).eraseToAnyAsyncSequence()
+    try io_uring_op_multishot_accept(fd: fd).eraseToAnyAsyncSequence()
   }
 
   func connect(_ fd: FileDescriptorRepresentable, to address: sockaddr_storage) async throws {

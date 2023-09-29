@@ -37,7 +37,7 @@ public struct IORingCat {
   }
 
   init(blockSize: Int = 64) async throws {
-    ring = try IORing()
+    ring = IORing.shared
     self.blockSize = blockSize
 
     try await ring.registerFixedBuffers(count: 1, size: blockSize)

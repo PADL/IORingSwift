@@ -39,7 +39,7 @@ public struct IORingTCPEcho {
 
   init(port: UInt16, bufferSize: Int = 32, backlog: Int = 5) throws {
     self.bufferSize = bufferSize
-    ring = try IORing(depth: 10)
+    ring = IORing.shared
     socket = try Socket(
       ring: ring,
       domain: sa_family_t(AF_INET),

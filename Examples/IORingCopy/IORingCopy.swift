@@ -34,8 +34,7 @@ public struct IORingCopy {
   }
 
   init() async throws {
-    // depth needs to be >= 2 so read and write operation can be submitted in same call
-    ring = try IORing(depth: 2)
+    ring = IORing.shared
     try await ring.registerFixedBuffers(count: 1, size: Self.BlockSize)
   }
 
