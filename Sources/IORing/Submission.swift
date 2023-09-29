@@ -144,7 +144,6 @@ class Submission<T>: CustomStringConvertible {
     opcode = submission.opcode
     sqe = try await manager.getSqe()
     setBlock()
-    precondition(sqe.pointee.user_data != 0)
   }
 
   fileprivate func onCompletion(cqe: UnsafePointer<io_uring_cqe>) {
@@ -211,7 +210,6 @@ final class SingleshotSubmission<T>: Submission<T> {
 
 final class MultishotSubmission<T>: Submission<T> {
   private var channel = AsyncThrowingChannel<T, Error>()
-  private let resubmissionCount: UInt8
 
   override init(
     manager: Manager,
@@ -228,7 +226,6 @@ final class MultishotSubmission<T>: Submission<T> {
     socketAddress: sockaddr_storage? = nil,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) async throws {
-    resubmissionCount = 0
     try await super.init(
       manager: manager,
       opcode,
@@ -246,7 +243,6 @@ final class MultishotSubmission<T>: Submission<T> {
   }
 
   fileprivate init(_ submission: MultishotSubmission) async throws {
-    self.resubmissionCount = submission.resubmissionCount + 1
     try await super.init(submission)
     channel = submission.channel
   }
@@ -257,8 +253,6 @@ final class MultishotSubmission<T>: Submission<T> {
   }
 
   private func resubmit() async {
-    guard self.resubmissionCount < 2 else { return }
-
     do {
       // this will allocate a new SQE with the same channel, fd, opcode and handler
       let resubmission = try await MultishotSubmission(self)
@@ -287,9 +281,11 @@ final class MultishotSubmission<T>: Submission<T> {
           await resubmit()
         }
       }
+/*
     } catch Errno.canceled {
       // for some reason accept() likes to cancel, try to resubmit
       Task { await resubmit() }
+*/
     } catch {
       channel.fail(error)
     }
