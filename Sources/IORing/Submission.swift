@@ -134,6 +134,14 @@ class Submission<T>: CustomStringConvertible {
     }
   }
 
+  fileprivate init(_ submission: Submission) async throws {
+    manager = submission.manager
+    handler = submission.handler
+    fd = submission.fd
+    opcode = submission.opcode
+    sqe = try await manager.getSqe()
+  }
+
   fileprivate func onCompletion(cqe: UnsafePointer<io_uring_cqe>) {
     fatalError("handle(cqe:) must be implemented by subclass")
   }
@@ -199,9 +207,54 @@ final class SingleshotSubmission<T>: Submission<T> {
 final class MultishotSubmission<T>: Submission<T> {
   private var channel = AsyncThrowingChannel<T, Error>()
 
+  override init(
+    manager: Manager,
+    _ opcode: io_uring_op,
+    fd: FileDescriptorRepresentable,
+    address: UnsafeRawPointer? = nil,
+    length: CUnsignedInt = 0,
+    offset: Int = 0,
+    flags: IORing.SqeFlags = IORing.SqeFlags(),
+    ioprio: UInt16 = 0,
+    moreFlags: UInt32 = 0,
+    bufferIndex: UInt16 = 0,
+    bufferGroup: UInt16 = 0,
+    socketAddress: sockaddr_storage? = nil,
+    handler: @escaping @Sendable (io_uring_cqe) throws -> T
+  ) async throws {
+    try await super.init(
+      manager: manager,
+      opcode,
+      fd: fd,
+      address: address,
+      length: length,
+      offset: offset,
+      flags: flags,
+      ioprio: ioprio,
+      bufferIndex: bufferIndex,
+      bufferGroup: bufferGroup,
+      socketAddress: socketAddress,
+      handler: handler
+    )
+  }
+
+  fileprivate init(_ submission: MultishotSubmission) async throws {
+    try await super.init(submission)
+    channel = submission.channel
+  }
+
   func submit() throws -> AsyncThrowingChannel<T, Error> {
     try manager.submit()
     return channel
+  }
+
+  private func resubmit() async {
+    do {
+      let resubmission = try await MultishotSubmission(self)
+      _ = try resubmission.submit()
+    } catch {
+      channel.fail(error)
+    }
   }
 
   override fileprivate func onCompletion(cqe: UnsafePointer<io_uring_cqe>) {
@@ -212,13 +265,12 @@ final class MultishotSubmission<T>: Submission<T> {
         if cqe.pointee.flags & IORING_CQE_F_MORE == 0 {
           // if IORING_CQE_F_MORE is not set, we need to issue a new request
           // try to do this implictily
-          do {
-            _ = try submit()
-          } catch {
-            channel.fail(error)
-          }
+          await resubmit()
         }
       }
+    } catch Errno.canceled {
+      // for some reason accept() likes to cancel, try to resubmit
+      Task { await resubmit() }
     } catch {
       channel.fail(error)
     }
