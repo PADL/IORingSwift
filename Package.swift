@@ -61,11 +61,11 @@ let package = Package(
       dependencies: ["CIOURing"],
       cSettings: [
         .define("\(cqHandlerType.rawValue)=1"),
-        .unsafeFlags(["-I", SwiftLibRoot]),
+        .unsafeFlags(["-I", SwiftLibRoot, "-fsanitize=address"]),
       ],
       cxxSettings: [
         .define("\(cqHandlerType.rawValue)=1"),
-        .unsafeFlags(["-I", SwiftLibRoot]),
+        .unsafeFlags(["-I", SwiftLibRoot, "-fsanitize=address"]),
       ]
     ),
     .target(
