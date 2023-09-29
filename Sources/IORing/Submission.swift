@@ -250,10 +250,19 @@ final class MultishotSubmission<T>: Submission<T> {
 
   private func resubmit() async {
     do {
+      // this will allocate a new SQE with the same channel, fd, opcode and handler
       let resubmission = try await MultishotSubmission(self)
+      Manager
+        .logDebug(
+          message: "resubmitting multishot submission \(resubmission) after cancel received"
+        )
       _ = try resubmission.submit()
     } catch {
-      channel.fail(error)
+      Manager
+        .logDebug(
+          message: "resubmitting multishot submission failed: \(error)"
+        )
+       channel.fail(error)
     }
   }
 
