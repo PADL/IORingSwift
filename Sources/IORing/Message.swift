@@ -141,10 +141,10 @@ final class MessageHolder {
   let bufferGroup: UInt16
 
   init(manager: Manager, size: Int, count: Int) throws {
-    self.size = size
-    let align = MemoryLayout<io_uring_recvmsg_out>.alignment
-    var size = (size + align - 1) & ~(align - 1)
-    size += MemoryLayout<io_uring_recvmsg_out>.size + MemoryLayout<sockaddr_storage>.size
+    if size % MemoryLayout<io_uring_recvmsg_out>.alignment != 0 {
+      throw Errno.invalidArgument
+    }
+    self.size = size + MemoryLayout<io_uring_recvmsg_out>.size + MemoryLayout<sockaddr_storage>.size
     bufferSubmission = try BufferSubmission(manager: manager, size: size, count: count)
     bufferGroup = bufferSubmission.bufferGroup
     try bufferSubmission.submit()
