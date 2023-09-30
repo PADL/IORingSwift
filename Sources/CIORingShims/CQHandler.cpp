@@ -26,7 +26,7 @@ static void invoke_cqe_block(struct io_uring_cqe *cqe) {
   auto block = reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
   assert(block);
   block(cqe);
-  if ((cqe->flags & IORING_CQE_F_MORE) == 0) {
+  if ((cqe->flags & IORING_CQE_F_MORE) == 0 && (cqe->res != -ECANCELED)) {
     fprintf(stderr, "invoke_cqe_block: releasing block %p\n", block);
     _Block_release(block);
     cqe->user_data = ~0ULL; // should never happen, will cause ECANCELED
