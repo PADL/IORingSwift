@@ -18,6 +18,7 @@
 
 void io_uring_sqe_set_block(struct io_uring_sqe *sqe,
                             io_uring_cqe_block block) {
+  fprintf(stderr, "io_uring_sqe_set_block: block %p ioprio (multishot) flags %d\n", block, sqe->ioprio);
   io_uring_sqe_set_data(sqe, _Block_copy(block));
 }
 
@@ -26,6 +27,7 @@ static void invoke_cqe_block(struct io_uring_cqe *cqe) {
   assert(block);
   block(cqe);
   if ((cqe->flags & IORING_CQE_F_MORE) == 0) {
+    fprintf(stderr, "invoke_cqe_block: releasing block %p\n", block);
     _Block_release(block);
     cqe->user_data = ~0ULL; // should never happen, will cause ECANCELED
   }
