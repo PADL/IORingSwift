@@ -134,15 +134,6 @@ class Submission<T>: CustomStringConvertible {
     setBlock()
   }
 
-  fileprivate init(_ submission: Submission) throws {
-    manager = submission.manager
-    handler = submission.handler
-    fd = submission.fd
-    opcode = submission.opcode
-    sqe = try manager.getSqe()
-    setBlock()
-  }
-
   fileprivate func onCompletion(cqe: UnsafeMutablePointer<io_uring_cqe>) {
     fatalError("handle(cqe:) must be implemented by subclass")
   }
@@ -314,6 +305,17 @@ final class BufferSubmission<T>: Submission<()> {
 final class MultishotSubmission<T>: Submission<T> {
   private var channel = AsyncThrowingChannel<T, Error>()
 
+  // state for resubmission
+  private let address: UnsafeRawPointer?
+  private let length: CUnsignedInt
+  private let offset: Int
+  private let flags: IORing.SqeFlags
+  private let ioprio: UInt16
+  private let moreFlags: UInt32
+  private let bufferIndex: UInt16
+  private let bufferGroup: UInt16
+  private let socketAddress: sockaddr_storage?
+
   override init(
     manager: Manager,
     _ opcode: io_uring_op,
@@ -329,6 +331,15 @@ final class MultishotSubmission<T>: Submission<T> {
     socketAddress: sockaddr_storage? = nil,
     @_inheritActorContext handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) throws {
+    self.address = address
+    self.length = length
+    self.offset = offset
+    self.flags = flags
+    self.ioprio = ioprio
+    self.moreFlags = moreFlags
+    self.bufferIndex = bufferIndex
+    self.bufferGroup = bufferGroup
+    self.socketAddress = socketAddress
     try super.init(
       manager: manager,
       opcode,
@@ -345,9 +356,22 @@ final class MultishotSubmission<T>: Submission<T> {
     )
   }
 
-  fileprivate init(_ submission: MultishotSubmission) throws {
-    try super.init(submission)
-    channel = submission.channel
+  private convenience init(_ submission: MultishotSubmission) throws {
+    try self.init(
+      manager: submission.manager,
+      submission.opcode,
+      fd: submission.fd,
+      address: submission.address,
+      length: submission.length,
+      offset: submission.offset,
+      flags: submission.flags,
+      ioprio: submission.ioprio,
+      moreFlags: submission.moreFlags,
+      bufferIndex: submission.bufferIndex,
+      bufferGroup: submission.bufferGroup,
+      socketAddress: submission.socketAddress,
+      handler: submission.handler
+    )
   }
 
   func submit() throws -> AsyncThrowingChannel<T, Error> {
