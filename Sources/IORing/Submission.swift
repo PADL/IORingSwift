@@ -403,11 +403,13 @@ final class MultishotSubmission<T>: Submission<T> {
       let result = try throwingErrno(cqe: cqe, handler)
       Task {
         await channel.send(result)
+/*
         if cqe.flags & IORING_CQE_F_MORE == 0 {
           // if IORING_CQE_F_MORE is not set, we need to issue a new request
           // try to do this implictily
           manager.perform { [self] _ in resubmit() }
         }
+*/
       }
     } catch {
       channel.fail(error)
