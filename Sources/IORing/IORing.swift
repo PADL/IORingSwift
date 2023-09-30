@@ -74,7 +74,7 @@ public actor IORing: CustomStringConvertible {
   }
 
   public init(
-    depth: Int = 8,
+    depth: Int = 128,
     flags: UInt32 = 0
   ) throws {
     manager = try Manager(
