@@ -36,10 +36,9 @@ struct IORingStatistics {
 
   void log() {
     assert(reinterpret_cast<uintptr_t>(block) == sqe.user_data);
-    assert(cqe.user_data == 0 || reinterpret_cast<uintptr_t>(block) == cqe.user_data);
     bool releasing = ((cqe.flags & IORING_CQE_F_MORE) == 0) && (complete == 1);
-    fprintf(stderr, "IOR> bl %p Ts %ld@%lx Tc %ld@%lx Ta %ld opcode %d subm %d comp %d res %d rel %s\n",
-      block,
+    fprintf(stderr, "IOR> bl %p cud %p Ts %ld@%lx Tc %ld@%lx Ta %ld opcode %d subm %d comp %d res %d rel %s\n",
+      block, (void *)(cqe.user_data),
       submitTime - cq_t0, submitThread,
       (completionTime = 0 ? (completionTime - cq_t0) : -1), completionThread,
       accessTime - cq_t0, sqe.opcode, submit, complete, cqe.res, releasing ? "Y" : "N");
