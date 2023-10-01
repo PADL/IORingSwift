@@ -34,14 +34,19 @@ struct IORingStatistics {
   bool submit;
   int complete;
 
+  bool isMultishot() {
+    return (sqe.ioprio & 1);
+  }
   void log() {
     assert(reinterpret_cast<uintptr_t>(block) == sqe.user_data);
     bool releasing = ((cqe.flags & IORING_CQE_F_MORE) == 0) && (complete == 1);
     assert (cqe.user_data == 0 || cqe.user_data == sqe.user_data);
 
-    fprintf(stderr, "IOR%c bl %p Ts %lds[thr %lx] Tc %lds[thr %lx] Ta %lds opcode %d result %d %s%s[%d]%s\n",
+    fprintf(stderr, "%s %c bl %p flags %04x/%04x Ts %lds[thr %lx] Tc %lds[thr %lx] Ta %lds opcode %d result %d %s%s[%d]%s\n",
+      isMultishot() ? "MS" : "SS",
       complete ? '<' : '>',
       block,
+      sqe.flags, cqe.flags,
       submitTime - cq_t0, submitThread,
       (completionTime = 0 ? (completionTime - cq_t0) : 0), completionThread,
       accessTime - cq_t0, sqe.opcode, cqe.res,
