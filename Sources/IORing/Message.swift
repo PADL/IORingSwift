@@ -29,7 +29,7 @@ public struct Control {
   public var data: [UInt8]
 }
 
-public final class Message {
+public final class Message: @unchecked Sendable {
   // FIXME: again, this is a workaround for _XOPEN_SOURCE=500 clang importer issues
   public var name: [UInt8] {
     get {
@@ -75,7 +75,7 @@ public final class Message {
   private var iov_storage = iovec()
 
   func withUnsafeMutablePointer<T>(
-    _ body: (UnsafeMutablePointer<msghdr>) async throws
+    @_inheritActorContext _ body: (UnsafeMutablePointer<msghdr>) async throws
       -> T
   ) async rethrows
     -> T
@@ -140,32 +140,27 @@ final class MessageHolder {
   private var bufferSubmission: BufferSubmission<UInt8>
   let bufferGroup: UInt16
 
-  init(manager: Manager, size: Int, count: Int) throws {
+  init(ring: IORing, size: Int, count: Int) async throws {
     if size % MemoryLayout<io_uring_recvmsg_out>.alignment != 0 {
       throw Errno.invalidArgument
     }
     self.size = size + MemoryLayout<io_uring_recvmsg_out>.size + MemoryLayout<sockaddr_storage>.size
-    bufferSubmission = try BufferSubmission(manager: manager, size: size, count: count)
+    bufferSubmission = try await BufferSubmission(ring: ring, size: size, count: count)
     bufferGroup = bufferSubmission.bufferGroup
-    try bufferSubmission.submit()
-  }
-
-  private func removeBuffer() {
-    let manager = bufferSubmission.manager
-    let count = bufferSubmission.count
-    let bufferGroup = bufferGroup
-    manager.perform { ring in
-      let submission = try BufferSubmission<UInt8>(
-        manager: ring.manager,
-        removing: count,
-        from: bufferGroup
-      )
-      try submission.submit()
-    }
+    try await bufferSubmission.submit()
   }
 
   deinit {
-    removeBuffer()
+    let ring = bufferSubmission.ring
+    let count = bufferSubmission.count
+    let bufferGroup = bufferGroup
+    Task {
+      try await BufferSubmission<UInt8>(
+        ring: ring,
+        removing: count,
+        from: bufferGroup
+      ).submit()
+    }
   }
 
   func receive(id bufferID: Int, count: Int? = nil) throws -> Message {
@@ -180,8 +175,8 @@ final class MessageHolder {
 
       // make the buffer available for reuse once we've copied the contents
       defer {
-        bufferSubmission.manager.perform { [self] _ in
-          try bufferSubmission.reprovideAndSubmit(id: bufferID)
+        Task { @IORing in
+          try await bufferSubmission.reprovideAndSubmit(id: bufferID)
         }
       }
 
@@ -206,12 +201,13 @@ final class MessageHolder {
     }
   }
 
+  @IORing
   func withUnsafeMutablePointer<T>(
-    _ body: (UnsafeMutablePointer<msghdr>) throws
+    _ body: (UnsafeMutablePointer<msghdr>) async throws
       -> T
-  ) rethrows
+  ) async rethrows
     -> T
   {
-    try body(&storage)
+    try await body(&storage)
   }
 }

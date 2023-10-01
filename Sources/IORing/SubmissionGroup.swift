@@ -53,11 +53,12 @@ actor SubmissionGroup<T> {
   /// its continuation is registered in the SQE `user_data` otherwise the group
   /// will never be submitted.
   ///
+  @IORing
   func enqueue(submission: SingleshotSubmission<T>) {
     submission.group = self
-    submissions.append(submission)
-    queue.enqueue { _ in
+    queue.enqueue { group in
       await submission.enqueue()
+      group.submissions.append(submission)
     }
   }
 
