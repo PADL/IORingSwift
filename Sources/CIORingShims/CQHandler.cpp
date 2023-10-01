@@ -50,7 +50,7 @@ struct IORingStatistics {
       block, (void *)sqe.user_data, (void *)cqe.user_data,
       sqe.flags, cqe.flags,
       submitTime - cq_t0, submitThread,
-      (completionTime == 0 ? (completionTime - cq_t0) : 0), completionThread,
+      (completionTime > 0 ? (completionTime - cq_t0) : 0), completionThread,
       accessTime - cq_t0, sqe.opcode, cqe.res,
       submit ? "SUBMITTED/" : "/",
       complete ? "COMPLETED/" : "/", complete,
@@ -85,7 +85,7 @@ IORingStatistics::submitted(struct io_uring_sqe *sqe, io_uring_cqe_block block) 
 void
 IORingStatistics::completed(struct io_uring_cqe *cqe, bool &doubleComplete) {
   if (!cq_stats.contains(cqe->user_data)) {
-    fprintf(stderr, "IORingStatistics block %p cqe->user_data not registered!\n", (void *)cqe->user_data);
+    fprintf(stderr, "IORingStatistics userdata %p flags %04x res %d UNREGISTERED at time %ld!!!\n", (void *)cqe->user_data, cqe->flags, cqe->res, time(nullptr) - cq_t0);
     return;
   }
 
