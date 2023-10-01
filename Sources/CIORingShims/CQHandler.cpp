@@ -37,22 +37,17 @@ struct IORingStatistics {
   void log() {
     assert(reinterpret_cast<uintptr_t>(block) == sqe.user_data);
     bool releasing = ((cqe.flags & IORING_CQE_F_MORE) == 0) && (complete == 1);
-    bool mismatch = (cqe.user_data != 0 && cqe.user_data != sqe.user_data);
+    assert (cqe.user_data == 0 || cqe.user_data == sqe.user_data);
 
-    if (!mismatch) {
-    fprintf(stderr, "IOR> bl %p Ts %ld@%lx Tc %ld@%lx Ta %ld opcode %d subm %d comp %d res %d rel %s\n",
+    fprintf(stderr, "IOR%c bl %p Ts %lds[thr %lx] Tc %lds[thr %lx] Ta %lds opcode %d result %d %s%s[%d]%s\n",
+      complete ? '<' : '>',
       block,
       submitTime - cq_t0, submitThread,
-      (completionTime = 0 ? (completionTime - cq_t0) : -1), completionThread,
-      accessTime - cq_t0, sqe.opcode, submit, complete, cqe.res, releasing ? "Y" : "N");
-    } else {
-    fprintf(stderr, "IOR! bl %p Ts %ld@%lx Tc %ld@%lx Ta %ld opcode %d subm %d comp %d res %d rel %s CUD! %p\n",
-      block,
-      submitTime - cq_t0, submitThread,
-      (completionTime = 0 ? (completionTime - cq_t0) : -1), completionThread,
-      accessTime - cq_t0, sqe.opcode, submit, complete, cqe.res, releasing ? "Y" : "N", (void *)cqe.user_data);
-
-    }
+      (completionTime = 0 ? (completionTime - cq_t0) : 0), completionThread,
+      accessTime - cq_t0, sqe.opcode, cqe.res,
+      submit ? "SUBMITTED/" : "/",
+      complete ? "COMPLETED/" : "/", complete,
+      releasing ? "RELEASING/" : "/");
   }
 
   static void submitted(struct io_uring_sqe *sqe, io_uring_cqe_block block);
@@ -74,14 +69,19 @@ IORingStatistics::submitted(struct io_uring_sqe *sqe, io_uring_cqe_block block) 
   stat.sqe = *sqe;
   stat.block = block;
   stat.submitThread = pthread_self();
-  stat.log();
   stat.submit = true;
+  stat.log();
   auto guard = std::lock_guard(cq_mutex);
   cq_stats[reinterpret_cast<uintptr_t>(block)] = stat;
 }
 
 void
 IORingStatistics::completed(struct io_uring_cqe *cqe, bool &doubleComplete) {
+  if (!cq_stats.contains(cqe->user_data)) {
+    fprintf(stderr, "IORingStatistics block %p cqe->user_data not registered!\n", (void *)cqe->user_data);
+    return;
+  }
+
   auto &stat = cq_stats[cqe->user_data];
   time(&stat.accessTime);
   doubleComplete = stat.complete > 0;
