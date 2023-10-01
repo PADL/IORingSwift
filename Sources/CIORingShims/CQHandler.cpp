@@ -39,14 +39,14 @@ struct IORingStatistics {
     bool releasing = ((cqe.flags & IORING_CQE_F_MORE) == 0) && (complete == 1);
     bool mismatch = (cqe.user_data != 0 && cqe.user_data != sqe.user_data);
 
-    if (mismatch) {
+    if (!mismatch) {
     fprintf(stderr, "IOR> bl %p Ts %ld@%lx Tc %ld@%lx Ta %ld opcode %d subm %d comp %d res %d rel %s\n",
       block,
       submitTime - cq_t0, submitThread,
       (completionTime = 0 ? (completionTime - cq_t0) : -1), completionThread,
       accessTime - cq_t0, sqe.opcode, submit, complete, cqe.res, releasing ? "Y" : "N");
     } else {
-    fprintf(stderr, "IOR! bl %p Ts %ld@%lx Tc %ld@%lx Ta %ld opcode %d subm %d comp %d res %d rel %s cqe %p\n",
+    fprintf(stderr, "IOR! bl %p Ts %ld@%lx Tc %ld@%lx Ta %ld opcode %d subm %d comp %d res %d rel %s CUD! %p\n",
       block,
       submitTime - cq_t0, submitThread,
       (completionTime = 0 ? (completionTime - cq_t0) : -1), completionThread,
