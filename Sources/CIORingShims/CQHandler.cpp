@@ -38,14 +38,16 @@ struct IORingStatistics {
     return (sqe.ioprio & 1);
   }
   void log() {
-    assert(reinterpret_cast<uintptr_t>(block) == sqe.user_data);
+    if (reinterpret_cast<uintptr_t>(block) != sqe.user_data) {
+      fprintf(stderr, "!! block %p doesn't equal submission user data %p, how did this happen?\n", block, (void *)sqe.user_data);
+    }
     bool releasing = ((cqe.flags & IORING_CQE_F_MORE) == 0) && (complete == 1);
     assert (cqe.user_data == 0 || cqe.user_data == sqe.user_data);
 
-    fprintf(stderr, "%s %c bl %p flags %04x/%04x Ts %lds[thr %lx] Tc %lds[thr %lx] Ta %lds opcode %d result %d %s%s[%d]%s\n",
+    fprintf(stderr, "%s %c bl %p cu %p su %p flags %04x/%04x Ts %lds[thr %lx] Tc %lds[thr %lx] Ta %lds opcode %d result %d %s%s[%d]%s\n",
       isMultishot() ? "MS" : "SS",
       complete ? '<' : '>',
-      block,
+      block, (void *)sqe.user_data, (void *)cqe.user_data,
       sqe.flags, cqe.flags,
       submitTime - cq_t0, submitThread,
       (completionTime = 0 ? (completionTime - cq_t0) : 0), completionThread,
