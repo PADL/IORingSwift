@@ -16,18 +16,89 @@
 
 #include "CQHandlerInternal.hpp"
 
+#include <map>
+#include <mutex>
+#include <cassert>
+
+static time_t cq_t0 = (time_t)-1;
+
+struct IORingStatistics {
+  time_t submitTime;
+  pthread_t submitThread;
+  time_t completionTime;
+  pthread_t completionThread;
+  time_t accessTime;
+  struct io_uring_sqe sqe;
+  struct io_uring_cqe cqe;
+  void *block;
+  bool submit;
+  int complete;
+
+  void log() {
+    assert(reinterpret_cast<uintptr_t>(block) == sqe.user_data);
+    assert(cqe.user_data == 0 || reinterpret_cast<uintptr_t>(block) == cqe.user_data);
+    bool releasing = ((cqe.flags & IORING_CQE_F_MORE) == 0) && (complete == 1);
+    fprintf(stderr, "IOR> bl %p Ts %ld@%lx Tc %ld@%lx Ta %ld opcode %d subm %d comp %d res %d rel %s\n",
+      block,
+      submitTime - cq_t0, submitThread,
+      (completionTime = 0 ? (completionTime - cq_t0) : -1), completionThread,
+      accessTime - cq_t0, sqe.opcode, submit, complete, cqe.res, releasing ? "Y" : "N");
+  }
+
+  static void submitted(struct io_uring_sqe *sqe, io_uring_cqe_block block);
+  static void completed(struct io_uring_cqe *cqe, bool &doubleComplete);
+};
+
+static std::map<uintptr_t, IORingStatistics> cq_stats;
+static std::mutex cq_mutex;
+
+void
+IORingStatistics::submitted(struct io_uring_sqe *sqe, io_uring_cqe_block block) {
+  IORingStatistics stat{};
+
+  if (cq_t0 == -1)
+    time(&cq_t0);
+
+  time(&stat.accessTime);
+  time(&stat.submitTime);
+  stat.sqe = *sqe;
+  stat.block = block;
+  stat.submitThread = pthread_self();
+  stat.log();
+  stat.submit = true;
+  auto guard = std::lock_guard(cq_mutex);
+  cq_stats[reinterpret_cast<uintptr_t>(block)] = stat;
+}
+
+void
+IORingStatistics::completed(struct io_uring_cqe *cqe, bool &doubleComplete) {
+  auto &stat = cq_stats[cqe->user_data];
+  time(&stat.accessTime);
+  doubleComplete = stat.complete > 0;
+  if (!doubleComplete) {
+    time(&stat.completionTime);
+    stat.completionThread = pthread_self();
+    stat.cqe = *cqe;
+  } else {
+    fprintf(stderr, "IORingStatistics double complete! user_data %p res %d flags %d thread %lx\n", reinterpret_cast<void *>(cqe->user_data), cqe->res, cqe->flags, pthread_self());
+  }
+  stat.complete++;
+  stat.log();
+}
+
 void io_uring_sqe_set_block(struct io_uring_sqe *sqe,
                             io_uring_cqe_block block) {
-  fprintf(stderr, "io_uring_sqe_set_block: block %p ioprio (multishot) flags %d\n", block, sqe->ioprio);
   io_uring_sqe_set_data(sqe, _Block_copy(block));
+  IORingStatistics::submitted(sqe, block);
 }
 
 static void invoke_cqe_block(struct io_uring_cqe *cqe) {
   auto block = reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
   assert(block);
+  bool doubleComplete;
+  IORingStatistics::completed(cqe, doubleComplete);
   block(cqe);
-  if ((cqe->flags & IORING_CQE_F_MORE) == 0) {
-    fprintf(stderr, "invoke_cqe_block: releasing block %p status %d\n", block, cqe->res);
+  if ((cqe->flags & IORING_CQE_F_MORE) == 0 && !doubleComplete) {
     _Block_release(block);
     cqe->user_data = ~0ULL; // should never happen, will cause ECANCELED
   }
