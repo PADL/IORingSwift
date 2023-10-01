@@ -50,7 +50,7 @@ struct IORingStatistics {
       block, (void *)sqe.user_data, (void *)cqe.user_data,
       sqe.flags, cqe.flags,
       submitTime - cq_t0, submitThread,
-      (completionTime = 0 ? (completionTime - cq_t0) : 0), completionThread,
+      (completionTime == 0 ? (completionTime - cq_t0) : 0), completionThread,
       accessTime - cq_t0, sqe.opcode, cqe.res,
       submit ? "SUBMITTED/" : "/",
       complete ? "COMPLETED/" : "/", complete,
