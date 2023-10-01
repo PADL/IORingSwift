@@ -94,7 +94,12 @@ class Submission<T>: CustomStringConvertible, @unchecked Sendable {
   /// because actors are reentrant, `setBlock()` must be called immediately after
   /// the io_uring assigned a SQE (or, at least before any suspension point)
   private func setBlock() {
-    io_uring_sqe_set_block(sqe, onCompletion)
+    io_uring_sqe_set_block(sqe) { cqe in
+      let cqe = cqe.pointee
+      Task { @IORing in
+        await self.onCompletion(cqe: cqe)
+      }
+    }
   }
 
   init(
@@ -136,7 +141,7 @@ class Submission<T>: CustomStringConvertible, @unchecked Sendable {
     setBlock()
   }
 
-  fileprivate func onCompletion(cqe: UnsafeMutablePointer<io_uring_cqe>) {
+  fileprivate func onCompletion(cqe: io_uring_cqe) async {
     fatalError("handle(cqe:) must be implemented by subclass")
   }
 
@@ -187,14 +192,12 @@ final class SingleshotSubmission<T>: Submission<T> {
     throw Errno.invalidArgument
   }
 
-  override fileprivate func onCompletion(cqe: UnsafeMutablePointer<io_uring_cqe>) {
-    Task { @IORing in
-      do {
-        try await channel.send(throwingErrno(cqe: cqe.pointee, handler))
-        channel.finish()
-      } catch {
-        channel.fail(error)
-      }
+  override fileprivate func onCompletion(cqe: io_uring_cqe) async {
+    do {
+      try await channel.send(throwingErrno(cqe: cqe, handler))
+      channel.finish()
+    } catch {
+      channel.fail(error)
     }
   }
 }
@@ -239,7 +242,7 @@ final class BufferSubmission<T>: Submission<()> {
     ) { _ in }
   }
 
-  override fileprivate func onCompletion(cqe: UnsafeMutablePointer<io_uring_cqe>) {}
+  override fileprivate func onCompletion(cqe: io_uring_cqe) async {}
 
   func submit() async throws {
     try await ring.submit()
@@ -399,17 +402,14 @@ final class MultishotSubmission<T>: Submission<T> {
     }
   }
 
-  override fileprivate func onCompletion(cqe: UnsafeMutablePointer<io_uring_cqe>) {
+  override fileprivate func onCompletion(cqe: io_uring_cqe) async {
     do {
-      let cqe = cqe.pointee
       let result = try throwingErrno(cqe: cqe, handler)
-      Task {
-        await channel.send(result)
-        if cqe.flags & IORING_CQE_F_MORE == 0 {
-          // if IORING_CQE_F_MORE is not set, we need to issue a new request
-          // try to do this implictily
-          Task { await resubmit() }
-        }
+      await channel.send(result)
+      if cqe.flags & IORING_CQE_F_MORE == 0 {
+        // if IORING_CQE_F_MORE is not set, we need to issue a new request
+        // try to do this implictily
+        await resubmit()
       }
     } catch {
       channel.fail(error)
