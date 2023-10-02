@@ -210,9 +210,9 @@ public actor IORing: CustomStringConvertible {
 
   deinit {
     io_uring_deinit_cq_handler(cqHandle, &ring)
-    if fixedBuffers != nil {
-      io_uring_unregister_buffers(&ring)
-    }
+    // FIXME: checking if we have registered buffers is an error in Swift 6.0
+    // because IORing.FixedBuffer is non-sendable, is this safe to do anyway?
+    io_uring_unregister_buffers(&ring)
     // FIXME: where are unhandled completion blocks deallocated?
     io_uring_queue_exit(&ring)
   }

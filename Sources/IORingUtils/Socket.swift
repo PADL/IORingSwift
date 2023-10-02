@@ -19,8 +19,8 @@ import AsyncExtensions
 import Glibc
 import IORing
 
-public struct Socket: CustomStringConvertible, Equatable, Hashable {
-  private var fileHandle: FileHandle?
+public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
+  private let fileHandle: FileHandle!
   private let domain: sa_family_t
   private let ring: IORing
 
@@ -246,12 +246,6 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable {
       message: message,
       to: fileHandle
     )
-  }
-
-  public mutating func close() async throws {
-    guard fileHandle != nil else { throw Errno.badFileDescriptor }
-    // just release reference, in case there are outstanding operations
-    fileHandle = nil
   }
 
   public var isClosed: Bool {
@@ -631,7 +625,7 @@ public extension sockaddr_storage {
   }
 }
 
-public struct AnySocketAddress {
+public struct AnySocketAddress: Sendable {
   private var storage: sockaddr_storage
 
   public init(_ sa: any SocketAddress) {

@@ -76,7 +76,7 @@ public final class Message: @unchecked Sendable {
   private var iov_storage = iovec()
 
   func withUnsafeMutablePointer<T>(
-    _ body: (UnsafeMutablePointer<msghdr>) async throws
+    _ body: @Sendable (UnsafeMutablePointer<msghdr>) async throws
       -> T
   ) async rethrows
     -> T
@@ -88,7 +88,18 @@ public final class Message: @unchecked Sendable {
     self.address = address
     self.buffer = buffer
     self.flags = flags
-    init_storage()
+    Swift.withUnsafeMutablePointer(to: &self.address) { pointer in
+      // forces didSet to be called
+      _ = pointer
+    }
+    self.buffer.withUnsafeMutableBytes { bytes in
+      // forces didSet to be called
+      _ = bytes
+    }
+    Swift.withUnsafeMutablePointer(to: &iov_storage) { iov_storage in
+      storage.msg_iov = iov_storage
+      storage.msg_iovlen = 1
+    }
   }
 
   func copy() -> Self {
@@ -118,25 +129,10 @@ public final class Message: @unchecked Sendable {
     // special case for receiving messages
     storage.msg_namelen = socklen_t(MemoryLayout<sockaddr_storage>.size)
   }
-
-  func init_storage() {
-    Swift.withUnsafeMutablePointer(to: &address) { pointer in
-      // forces didSet to be called
-      _ = pointer
-    }
-    buffer.withUnsafeMutableBytes { bytes in
-      // forces didSet to be called
-      _ = bytes
-    }
-    Swift.withUnsafeMutablePointer(to: &iov_storage) { iov_storage in
-      storage.msg_iov = iov_storage
-      storage.msg_iovlen = 1
-    }
-  }
 }
 
 // TODO: support for CMSG
-final class MessageHolder {
+final class MessageHolder: @unchecked Sendable {
   private let size: Int
   private var storage = msghdr()
   private var address = sockaddr_storage()
@@ -209,8 +205,8 @@ final class MessageHolder {
   }
 
   @IORing
-  func withUnsafeMutablePointer<T>(
-    _ body: (UnsafeMutablePointer<msghdr>) async throws
+  func withUnsafeMutablePointer<T: Sendable>(
+    _ body: @Sendable (UnsafeMutablePointer<msghdr>) async throws
       -> T
   ) async rethrows
     -> T
