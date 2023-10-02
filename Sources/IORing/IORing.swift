@@ -187,7 +187,7 @@ public actor IORing: CustomStringConvertible {
   }
 
   // FIXME: currently only supporting a single buffer size
-  public func registerFixedBuffers(count: Int, size: Int) async throws {
+  public func registerFixedBuffers(count: Int, size: Int) throws {
     guard fixedBuffers == nil else {
       throw Errno.fileExists
     }
