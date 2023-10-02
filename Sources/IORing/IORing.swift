@@ -32,7 +32,7 @@ public actor IORingActor {
 
 @IORingActor
 public final class IORing: CustomStringConvertible {
-  public static nonisolated let shared = try! IORing()
+  public nonisolated static let shared = try! IORing(entries: nil, flags: 0, shared: true)
 
   private static let DefaultIORingQueueEntries = 128
 
@@ -42,6 +42,7 @@ public final class IORing: CustomStringConvertible {
   private var fixedBuffers: FixedBuffer?
   private var nextBufferGroup: UInt16 = 1
   private let entries: Int
+  private let ringFd: Int32
 
   final class FixedBuffer {
     let count: Int
@@ -164,7 +165,7 @@ public final class IORing: CustomStringConvertible {
     debugPrint("IORing.\(functionName): \(message)")
   }
 
-  private static nonisolated func getIORingQueueEntries() -> Int {
+  private nonisolated static func getIORingQueueEntries() -> Int {
     if let ioRingQueueEntriesEnvVar = getenv("SWIFT_IORING_QUEUE_ENTRIES"),
        let entries = Int(String(cString: ioRingQueueEntriesEnvVar))
     {
@@ -174,15 +175,26 @@ public final class IORing: CustomStringConvertible {
     }
   }
 
-  public nonisolated init(entries: Int? = nil, flags: UInt32 = 0) throws {
+  public convenience nonisolated init(entries: Int? = nil, flags: UInt32 = 0) throws {
+    try self.init(entries: entries, flags: flags, shared: false)
+  }
+
+  private nonisolated init(entries: Int?, flags: UInt32, shared: Bool) throws {
     let entries = entries ?? IORing.getIORingQueueEntries()
     var ring = io_uring()
+    var params = io_uring_params()
+
+    if !shared {
+      params.flags |= IORING_SETUP_ATTACH_WQ
+      params.wq_fd = UInt32(IORing.shared.ringFd)
+    }
 
     try Errno.throwingErrno {
-      io_uring_queue_init(CUnsignedInt(entries), &ring, flags)
+      io_uring_queue_init_params(CUnsignedInt(entries), &ring, &params)
     }
     self.entries = entries
     self.ring = ring
+    ringFd = ring.ring_fd
 
     let error = io_uring_init_cq_handler(&cqHandle, &self.ring)
     guard error == 0 else {
@@ -933,7 +945,7 @@ public extension IORing {
 // MARK: - conformances
 
 extension IORing: Equatable {
-  public static nonisolated func == (lhs: IORing, rhs: IORing) -> Bool {
+  public nonisolated static func == (lhs: IORing, rhs: IORing) -> Bool {
     ObjectIdentifier(lhs) == ObjectIdentifier(rhs)
   }
 }
