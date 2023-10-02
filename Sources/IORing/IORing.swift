@@ -169,7 +169,7 @@ public actor IORing: CustomStringConvertible {
     }
   }
 
-  public init(entries: Int? = nil, flags: UInt32 = 0) throws {
+  init(entries: Int? = nil, flags: UInt32 = 0) throws {
     let entries = entries ?? IORing.getIORingQueueEntries()
     var ring = io_uring()
 
