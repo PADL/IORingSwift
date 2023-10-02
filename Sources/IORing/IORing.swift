@@ -103,7 +103,7 @@ public actor IORing: CustomStringConvertible {
     }
   }
 
-  init(entries: Int? = nil, flags: UInt32 = 0) throws {
+  public init(entries: Int? = nil, flags: UInt32 = 0) throws {
     let entries = entries ?? IORing.getIORingQueueEntries()
     var ring = io_uring()
 
@@ -151,7 +151,15 @@ public actor IORing: CustomStringConvertible {
     })
   }
 
-  func prepareAndSubmit<T>(
+  func withSubmissionGroup<T>(_ body: (
+    SubmissionGroup<T>
+  ) async throws -> ()) async throws -> [T] {
+    let submissionGroup = try await SubmissionGroup<T>(ring: self)
+    try await body(submissionGroup)
+    return try await submissionGroup.finish()
+  }
+
+  fileprivate func prepareAndSubmit<T>(
     _ opcode: io_uring_op,
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
@@ -182,7 +190,7 @@ public actor IORing: CustomStringConvertible {
     ).submit()
   }
 
-  func prepareAndSubmitMultishot<T>(
+  fileprivate func prepareAndSubmitMultishot<T>(
     _ opcode: io_uring_op,
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
@@ -215,11 +223,11 @@ public actor IORing: CustomStringConvertible {
 // MARK: - fixed buffers
 
 extension IORing {
-  var hasRegisteredFixedBuffers: Bool {
+  private var hasRegisteredFixedBuffers: Bool {
     iov != nil
   }
 
-  var registeredFixedBuffersCount: Int {
+  private var registeredFixedBuffersCount: Int {
     get throws {
       guard let iov else {
         throw Errno.invalidArgument
@@ -229,7 +237,7 @@ extension IORing {
     }
   }
 
-  var registeredFixedBuffersSize: Int {
+  private var registeredFixedBuffersSize: Int {
     get throws {
       guard let buffers else {
         throw Errno.invalidArgument
@@ -237,6 +245,56 @@ extension IORing {
 
       return buffers[0].count
     }
+  }
+
+  private func unregisterFixedBuffers() throws {
+    if !hasRegisteredFixedBuffers {
+      throw Errno.invalidArgument
+    }
+
+    try Errno.throwingErrno {
+      io_uring_unregister_buffers(&self.ring)
+    }
+
+    buffers = nil
+    iov = nil
+  }
+
+  private func validateFixedBuffer(at index: UInt16, length: Int, offset: Int) throws {
+    guard let iov, index < iov.count else {
+      throw Errno.invalidArgument
+    }
+
+    guard offset + length <= iov[Int(index)].iov_len else {
+      throw Errno.outOfRange
+    }
+  }
+
+  private func unsafePointerForFixedBuffer(at index: UInt16, offset: Int) -> UnsafeMutableRawPointer {
+    precondition(hasRegisteredFixedBuffers)
+    precondition(try! index < registeredFixedBuffersCount)
+
+    return iov![Int(index)].iov_base! + offset
+  }
+
+  private func buffer(at index: UInt16, range: Range<Int>) -> ArraySlice<UInt8> {
+    precondition(hasRegisteredFixedBuffers)
+    precondition(try! index < registeredFixedBuffersCount)
+    precondition(try! range.upperBound <= registeredFixedBuffersSize)
+
+    return buffers![Int(index)][range]
+  }
+
+  private func withFixedBufferSlice<T>(
+    at index: UInt16,
+    range: Range<Int>,
+    _ body: (inout ArraySlice<UInt8>) throws -> T
+  ) rethrows -> T {
+    precondition(hasRegisteredFixedBuffers)
+    precondition(try! index < registeredFixedBuffersCount)
+    precondition(try! range.upperBound <= registeredFixedBuffersSize)
+
+    return try body(&buffers![Int(index)][range])
   }
 
   // FIXME: currently only supporting a single buffer size
@@ -265,68 +323,6 @@ extension IORing {
 
     self.buffers = buffers
     self.iov = iov
-  }
-
-  func unregisterFixedBuffers() throws {
-    if !hasRegisteredFixedBuffers {
-      throw Errno.invalidArgument
-    }
-
-    try Errno.throwingErrno {
-      io_uring_unregister_buffers(&self.ring)
-    }
-
-    buffers = nil
-    iov = nil
-  }
-
-  func validateFixedBuffer(at index: UInt16, length: Int, offset: Int) throws {
-    guard let iov, index < iov.count else {
-      throw Errno.invalidArgument
-    }
-
-    guard offset + length <= iov[Int(index)].iov_len else {
-      throw Errno.outOfRange
-    }
-  }
-
-  func unsafePointerForFixedBuffer(at index: UInt16, offset: Int) -> UnsafeMutableRawPointer {
-    precondition(hasRegisteredFixedBuffers)
-    precondition(try! index < registeredFixedBuffersCount)
-
-    return iov![Int(index)].iov_base! + offset
-  }
-
-  func buffer(at index: UInt16, range: Range<Int>) -> ArraySlice<UInt8> {
-    precondition(hasRegisteredFixedBuffers)
-    precondition(try! index < registeredFixedBuffersCount)
-    precondition(try! range.upperBound <= registeredFixedBuffersSize)
-
-    return buffers![Int(index)][range]
-  }
-
-  func withFixedBufferSlice<T>(
-    at index: UInt16,
-    range: Range<Int>,
-    _ body: (inout ArraySlice<UInt8>) throws -> T
-  ) rethrows -> T {
-    precondition(hasRegisteredFixedBuffers)
-    precondition(try! index < registeredFixedBuffersCount)
-    precondition(try! range.upperBound <= registeredFixedBuffersSize)
-
-    return try body(&buffers![Int(index)][range])
-  }
-
-  private func withSubmissionGroup<T>(_ body: (
-    SubmissionGroup<T>
-  ) async throws -> ()) async throws -> [T] {
-    let submissionGroup = try await SubmissionGroup<T>(ring: self)
-    try await body(submissionGroup)
-    return try await submissionGroup.finish()
-  }
-
-  func perform<T>(_ body: @escaping (isolated IORing) async throws -> T) async throws -> T {
-    try await body(self)
   }
 }
 

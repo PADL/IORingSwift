@@ -256,7 +256,7 @@ final class BufferSubmission<U>: Submittable {
   let count: Int
   let size: Int
   let bufferGroup: UInt16
-  let buffer: UnsafeMutablePointer<U>?
+  let buffer: UnsafeMutablePointer<U>!
   let deallocate: Bool
 
   func onCompletion(cqe: io_uring_cqe) async {}
