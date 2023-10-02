@@ -75,7 +75,7 @@ public final class Message: @unchecked Sendable {
   private var iov_storage = iovec()
 
   func withUnsafeMutablePointer<T>(
-    @_inheritActorContext _ body: (UnsafeMutablePointer<msghdr>) async throws
+    _ body: (UnsafeMutablePointer<msghdr>) async throws
       -> T
   ) async rethrows
     -> T
