@@ -583,6 +583,9 @@ private extension IORing {
       ) { [holder] cqe in
         // because the default for multishots is to resubmit when IORING_CQE_F_MORE is unset,
         // we don't need to deallocate the buffer here. FIXME: do this when channel closes.
+        // we know that handlers are always executed in an @IORing actor's execution context
+        // so it's safe to access the holder's buffer. But we should make this more explicit
+        // by making the callback take an async function.
         try holder.receive(id: Int(cqe.flags >> 16), count: Int(cqe.res))
       }
     }.submit()
