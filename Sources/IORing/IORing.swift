@@ -26,7 +26,12 @@ import Glibc
 // MARK: - actor
 
 @globalActor
-public actor IORing: CustomStringConvertible {
+public actor IORingActor {
+  public static let shared = IORingActor()
+}
+
+@IORingActor
+public final class IORing: CustomStringConvertible, @unchecked Sendable {
   public static let shared = try! IORing()
 
   private static let DefaultIORingQueueEntries = 128
@@ -159,7 +164,7 @@ public actor IORing: CustomStringConvertible {
     debugPrint("IORing.\(functionName): \(message)")
   }
 
-  private static func getIORingQueueEntries() -> Int {
+  private static nonisolated func getIORingQueueEntries() -> Int {
     if let ioRingQueueEntriesEnvVar = getenv("SWIFT_IORING_QUEUE_ENTRIES"),
        let entries = Int(String(cString: ioRingQueueEntriesEnvVar))
     {
@@ -169,7 +174,7 @@ public actor IORing: CustomStringConvertible {
     }
   }
 
-  init(entries: Int? = nil, flags: UInt32 = 0) throws {
+  public nonisolated init(entries: Int? = nil, flags: UInt32 = 0) throws {
     let entries = entries ?? IORing.getIORingQueueEntries()
     var ring = io_uring()
 
@@ -291,8 +296,8 @@ public actor IORing: CustomStringConvertible {
     bufferIndex: UInt16 = 0,
     bufferGroup: UInt16 = 0,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
-  ) async throws -> AsyncThrowingChannel<T, Error> {
-    try await MultishotSubmission(
+  ) throws -> AsyncThrowingChannel<T, Error> {
+    try MultishotSubmission(
       ring: self,
       opcode,
       fd: fd,
@@ -519,9 +524,9 @@ private extension IORing {
     fd: FileDescriptorRepresentable,
     count: Int,
     link: Bool = false
-  ) async throws -> AsyncThrowingChannel<[UInt8], Error> {
+  ) throws -> AsyncThrowingChannel<[UInt8], Error> {
     var buffer = [UInt8](repeating: 0, count: count)
-    return try await prepareAndSubmitMultishot(
+    return try prepareAndSubmitMultishot(
       IORING_OP_RECV,
       fd: fd,
       address: &buffer[0],
@@ -573,7 +578,7 @@ private extension IORing {
       ) { [holder] cqe in
         // because the default for multishots is to resubmit when IORING_CQE_F_MORE is unset,
         // we don't need to deallocate the buffer here. FIXME: do this when channel closes.
-        // we know that handlers are always executed in an @IORing actor's execution context
+        // we know that handlers are always executed in an @IORingActor actor's execution context
         // so it's safe to access the holder's buffer. But we should make this more explicit
         // by making the callback take an async function.
         try holder.receive(id: Int(cqe.flags >> 16), count: Int(cqe.res))
@@ -618,8 +623,8 @@ private extension IORing {
   func io_uring_op_multishot_accept(
     fd: FileDescriptorRepresentable,
     flags: UInt32 = 0
-  ) async throws -> AsyncThrowingChannel<FileDescriptorRepresentable, Error> {
-    try await prepareAndSubmitMultishot(
+  ) throws -> AsyncThrowingChannel<FileDescriptorRepresentable, Error> {
+    try prepareAndSubmitMultishot(
       IORING_OP_ACCEPT,
       fd: fd,
       ioprio: AcceptIoPrio.multishot,
@@ -713,8 +718,8 @@ public extension IORing {
   func receive(
     count: Int,
     from fd: FileDescriptorRepresentable
-  ) async throws -> AnyAsyncSequence<[UInt8]> {
-    try await io_uring_op_recv_multishot(fd: fd, count: count).eraseToAnyAsyncSequence()
+  ) throws -> AnyAsyncSequence<[UInt8]> {
+    try io_uring_op_recv_multishot(fd: fd, count: count).eraseToAnyAsyncSequence()
   }
 
   func receive(count: Int, from fd: FileDescriptorRepresentable) async throws -> [UInt8] {
@@ -755,10 +760,10 @@ public extension IORing {
     try await io_uring_op_accept(fd: fd)
   }
 
-  func accept(from fd: FileDescriptorRepresentable) async throws
+  func accept(from fd: FileDescriptorRepresentable) throws
     -> AnyAsyncSequence<FileDescriptorRepresentable>
   {
-    try await io_uring_op_multishot_accept(fd: fd).eraseToAnyAsyncSequence()
+    try io_uring_op_multishot_accept(fd: fd).eraseToAnyAsyncSequence()
   }
 
   func connect(_ fd: FileDescriptorRepresentable, to address: sockaddr_storage) async throws {
@@ -928,7 +933,7 @@ public extension IORing {
 // MARK: - conformances
 
 extension IORing: Equatable {
-  public static func == (lhs: IORing, rhs: IORing) -> Bool {
+  public static nonisolated func == (lhs: IORing, rhs: IORing) -> Bool {
     ObjectIdentifier(lhs) == ObjectIdentifier(rhs)
   }
 }

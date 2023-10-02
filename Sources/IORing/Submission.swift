@@ -21,7 +21,7 @@ import AsyncExtensions
 import CIORingShims
 import Glibc
 
-@IORing
+@IORingActor
 class Submission<T: Sendable>: CustomStringConvertible {
   // reference to owner which owns ring
   let ring: IORing
@@ -90,7 +90,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
   private func setBlock() {
     io_uring_sqe_set_block(sqe) { cqe in
       let cqe = cqe.pointee
-      Task { @IORing in
+      Task { @IORingActor in
         await self.onCompletion(cqe: cqe)
       }
     }
@@ -110,8 +110,8 @@ class Submission<T: Sendable>: CustomStringConvertible {
     bufferGroup: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
-  ) async throws {
-    sqe = try await ring.getSqe()
+  ) throws {
+    sqe = try ring.getSqe()
     self.ring = ring
     self.opcode = opcode
     self.fd = fd
@@ -176,7 +176,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T> {
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) async throws {
     self.group = group
-    try await super.init(
+    try super.init(
       ring: ring,
       opcode,
       fd: fd,
@@ -204,7 +204,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T> {
         if group != nil {
           await ready()
         } else {
-          try await ring.submit()
+          try ring.submit()
         }
       }
     }
@@ -239,8 +239,8 @@ final class BufferSubmission<U>: Submission<()> {
 
   override func onCompletion(cqe: io_uring_cqe) async {}
 
-  func submit() async throws {
-    try await ring.submit()
+  func submit() throws {
+    try ring.submit()
   }
 
   nonisolated func bufferPointer(id bufferID: Int) -> UnsafeMutablePointer<U> {
@@ -257,13 +257,13 @@ final class BufferSubmission<U>: Submission<()> {
     flags: IORing.SqeFlags = IORing.SqeFlags(),
     bufferGroup: UInt16,
     deallocate: Bool
-  ) async throws {
+  ) throws {
     self.size = size
     self.bufferGroup = bufferGroup
     self.deallocate = deallocate
     self.buffer = buffer
 
-    try await super.init(
+    try super.init(
       ring: ring,
       IORING_OP_PROVIDE_BUFFERS,
       fd: BufferCount(count: count),
@@ -280,10 +280,10 @@ final class BufferSubmission<U>: Submission<()> {
     size: Int,
     count: Int,
     flags: IORing.SqeFlags = IORing.SqeFlags()
-  ) async throws {
-    let bufferGroup = await ring.getNextBufferGroup()
+  ) throws {
+    let bufferGroup = ring.getNextBufferGroup()
     let buffer = UnsafeMutablePointer<U>.allocate(capacity: MemoryLayout<U>.stride * size * count)
-    try await self.init(
+    try self.init(
       ring: ring,
       count: count,
       buffer: buffer,
@@ -299,7 +299,7 @@ final class BufferSubmission<U>: Submission<()> {
     else { throw Errno.invalidArgument }
     let buffer = submission.bufferPointer(id: bufferID)
 
-    try await self.init(
+    try self.init(
       ring: submission.ring,
       count: 1,
       buffer: buffer,
@@ -311,7 +311,7 @@ final class BufferSubmission<U>: Submission<()> {
   }
 
   convenience init(ring: IORing, removing count: Int, from bufferGroup: UInt16) async throws {
-    try await self.init(
+    try self.init(
       ring: ring,
       count: count,
       buffer: nil,
@@ -336,7 +336,7 @@ final class BufferSubmission<U>: Submission<()> {
 
   func reprovideAndSubmit(id bufferID: Int) async throws {
     let submission = try await BufferSubmission(reproviding: bufferID, from: self)
-    try await submission.submit()
+    try submission.submit()
   }
 
   deinit {
@@ -374,7 +374,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
     bufferGroup: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
-  ) async throws {
+  ) throws {
     self.address = address
     self.length = length
     self.offset = offset
@@ -385,7 +385,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
     self.bufferGroup = bufferGroup
     self.socketAddress = socketAddress
 
-    try await super.init(
+    try super.init(
       ring: ring,
       opcode,
       fd: fd,
@@ -402,8 +402,8 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
     )
   }
 
-  private convenience init(_ submission: MultishotSubmission) async throws {
-    try await self.init(
+  private convenience init(_ submission: MultishotSubmission) throws {
+    try self.init(
       ring: submission.ring,
       submission.opcode,
       fd: submission.fd,
@@ -420,20 +420,20 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
     )
   }
 
-  func submit() async throws -> AsyncThrowingChannel<T, Error> {
-    try await ring.submit()
+  func submit() throws -> AsyncThrowingChannel<T, Error> {
+    try ring.submit()
     return channel
   }
 
-  private func resubmit() async {
+  private func resubmit() {
     do {
       // this will allocate a new SQE with the same channel, fd, opcode and handler
-      let resubmission = try await MultishotSubmission(self)
+      let resubmission = try MultishotSubmission(self)
       IORing
         .logDebug(
           message: "resubmitting multishot submission \(resubmission)"
         )
-      _ = try await resubmission.submit()
+      _ = try resubmission.submit()
     } catch {
       IORing
         .logDebug(
@@ -450,7 +450,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
       if cqe.flags & IORING_CQE_F_MORE == 0 {
         // if IORING_CQE_F_MORE is not set, we need to issue a new request
         // try to do this implictily
-        await resubmit()
+        resubmit()
       }
     } catch {
       channel.fail(error)

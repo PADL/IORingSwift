@@ -179,7 +179,7 @@ final class MessageHolder: @unchecked Sendable {
 
       // make the buffer available for reuse once we've copied the contents
       defer {
-        Task { @IORing in
+        Task { @IORingActor in
           try await bufferSubmission.reprovideAndSubmit(id: bufferID)
         }
       }
@@ -204,7 +204,7 @@ final class MessageHolder: @unchecked Sendable {
     }
   }
 
-  @IORing
+  @IORingActor
   func withUnsafeMutablePointer<T: Sendable>(
     _ body: @Sendable (UnsafeMutablePointer<msghdr>) async throws
       -> T
