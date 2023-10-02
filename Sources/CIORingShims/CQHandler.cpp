@@ -16,114 +16,24 @@
 
 #include "CQHandlerInternal.hpp"
 
-#include <map>
-#include <mutex>
-#include <cassert>
-
-static time_t cq_t0 = (time_t)-1;
-
-struct IORingStatistics {
-  time_t submitTime;
-  pthread_t submitThread;
-  time_t completionTime;
-  pthread_t completionThread;
-  time_t accessTime;
-  struct io_uring_sqe sqe;
-  struct io_uring_cqe cqe;
-  void *block;
-  bool submit;
-  int complete;
-
-  bool isMultishot() {
-    return (sqe.ioprio & 1);
-  }
-  void log() {
-    if (reinterpret_cast<uintptr_t>(block) != sqe.user_data) {
-      fprintf(stderr, "!! block %p doesn't equal submission user data %p, how did this happen?\n", block, (void *)sqe.user_data);
-    }
-    bool releasing = ((cqe.flags & IORING_CQE_F_MORE) == 0) && (complete == 1);
-    assert (cqe.user_data == 0 || cqe.user_data == sqe.user_data);
-
-    fprintf(stderr, "%s %c bl %p su %p cu %p flags %04x/%04x Ts %lds[thr %lx] Tc %lds[thr %lx] Ta %lds opcode %d result %d %s%s[%d]%s\n",
-      isMultishot() ? "MS" : "SS",
-      complete ? '<' : '>',
-      block, (void *)sqe.user_data, (void *)cqe.user_data,
-      sqe.flags, cqe.flags,
-      submitTime - cq_t0, submitThread,
-      (completionTime > 0 ? (completionTime - cq_t0) : 0), completionThread,
-      accessTime - cq_t0, sqe.opcode, cqe.res,
-      submit ? "SUBMITTED/" : "/",
-      complete ? "COMPLETED/" : "/", complete,
-      releasing ? "RELEASING/" : "/");
-  }
-
-  static void submitted(struct io_uring_sqe *sqe, io_uring_cqe_block block);
-  static void completed(struct io_uring_cqe *cqe, bool &doubleComplete);
-};
-
-static std::map<uintptr_t, IORingStatistics> cq_stats;
-static std::mutex cq_mutex;
-
-void
-IORingStatistics::submitted(struct io_uring_sqe *sqe, io_uring_cqe_block block) {
-  IORingStatistics stat{};
-
-  if (cq_t0 == -1)
-    time(&cq_t0);
-
-  time(&stat.accessTime);
-  time(&stat.submitTime);
-  stat.sqe = *sqe;
-  stat.block = block;
-  stat.submitThread = pthread_self();
-  stat.submit = true;
-  stat.log();
-  auto guard = std::lock_guard(cq_mutex);
-  cq_stats[reinterpret_cast<uintptr_t>(block)] = stat;
-}
-
-void
-IORingStatistics::completed(struct io_uring_cqe *cqe, bool &doubleComplete) {
-  if (!cq_stats.contains(cqe->user_data)) {
-    fprintf(stderr, "IORingStatistics userdata %p flags %04x res %d UNREGISTERED at time %ld!!!\n", (void *)cqe->user_data, cqe->flags, cqe->res, time(nullptr) - cq_t0);
-    return;
-  }
-
-  auto &stat = cq_stats[cqe->user_data];
-  time(&stat.accessTime);
-  doubleComplete = stat.complete > 0;
-  if (!doubleComplete) {
-    time(&stat.completionTime);
-    stat.completionThread = pthread_self();
-    stat.cqe = *cqe;
-  } else {
-    fprintf(stderr, "IORingStatistics double complete! user_data %p res %d flags %d thread %lx\n", reinterpret_cast<void *>(cqe->user_data), cqe->res, cqe->flags, pthread_self());
-  }
-  stat.complete++;
-  stat.log();
-}
-
 void io_uring_sqe_set_block(struct io_uring_sqe *sqe,
                             io_uring_cqe_block block) {
   io_uring_sqe_set_data(sqe, _Block_copy(block));
-  IORingStatistics::submitted(sqe, block);
 }
 
 static void invoke_cqe_block(struct io_uring_cqe *cqe) {
   auto block = reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
   assert(block);
-  bool doubleComplete;
-  IORingStatistics::completed(cqe, doubleComplete);
   block(cqe);
-  if ((cqe->flags & IORING_CQE_F_MORE) == 0 && !doubleComplete) {
+  if ((cqe->flags & IORING_CQE_F_MORE) == 0) {
     _Block_release(block);
-    cqe->user_data = ~0ULL; // should never happen, will cause ECANCELED
+    cqe->user_data = 0; // assert fail on double fire
   }
 }
 
 int io_uring_cq_handler(struct io_uring *ring) {
   struct io_uring_cqe *cqe;
-  unsigned head, seen = 0;
+  unsigned head, i = 0;
 
   auto err = io_uring_wait_cqe(ring, &cqe);
   if (err)
@@ -131,18 +41,16 @@ int io_uring_cq_handler(struct io_uring *ring) {
 
   io_uring_for_each_cqe(ring, head, cqe) {
     assert(cqe != nullptr);
-    seen++;
+    i++;
+#if PTHREAD_IO_URING
     if (cqe->user_data == ~0ULL) {
-      // used by pthreads backend to signal thread ending
       err = -ECANCELED;
       break;
     }
-    if (cqe->user_data)
-        invoke_cqe_block(cqe);
-    else
-        fprintf(stderr, "Warning: io_uring_cq_handler: CQE %d:%p missing completion block!\n", seen, cqe);
+#endif
+    invoke_cqe_block(cqe);
   }
-  io_uring_cq_advance(ring, seen);
+  io_uring_cq_advance(ring, i);
 
   if (err == -EAGAIN)
     err = 0;
