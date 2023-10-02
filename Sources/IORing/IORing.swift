@@ -310,22 +310,19 @@ extension IORing {
       throw Errno.invalidArgument
     }
 
-    var buffers = [FixedBuffer](repeating: [UInt8](repeating: 0, count: size), count: count)
-    var iov = [iovec](repeating: iovec(), count: count)
+    buffers = [FixedBuffer](repeating: [UInt8](repeating: 0, count: size), count: count)
+    iov = [iovec](repeating: iovec(), count: count)
 
     for i in 0..<count {
-      buffers[i].withUnsafeMutableBufferPointer { pointer in
-        iov[i].iov_base = UnsafeMutableRawPointer(pointer.baseAddress)
-        iov[i].iov_len = size
+      buffers![i].withUnsafeMutableBufferPointer { pointer in
+        iov![i].iov_base = UnsafeMutableRawPointer(pointer.baseAddress)
+        iov![i].iov_len = size
       }
     }
 
     try Errno.throwingErrno {
-      io_uring_register_buffers(&self.ring, iov, UInt32(iov.count))
+      io_uring_register_buffers(&self.ring, self.iov, UInt32(self.iov!.count))
     }
-
-    self.buffers = buffers
-    self.iov = iov
   }
 }
 
