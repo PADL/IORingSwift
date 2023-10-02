@@ -217,7 +217,9 @@ public actor IORing: CustomStringConvertible {
     io_uring_queue_exit(&ring)
   }
 
-  // important note: caller MUST NOT suspend after calling getSqe() until submission
+  // important note: caller MUST NOT suspend after calling getSqe() until preparation,
+  // ideally not until submission particularly if linked requests are involved (this
+  // may be impossible)
   func getSqe() throws -> UnsafeMutablePointer<io_uring_sqe> {
     let sqe = io_uring_get_sqe(&ring)
     guard let sqe else {
@@ -830,6 +832,9 @@ public extension IORing {
     )
   }
 
+  // FIXME: if we suspend between the linked submissions and another task calls submit,
+  // then the ordering of SQEs will be broken! we need to figure out if this can practically
+  // happen
   func writeReadFixed(
     _ data: inout [UInt8],
     count: Int? = nil,

@@ -133,7 +133,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
     setBlock()
   }
 
-  func onCompletion(cqe: io_uring_cqe) async { fatalError() }
+  func onCompletion(cqe: io_uring_cqe) async { fatalError("must be implemented by concrete class") }
 
   func throwingErrno(
     cqe: io_uring_cqe,
