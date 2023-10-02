@@ -184,6 +184,7 @@ public final class IORing: CustomStringConvertible {
     var ring = io_uring()
     var params = io_uring_params()
 
+    params.flags = flags & ~IORING_SETUP_ATTACH_WQ
     if !shared {
       params.flags |= IORING_SETUP_ATTACH_WQ
       params.wq_fd = UInt32(IORing.shared.ringFd)
