@@ -803,21 +803,16 @@ public extension IORing {
   }
 
   func writeFixed(
-    _ data: ArraySlice<UInt8>,
+    _ data: [UInt8],
     count: Int? = nil,
     offset: Int = -1,
     bufferIndex: UInt16,
     bufferOffset: Int = 0,
-    to fd: FileDescriptorRepresentable,
-    _ body: (inout UnsafeMutableBufferPointer<UInt8>) throws -> some Any
+    to fd: FileDescriptorRepresentable
   ) async throws -> Int {
     guard let fixedBuffers else { throw Errno.invalidArgument }
     let count = count ?? fixedBuffers.count
-
-    guard count < data.endIndex - data.startIndex else {
-      throw Errno.invalidArgument
-    }
-
+    guard count <= data.count else { throw Errno.outOfRange }
     try fixedBuffers.validate(index: bufferIndex, count: count, offset: bufferOffset)
 
     let address = try fixedBuffers.unsafeMutableRawPointer(
@@ -825,7 +820,7 @@ public extension IORing {
       count: count,
       offset: bufferOffset
     )
-    data[data.startIndex..<data.endIndex].withUnsafeBytes { bytes in
+    data.withUnsafeBytes { bytes in
       _ = memcpy(address, UnsafeRawPointer(bytes.baseAddress!), count)
     }
 
@@ -836,16 +831,26 @@ public extension IORing {
   }
 
   func writeReadFixed(
+    _ data: inout [UInt8],
     count: Int? = nil,
     offset: Int = -1,
     bufferIndex: UInt16,
     bufferOffset: Int = 0,
-    fd: FileDescriptorRepresentable,
-    _ body: (inout ArraySlice<UInt8>) throws -> ()
+    fd: FileDescriptorRepresentable
   ) async throws {
     guard let fixedBuffers else { throw Errno.invalidArgument }
     let count = count ?? fixedBuffers.count
+    guard count <= data.count else { throw Errno.outOfRange }
     try fixedBuffers.validate(index: bufferIndex, count: count, offset: bufferOffset)
+
+    let address = try fixedBuffers.unsafeMutableRawPointer(
+      at: bufferIndex,
+      count: count,
+      offset: bufferOffset
+    )
+    data.withUnsafeBytes { bytes in
+      _ = memcpy(address, UnsafeRawPointer(bytes.baseAddress!), count)
+    }
 
     let result = try await withSubmissionGroup { (group: SubmissionGroup<Int>) in
       let _: SingleshotSubmission<Int> = try await io_uring_op_write_fixed(
@@ -870,6 +875,10 @@ public extension IORing {
 
     guard result.count == 2, result[0] == result[1] else {
       throw Errno.resourceTemporarilyUnavailable
+    }
+
+    data.withUnsafeMutableBytes { bytes in
+      _ = memcpy(UnsafeMutableRawPointer(bytes.baseAddress!), address, count)
     }
   }
 
