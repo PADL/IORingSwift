@@ -148,7 +148,7 @@ extension Submittable {
 }
 
 @IORing
-final class SingleshotSubmission<T>: Submittable {
+struct SingleshotSubmission<T>: Submittable {
   typealias T = T
 
   // reference to owner which owns ring
