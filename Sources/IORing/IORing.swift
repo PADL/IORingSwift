@@ -270,7 +270,10 @@ extension IORing {
     }
   }
 
-  private func unsafePointerForFixedBuffer(at index: UInt16, offset: Int) -> UnsafeMutableRawPointer {
+  private func unsafePointerForFixedBuffer(
+    at index: UInt16,
+    offset: Int
+  ) -> UnsafeMutableRawPointer {
     precondition(hasRegisteredFixedBuffers)
     precondition(try! index < registeredFixedBuffersCount)
 

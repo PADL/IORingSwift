@@ -29,6 +29,7 @@ public struct Control {
   public var data: [UInt8]
 }
 
+// TODO: support for CMSG
 public final class Message: @unchecked Sendable {
   // FIXME: again, this is a workaround for _XOPEN_SOURCE=500 clang importer issues
   public var name: [UInt8] {
@@ -134,20 +135,27 @@ public final class Message: @unchecked Sendable {
   }
 }
 
+// TODO: support for CMSG
 final class MessageHolder {
   private let size: Int
   private var storage = msghdr()
+  private var address = sockaddr_storage()
   private var bufferSubmission: BufferSubmission<UInt8>
   let bufferGroup: UInt16
 
-  init(ring: IORing, size: Int, count: Int) async throws {
+  init(ring: IORing, size: Int, count: Int, flags: UInt32 = 0) async throws {
     if size % MemoryLayout<io_uring_recvmsg_out>.alignment != 0 {
       throw Errno.invalidArgument
     }
     self.size = size + MemoryLayout<io_uring_recvmsg_out>.size + MemoryLayout<sockaddr_storage>.size
     bufferSubmission = try await BufferSubmission(ring: ring, size: size, count: count)
     bufferGroup = bufferSubmission.bufferGroup
+    Swift.withUnsafeMutablePointer(to: &address) {
+      self.storage.msg_name = UnsafeMutableRawPointer($0)
+    }
+    storage.msg_namelen = socklen_t(MemoryLayout<sockaddr_storage>.size)
     try await bufferSubmission.submit()
+    storage.msg_flags = Int32(flags)
   }
 
   deinit {
