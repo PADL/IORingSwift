@@ -247,7 +247,7 @@ extension IORing {
     }
   }
 
-  private func unregisterFixedBuffers() throws {
+  public func unregisterFixedBuffers() throws {
     if !hasRegisteredFixedBuffers {
       throw Errno.invalidArgument
     }
