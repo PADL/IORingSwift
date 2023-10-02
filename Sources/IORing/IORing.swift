@@ -163,7 +163,7 @@ public actor IORing: CustomStringConvertible {
     bufferIndex: UInt16 = 0,
     bufferGroup: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
-    @_inheritActorContext handler: @escaping @Sendable (io_uring_cqe) throws -> T
+    handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) async throws -> T {
     try await SingleshotSubmission(
       ring: self,
@@ -192,7 +192,7 @@ public actor IORing: CustomStringConvertible {
     moreFlags: UInt32 = 0,
     bufferIndex: UInt16 = 0,
     bufferGroup: UInt16 = 0,
-    _inheritActorContext handler: @escaping @Sendable (io_uring_cqe) throws -> T
+    handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) async throws -> AsyncThrowingChannel<T, Error> {
     try await MultishotSubmission(
       ring: self,
@@ -317,7 +317,7 @@ extension IORing {
     return try body(&buffers![Int(index)][range])
   }
 
-  private func withSubmissionGroup<T>(@_inheritActorContext _ body: (
+  private func withSubmissionGroup<T>(_ body: (
     SubmissionGroup<T>
   ) async throws -> ()) async throws -> [T] {
     let submissionGroup = try await SubmissionGroup<T>(ring: self)
@@ -403,7 +403,8 @@ private extension IORing {
     offset: Int, // offset into the file we are reading
     bufferIndex: UInt16,
     bufferOffset: Int, // offset into the fixed buffer
-    link: Bool = false
+    link: Bool = false,
+    group: SubmissionGroup<Int>? = nil
   ) async throws -> SingleshotSubmission<Int> {
     try await SingleshotSubmission(
       ring: self,
@@ -413,7 +414,8 @@ private extension IORing {
       length: CUnsignedInt(count),
       offset: offset,
       flags: IORing.SqeFlags(link: link),
-      bufferIndex: bufferIndex
+      bufferIndex: bufferIndex,
+      group: group
     ) { cqe in
       Int(cqe.res)
     }
@@ -426,7 +428,8 @@ private extension IORing {
     offset: Int, // offset into the file we are writing
     bufferIndex: UInt16,
     bufferOffset: Int, // offset into the fixed buffer
-    link: Bool = false
+    link: Bool = false,
+    group: SubmissionGroup<Int>? = nil
   ) async throws -> Int {
     try await io_uring_op_read_fixed(
       fd: fd,
@@ -434,7 +437,8 @@ private extension IORing {
       offset: offset,
       bufferIndex: bufferIndex,
       bufferOffset: bufferOffset,
-      link: link
+      link: link,
+      group: group
     ).submit()
   }
 
@@ -444,7 +448,8 @@ private extension IORing {
     offset: Int, // offset into the file we are writing
     bufferIndex: UInt16,
     bufferOffset: Int, // offset into the fixed buffer
-    link: Bool = false
+    link: Bool = false,
+    group: SubmissionGroup<Int>? = nil
   ) async throws -> SingleshotSubmission<Int> {
     try await SingleshotSubmission(
       ring: self,
@@ -454,7 +459,8 @@ private extension IORing {
       length: CUnsignedInt(count),
       offset: offset,
       flags: IORing.SqeFlags(link: link),
-      bufferIndex: bufferIndex
+      bufferIndex: bufferIndex,
+      group: group
     ) { cqe in
       Int(cqe.res)
     }
@@ -467,7 +473,8 @@ private extension IORing {
     offset: Int, // offset into the file we are writing
     bufferIndex: UInt16,
     bufferOffset: Int, // offset into the fixed buffer
-    link: Bool = false
+    link: Bool = false,
+    group: SubmissionGroup<Int>? = nil
   ) async throws -> Int {
     try await io_uring_op_write_fixed(
       fd: fd,
@@ -475,7 +482,8 @@ private extension IORing {
       offset: offset,
       bufferIndex: bufferIndex,
       bufferOffset: bufferOffset,
-      link: link
+      link: link,
+      group: group
     ).submit()
   }
 
@@ -891,24 +899,24 @@ public extension IORing {
     try validateFixedBuffer(at: bufferIndex, length: count, offset: 0)
 
     let result = try await withSubmissionGroup { (group: SubmissionGroup<Int>) in
-      let writeSubmission: SingleshotSubmission<Int> = try await io_uring_op_write_fixed(
+      let _: SingleshotSubmission<Int> = try await io_uring_op_write_fixed(
         fd: fd,
         count: count,
         offset: offset,
         bufferIndex: bufferIndex,
         bufferOffset: 0,
-        link: true
+        link: true,
+        group: group
       )
-      await group.enqueue(submission: writeSubmission)
 
-      let readSubmission: SingleshotSubmission<Int> = try await io_uring_op_read_fixed(
+      let _: SingleshotSubmission<Int> = try await io_uring_op_read_fixed(
         fd: fd,
         count: count,
         offset: offset,
         bufferIndex: bufferIndex,
-        bufferOffset: 0
+        bufferOffset: 0,
+        group: group
       )
-      await group.enqueue(submission: readSubmission)
     }
 
     guard result.count == 2, result[0] == result[1] else {
@@ -928,24 +936,24 @@ public extension IORing {
     try validateFixedBuffer(at: bufferIndex, length: count, offset: 0)
 
     let result = try await withSubmissionGroup { (group: SubmissionGroup<Int>) in
-      let readSubmission: SingleshotSubmission<Int> = try await io_uring_op_read_fixed(
+      let _: SingleshotSubmission<Int> = try await io_uring_op_read_fixed(
         fd: fd1,
         count: count,
         offset: offset,
         bufferIndex: bufferIndex,
         bufferOffset: 0,
-        link: true
+        link: true,
+        group: group
       )
-      await group.enqueue(submission: readSubmission)
 
-      let writeSubmission: SingleshotSubmission<Int> = try await io_uring_op_write_fixed(
+      let _: SingleshotSubmission<Int> = try await io_uring_op_write_fixed(
         fd: fd2,
         count: count,
         offset: offset,
         bufferIndex: bufferIndex,
-        bufferOffset: 0
+        bufferOffset: 0,
+        group: group
       )
-      await group.enqueue(submission: writeSubmission)
     }
 
     guard result.count == 2, result[0] == result[1] else {

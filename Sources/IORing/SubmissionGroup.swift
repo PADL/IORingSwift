@@ -21,17 +21,20 @@ import AsyncAlgorithms
 import Glibc
 
 extension SingleshotSubmission {
-  func enqueue() async {
-    do {
-      let result = try await submit()
-      await group?.resultChannel.send(result)
-    } catch {
-      group?.resultChannel.fail(error)
+  func enqueue() {
+    guard let group else { return }
+    Task {
+      do {
+        let result = try await submit()
+        await group.resultChannel.send(result)
+      } catch {
+        group.resultChannel.fail(error)
+      }
     }
   }
 
-  func ready() {
-    Task { await group?.readinessChannel.send(self) }
+  func ready() async {
+    await group?.readinessChannel.send(())
   }
 }
 
@@ -40,10 +43,10 @@ actor SubmissionGroup<T> {
   private let queue = ActorQueue<SubmissionGroup>()
   private var submissions = [SingleshotSubmission<T>]()
 
-  fileprivate let readinessChannel = AsyncChannel<SingleshotSubmission<T>>()
+  fileprivate let readinessChannel = AsyncChannel<()>()
   fileprivate let resultChannel = AsyncThrowingChannel<T, Error>()
 
-  init(@_inheritActorContext ring: IORing) async throws {
+  init(ring: IORing) async throws {
     self.ring = ring
     queue.adoptExecutionContext(of: self)
   }
@@ -53,9 +56,7 @@ actor SubmissionGroup<T> {
   /// its continuation is registered in the SQE `user_data` otherwise the group
   /// will never be submitted.
   ///
-  @IORing
   func enqueue(submission: SingleshotSubmission<T>) {
-    submission.group = self
     queue.enqueue { group in
       await submission.enqueue()
       group.submissions.append(submission)
@@ -63,8 +64,7 @@ actor SubmissionGroup<T> {
   }
 
   private func allReady() async {
-    let ready = await readinessChannel.collect(max: submissions.count)
-    precondition(Set(ready) == Set(submissions))
+    _ = await readinessChannel.collect(max: submissions.count)
   }
 
   private func allComplete() async throws -> [T] {
