@@ -19,7 +19,7 @@ func tryGuessSwiftLibRoot() -> String {
 }
 
 let SwiftLibRoot = tryGuessSwiftLibRoot()
-let EnableASAN = true
+let EnableASAN = false
 var ASANCFlags: [String] = []
 var ASANSwiftFlags: [String] = []
 var ASANLinkerSettings: [LinkerSetting] = []
