@@ -239,7 +239,7 @@ public actor IORing: CustomStringConvertible {
     })
   }
 
-  func withSubmissionGroup<T>(_ body: (
+  func withSubmissionGroup<T: Sendable>(_ body: (
     SubmissionGroup<T>
   ) async throws -> ()) async throws -> [T] {
     let submissionGroup = try await SubmissionGroup<T>(ring: self)
@@ -247,7 +247,7 @@ public actor IORing: CustomStringConvertible {
     return try await submissionGroup.finish()
   }
 
-  fileprivate func prepareAndSubmit<T>(
+  fileprivate func prepareAndSubmit<T: Sendable>(
     _ opcode: io_uring_op,
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
@@ -278,7 +278,7 @@ public actor IORing: CustomStringConvertible {
     ).submit()
   }
 
-  fileprivate func prepareAndSubmitMultishot<T>(
+  fileprivate func prepareAndSubmitMultishot<T: Sendable>(
     _ opcode: io_uring_op,
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,

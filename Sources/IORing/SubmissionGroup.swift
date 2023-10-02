@@ -38,7 +38,7 @@ extension SingleshotSubmission {
   }
 }
 
-actor SubmissionGroup<T> {
+actor SubmissionGroup<T: Sendable> {
   private let ring: IORing
   private let queue = ActorQueue<SubmissionGroup>()
   private var submissions = [SingleshotSubmission<T>]()

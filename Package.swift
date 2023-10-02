@@ -1,4 +1,4 @@
-// swift-tools-version: 5.7.1
+// swift-tools-version: 5.9
 
 import Foundation
 import PackageDescription
@@ -91,6 +91,7 @@ let package = Package(
         .define("_XOPEN_SOURCE=500"),
       ],
       swiftSettings: [
+        .enableExperimentalFeature("StrictConcurrency"),
         .unsafeFlags(ASANSwiftFlags),
       ]
 

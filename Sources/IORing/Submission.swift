@@ -22,7 +22,7 @@ import CIORingShims
 import Glibc
 
 @IORing
-class Submission<T>: CustomStringConvertible {
+class Submission<T: Sendable>: CustomStringConvertible {
   // reference to owner which owns ring
   let ring: IORing
   /// user-supplied callback to transform a completion queue entry to a result
@@ -153,7 +153,7 @@ class Submission<T>: CustomStringConvertible {
   }
 }
 
-final class SingleshotSubmission<T>: Submission<T> {
+final class SingleshotSubmission<T: Sendable>: Submission<T> {
   weak var group: SubmissionGroup<T>?
 
   private typealias Continuation = CheckedContinuation<T, Error>
@@ -346,7 +346,7 @@ final class BufferSubmission<U>: Submission<()> {
   }
 }
 
-final class MultishotSubmission<T>: Submission<T> {
+final class MultishotSubmission<T: Sendable>: Submission<T> {
   private let channel = AsyncThrowingChannel<T, Error>()
 
   // state for resubmission
