@@ -149,8 +149,6 @@ extension Submittable {
 
 @IORing
 struct SingleshotSubmission<T>: Submittable {
-  typealias T = T
-
   // reference to owner which owns ring
   let ring: IORing
   /// user-supplied callback to transform a completion queue entry to a result
@@ -374,8 +372,6 @@ final class BufferSubmission<U>: Submittable {
 
 @IORing
 final class MultishotSubmission<T>: Submittable {
-  typealias T = T
-
   // reference to owner which owns ring
   let ring: IORing
   /// user-supplied callback to transform a completion queue entry to a result
