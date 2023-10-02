@@ -193,9 +193,8 @@ final class MessageHolder {
         guard let name = io_uring_recvmsg_name(out) else {
           throw Errno.noMemory
         }
-        name.withMemoryRebound(to: sockaddr_storage.self, capacity: 1) { name in
-          address = name.pointee
-        }
+        precondition(out.pointee.namelen <= MemoryLayout<sockaddr_storage>.size)
+        memcpy(&address, name, Int(out.pointee.namelen))
       }
 
       var buffer = [UInt8]()
