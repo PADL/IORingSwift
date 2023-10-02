@@ -53,14 +53,15 @@ public struct IORingCat {
 
     while nremain != 0 {
       let count = nremain > blockSize ? blockSize : nremain
-      let bufferSlice = try await ring.readFixed(
+      try await ring.readFixed(
         count: count,
         offset: size - nremain,
         bufferIndex: 0,
         from: fd
-      )
-      nremain -= count
-      outputToConsole(Array(bufferSlice[0..<count]))
+      ) {
+        outputToConsole(Array($0))
+        nremain -= count
+      }
     }
   }
 

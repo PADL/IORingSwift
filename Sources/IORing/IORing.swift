@@ -34,11 +34,77 @@ public actor IORing: CustomStringConvertible {
   private var ring: io_uring
   private var cqHandle: UnsafeMutableRawPointer?
 
-  private typealias FixedBuffer = [UInt8]
-  private var buffers: [FixedBuffer]?
-  private var iov: [iovec]?
+  private var fixedBuffers: FixedBuffer?
   private var nextBufferGroup: UInt16 = 1
   private let entries: Int
+
+  final class FixedBuffer {
+    let count: Int
+    let size: Int
+    var storage: UnsafeMutablePointer<UInt8>
+    var indices: UnsafeMutableBufferPointer<iovec>
+
+    var iov: UnsafeMutablePointer<iovec> {
+      indices.baseAddress!
+    }
+
+    init(count: Int, size: Int) {
+      self.count = count
+      self.size = size
+      storage = .allocate(capacity: size * count)
+      indices = .allocate(capacity: count)
+
+      for i in 0..<count {
+        indices[i].iov_base = UnsafeMutableRawPointer(storage + i * size)
+        indices[i].iov_len = size
+      }
+    }
+
+    func validate(index: UInt16, count: Int, offset: Int) throws {
+      guard index < count, count + offset <= size else {
+        throw Errno.outOfRange
+      }
+    }
+
+    func unsafeMutablePointer(
+      at index: UInt16,
+      range: Range<Int>
+    ) throws -> UnsafeMutableBufferPointer<UInt8> {
+      try unsafeMutablePointer(
+        at: index,
+        count: range.upperBound - range.lowerBound,
+        offset: range.lowerBound
+      )
+    }
+
+    func unsafeMutablePointer(
+      at index: UInt16,
+      count: Int,
+      offset: Int
+    ) throws -> UnsafeMutableBufferPointer<UInt8> {
+      guard index < count, count + offset <= size else {
+        throw Errno.outOfRange
+      }
+
+      return UnsafeMutableBufferPointer(start: storage + Int(index) * size + offset, count: count)
+    }
+
+    func unsafeMutableRawPointer(
+      at index: UInt16,
+      count: Int,
+      offset: Int
+    ) throws -> UnsafeMutableRawPointer {
+      try UnsafeMutableRawPointer(
+        unsafeMutablePointer(at: index, count: count, offset: offset)
+          .baseAddress!
+      )
+    }
+
+    deinit {
+      storage.deallocate()
+      indices.deallocate()
+    }
+  }
 
   struct SqeFlags: OptionSet {
     typealias RawValue = UInt8
@@ -120,9 +186,31 @@ public actor IORing: CustomStringConvertible {
     }
   }
 
+  // FIXME: currently only supporting a single buffer size
+  public func registerFixedBuffers(count: Int, size: Int) async throws {
+    guard fixedBuffers == nil else {
+      throw Errno.fileExists
+    }
+
+    guard count > 0, size > 0 else {
+      throw Errno.invalidArgument
+    }
+
+    fixedBuffers = FixedBuffer(count: count, size: size)
+
+    try Errno.throwingErrno {
+      io_uring_register_buffers(&self.ring, self.fixedBuffers!.iov, UInt32(count))
+    }
+  }
+
+  public func unregisterFixedBuffers() throws {
+    guard fixedBuffers != nil else { throw Errno.invalidArgument }
+    try Errno.throwingErrno { io_uring_unregister_buffers(&self.ring) }
+  }
+
   deinit {
     io_uring_deinit_cq_handler(cqHandle, &ring)
-    if iov != nil {
+    if fixedBuffers != nil {
       io_uring_unregister_buffers(&ring)
     }
     // FIXME: where are unhandled completion blocks deallocated?
@@ -220,114 +308,6 @@ public actor IORing: CustomStringConvertible {
   }
 }
 
-// MARK: - fixed buffers
-
-extension IORing {
-  private var hasRegisteredFixedBuffers: Bool {
-    iov != nil
-  }
-
-  private var registeredFixedBuffersCount: Int {
-    get throws {
-      guard let iov else {
-        throw Errno.invalidArgument
-      }
-
-      return iov.count
-    }
-  }
-
-  private var registeredFixedBuffersSize: Int {
-    get throws {
-      guard let buffers else {
-        throw Errno.invalidArgument
-      }
-
-      return buffers[0].count
-    }
-  }
-
-  public func unregisterFixedBuffers() throws {
-    if !hasRegisteredFixedBuffers {
-      throw Errno.invalidArgument
-    }
-
-    try Errno.throwingErrno {
-      io_uring_unregister_buffers(&self.ring)
-    }
-
-    buffers = nil
-    iov = nil
-  }
-
-  private func validateFixedBuffer(at index: UInt16, length: Int, offset: Int) throws {
-    guard let iov, index < iov.count else {
-      throw Errno.invalidArgument
-    }
-
-    guard offset + length <= iov[Int(index)].iov_len else {
-      throw Errno.outOfRange
-    }
-  }
-
-  private func unsafePointerForFixedBuffer(
-    at index: UInt16,
-    offset: Int
-  ) -> UnsafeMutableRawPointer {
-    precondition(hasRegisteredFixedBuffers)
-    precondition(try! index < registeredFixedBuffersCount)
-
-    return iov![Int(index)].iov_base! + offset
-  }
-
-  private func buffer(at index: UInt16, range: Range<Int>) -> ArraySlice<UInt8> {
-    precondition(hasRegisteredFixedBuffers)
-    precondition(try! index < registeredFixedBuffersCount)
-    precondition(try! range.upperBound <= registeredFixedBuffersSize)
-
-    return buffers![Int(index)][range]
-  }
-
-  private func withFixedBufferSlice<T>(
-    at index: UInt16,
-    range: Range<Int>,
-    _ body: (inout ArraySlice<UInt8>) throws -> T
-  ) rethrows -> T {
-    precondition(hasRegisteredFixedBuffers)
-    precondition(try! index < registeredFixedBuffersCount)
-    precondition(try! range.upperBound <= registeredFixedBuffersSize)
-
-    return try body(&buffers![Int(index)][range])
-  }
-
-  // FIXME: currently only supporting a single buffer size
-  public func registerFixedBuffers(count: Int, size: Int) throws {
-    guard buffers == nil else {
-      throw Errno.fileExists
-    }
-
-    guard count > 0, size > 0 else {
-      throw Errno.invalidArgument
-    }
-
-    buffers = [FixedBuffer](repeating: [UInt8](repeating: 0, count: size), count: count)
-    iov = [iovec](repeating: iovec(), count: count)
-
-    for i in 0..<count {
-      buffers![i].withUnsafeMutableBufferPointer { pointer in
-        iov![i].iov_base = UnsafeMutableRawPointer(pointer.baseAddress)
-        iov![i].iov_len = size
-      }
-    }
-
-    try Errno.throwingErrno {
-      io_uring_register_buffers(&self.ring, self.iov, UInt32(self.iov!.count))
-    }
-  }
-}
-
-// MARK: - operation wrappers
-
 private extension IORing {
   func io_uring_op_cancel(
     fd: FileDescriptorRepresentable,
@@ -406,7 +386,11 @@ private extension IORing {
       ring: self,
       IORING_OP_READ_FIXED,
       fd: fd,
-      address: unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
+      address: fixedBuffers!.unsafeMutableRawPointer(
+        at: bufferIndex,
+        count: count,
+        offset: bufferOffset
+      ),
       length: CUnsignedInt(count),
       offset: offset,
       flags: IORing.SqeFlags(link: link),
@@ -451,7 +435,11 @@ private extension IORing {
       ring: self,
       IORING_OP_WRITE_FIXED,
       fd: fd,
-      address: unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset),
+      address: fixedBuffers!.unsafeMutableRawPointer(
+        at: bufferIndex,
+        count: count,
+        offset: bufferOffset
+      ),
       length: CUnsignedInt(count),
       offset: offset,
       flags: IORing.SqeFlags(link: link),
@@ -789,47 +777,29 @@ public extension IORing {
     try await io_uring_op_connect(fd: fd, address: ss)
   }
 
-  func readFixed(
-    count: Int? = nil,
-    offset: Int = -1,
-    bufferIndex: UInt16,
-    bufferOffset: Int = 0,
-    from fd: FileDescriptorRepresentable
-  ) async throws -> ArraySlice<UInt8> {
-    let count = try count ?? registeredFixedBuffersSize
-
-    try validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
-
-    let nread: Int = try await io_uring_op_read_fixed(
-      fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
-      bufferOffset: bufferOffset
-    )
-
-    return buffer(at: bufferIndex, range: bufferOffset..<(bufferOffset + nread))
-  }
-
-  func readFixed(
+  func readFixed<U>(
     count: Int? = nil,
     offset: Int = -1,
     bufferIndex: UInt16,
     bufferOffset: Int = 0,
     from fd: FileDescriptorRepresentable,
-    _ body: (inout ArraySlice<UInt8>) throws -> ()
-  ) async throws {
-    let count = try count ?? registeredFixedBuffersSize
-
-    try validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
+    _ body: (UnsafeMutableBufferPointer<UInt8>) throws -> U
+  ) async throws -> U {
+    guard let fixedBuffers else { throw Errno.invalidArgument }
+    let count = count ?? fixedBuffers.count
+    try fixedBuffers.validate(index: bufferIndex, count: count, offset: bufferOffset)
 
     let nread: Int = try await io_uring_op_read_fixed(
       fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
       bufferOffset: bufferOffset
     )
 
-    try withFixedBufferSlice(
+    let address = try fixedBuffers.unsafeMutablePointer(
       at: bufferIndex,
-      range: bufferOffset..<(bufferOffset + nread),
-      body
+      count: nread,
+      offset: bufferOffset
     )
+    return try body(address)
   }
 
   func writeFixed(
@@ -838,45 +808,25 @@ public extension IORing {
     offset: Int = -1,
     bufferIndex: UInt16,
     bufferOffset: Int = 0,
-    to fd: FileDescriptorRepresentable
+    to fd: FileDescriptorRepresentable,
+    _ body: (inout UnsafeMutableBufferPointer<UInt8>) throws -> some Any
   ) async throws -> Int {
-    let count = count ?? data.endIndex - data.startIndex
+    guard let fixedBuffers else { throw Errno.invalidArgument }
+    let count = count ?? fixedBuffers.count
 
     guard count < data.endIndex - data.startIndex else {
       throw Errno.invalidArgument
     }
 
-    try validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
+    try fixedBuffers.validate(index: bufferIndex, count: count, offset: bufferOffset)
 
-    let address = unsafePointerForFixedBuffer(at: bufferIndex, offset: bufferOffset)
-
+    let address = try fixedBuffers.unsafeMutableRawPointer(
+      at: bufferIndex,
+      count: count,
+      offset: bufferOffset
+    )
     data[data.startIndex..<data.endIndex].withUnsafeBytes { bytes in
       _ = memcpy(address, UnsafeRawPointer(bytes.baseAddress!), count)
-    }
-
-    return try await io_uring_op_write_fixed(
-      fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
-      bufferOffset: bufferOffset
-    )
-  }
-
-  func writeFixed(
-    count: Int? = nil,
-    offset: Int = -1,
-    bufferIndex: UInt16,
-    bufferOffset: Int = 0,
-    to fd: FileDescriptorRepresentable,
-    _ body: (ArraySlice<UInt8>) throws -> ()
-  ) async throws -> Int {
-    let count = try count ?? registeredFixedBuffersSize
-
-    try validateFixedBuffer(at: bufferIndex, length: count, offset: bufferOffset)
-
-    try withFixedBufferSlice(
-      at: bufferIndex,
-      range: bufferOffset..<(bufferOffset + count)
-    ) {
-      try body($0)
     }
 
     return try await io_uring_op_write_fixed(
@@ -893,9 +843,9 @@ public extension IORing {
     fd: FileDescriptorRepresentable,
     _ body: (inout ArraySlice<UInt8>) throws -> ()
   ) async throws {
-    let count = try count ?? registeredFixedBuffersSize
-
-    try validateFixedBuffer(at: bufferIndex, length: count, offset: 0)
+    guard let fixedBuffers else { throw Errno.invalidArgument }
+    let count = count ?? fixedBuffers.count
+    try fixedBuffers.validate(index: bufferIndex, count: count, offset: bufferOffset)
 
     let result = try await withSubmissionGroup { (group: SubmissionGroup<Int>) in
       let _: SingleshotSubmission<Int> = try await io_uring_op_write_fixed(
@@ -930,9 +880,9 @@ public extension IORing {
     from fd1: FileDescriptorRepresentable,
     to fd2: FileDescriptorRepresentable
   ) async throws {
-    let count = try count ?? registeredFixedBuffersSize
-
-    try validateFixedBuffer(at: bufferIndex, length: count, offset: 0)
+    guard let fixedBuffers else { throw Errno.invalidArgument }
+    let count = count ?? fixedBuffers.count
+    try fixedBuffers.validate(index: bufferIndex, count: count, offset: 0)
 
     let result = try await withSubmissionGroup { (group: SubmissionGroup<Int>) in
       let _: SingleshotSubmission<Int> = try await io_uring_op_read_fixed(
