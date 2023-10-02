@@ -803,18 +803,18 @@ public extension IORing {
   }
 
   func writeFixed(
-    _ data: ArraySlice<UInt8>,
+    _ data: UnsafeBufferPointer<UInt8>,
     count: Int? = nil,
     offset: Int = -1,
     bufferIndex: UInt16,
     bufferOffset: Int = 0,
     to fd: FileDescriptorRepresentable,
-    _ body: (inout UnsafeMutableBufferPointer<UInt8>) throws -> some Any
+    _ body: (UnsafeMutableBufferPointer<UInt8>) throws -> some Any
   ) async throws -> Int {
     guard let fixedBuffers else { throw Errno.invalidArgument }
     let count = count ?? fixedBuffers.count
 
-    guard count < data.endIndex - data.startIndex else {
+    guard count < data.count else {
       throw Errno.invalidArgument
     }
 
@@ -825,9 +825,7 @@ public extension IORing {
       count: count,
       offset: bufferOffset
     )
-    data[data.startIndex..<data.endIndex].withUnsafeBytes { bytes in
-      _ = memcpy(address, UnsafeRawPointer(bytes.baseAddress!), count)
-    }
+    _ = memcpy(address, UnsafeRawPointer(data.baseAddress!), count)
 
     return try await io_uring_op_write_fixed(
       fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
