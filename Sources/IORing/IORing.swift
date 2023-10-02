@@ -31,8 +31,8 @@ public actor IORingActor {
 }
 
 @IORingActor
-public final class IORing: CustomStringConvertible, @unchecked Sendable {
-  public static let shared = try! IORing()
+public final class IORing: CustomStringConvertible {
+  public static nonisolated let shared = try! IORing()
 
   private static let DefaultIORingQueueEntries = 128
 
