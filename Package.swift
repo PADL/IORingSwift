@@ -94,7 +94,6 @@ let package = Package(
         .enableExperimentalFeature("StrictConcurrency"),
         .unsafeFlags(ASANSwiftFlags),
       ]
-
     ),
     .testTarget(
       name: "IORingTests",
@@ -104,11 +103,19 @@ let package = Package(
       name: "IORingUtils",
       dependencies: ["IORing",
                      "AsyncExtensions",
-                     .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")]
+                     .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")],
+      swiftSettings: [
+        .enableExperimentalFeature("StrictConcurrency"),
+        .unsafeFlags(ASANSwiftFlags),
+      ]
     ),
     .target(
       name: "IORingFoundation",
-      dependencies: ["IORingUtils"]
+      dependencies: ["IORingUtils"],
+      swiftSettings: [
+        .enableExperimentalFeature("StrictConcurrency"),
+        .unsafeFlags(ASANSwiftFlags),
+      ]
     ),
     .executableTarget(
       name: "IORingCat",

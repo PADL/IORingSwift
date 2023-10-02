@@ -43,7 +43,7 @@ extension Message: CustomStringConvertible {
 }
 
 public extension IORing {
-  struct AsyncByteSequence: AsyncSequence {
+  struct AsyncByteSequence: AsyncSequence, Sendable {
     public typealias Element = UInt8
 
     let ring: IORing

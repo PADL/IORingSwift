@@ -15,6 +15,7 @@
 //
 
 import AsyncAlgorithms
+@preconcurrency
 import AsyncExtensions
 import Glibc
 import IORing
@@ -264,7 +265,7 @@ private func parsePresentationAddress(_ presentationAddress: String) -> (String,
   return (String(addressPort.first!), port)
 }
 
-public protocol SocketAddress {
+public protocol SocketAddress: Sendable {
   static var family: sa_family_t { get }
 
   init(family: sa_family_t, presentationAddress: String) throws
@@ -290,7 +291,7 @@ extension SocketAddress {
   }
 }
 
-extension sockaddr: SocketAddress {
+extension sockaddr: SocketAddress, @unchecked Sendable {
   public static var family: sa_family_t {
     sa_family_t(AF_UNSPEC)
   }
@@ -372,7 +373,7 @@ extension sockaddr: SocketAddress {
   }
 }
 
-extension sockaddr_in: SocketAddress {
+extension sockaddr_in: SocketAddress, @unchecked Sendable {
   public static var family: sa_family_t {
     sa_family_t(AF_INET)
   }
@@ -424,7 +425,7 @@ extension sockaddr_in: SocketAddress {
   }
 }
 
-extension sockaddr_in6: SocketAddress {
+extension sockaddr_in6: SocketAddress, @unchecked Sendable {
   public static var family: sa_family_t {
     sa_family_t(AF_INET6)
   }
@@ -476,7 +477,7 @@ extension sockaddr_in6: SocketAddress {
   }
 }
 
-extension sockaddr_un: SocketAddress {
+extension sockaddr_un: SocketAddress, @unchecked Sendable {
   public static var family: sa_family_t {
     sa_family_t(AF_LOCAL)
   }
@@ -539,7 +540,7 @@ extension sockaddr_un: SocketAddress {
   }
 }
 
-extension sockaddr_storage: SocketAddress {
+extension sockaddr_storage: SocketAddress, @unchecked Sendable {
   public static var family: sa_family_t {
     sa_family_t(AF_UNSPEC)
   }
