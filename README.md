@@ -25,7 +25,7 @@ Public API provides structured concurrency wrappers around common operations suc
 Examples
 --------
 
-Here's an example of a TCP echo server, adapted from [IORingTCPEcho](blob/main/Examples/IORingTCPEcho/IORingTCPEcho.swift).
+Here's an example of a TCP echo server, adapted from [IORingTCPEcho](Examples/IORingTCPEcho/IORingTCPEcho.swift).
 
 ```swift
 import AsyncExtensions
