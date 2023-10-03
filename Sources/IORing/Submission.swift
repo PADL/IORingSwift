@@ -564,3 +564,15 @@ private func opcodeDescription(_ opcode: io_uring_op) -> String {
     "unknown"
   }
 }
+
+extension Submission: Equatable {
+  public nonisolated static func == (lhs: Submission, rhs: Submission) -> Bool {
+    ObjectIdentifier(lhs) == ObjectIdentifier(rhs)
+  }
+}
+
+extension Submission: Hashable {
+  public nonisolated func hash(into hasher: inout Hasher) {
+    ObjectIdentifier(self).hash(into: &hasher)
+  }
+}
