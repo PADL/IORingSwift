@@ -11,7 +11,45 @@ The package consists of two libraries:
 * [IORingUtils](Sources/IORingUtils), an optional library of helper functions
 * [IORingFoundation](Sources/IORingFoundation), an optional library for using with Foundation
 
-The intention is that this will also eventually support the real-time I/O subsystem in Zephyr, for use with SwiftIO.
+The intention is that this will also eventually support the real-time I/O subsystem in Zephyr, for use with [SwiftIO](https://github.com/madmachineio/SwiftIO) and its wrapper cousin [AsyncSwiftIO](https://github.com/PADL/LinuxHalSwiftIO/tree/main/Sources/AsyncSwiftIO).
+
+Architecture
+------------
+
+IORing operations are isolated to the `IORingActor` global actor.
+
+IORing is generally designed to be used as a singleton (`IORing.shared`), however because of some present API limitations to do with allocating fixed buffers, you may need to allocate separate instances. At present all instances share the same actor context and `io_uring` work queue, so there is no performance benefit to allocating more instances. (This should be considered an implementation detail, however.)
+
+Public API provides structured concurrency wrappers around common operations such as reading and writing. Multishot APIs, such as `accept(2)`, which can return multiple completions over time return an `AnyAsyncSequence`. Internally, wrappers allocate a concrete instance of `Submission<T>`, representing an initialized Submission Queue Entry (SQE), which is then submitted to the `io_uring`. Completion handlers are handled by having `libdispatch` monitor an `eventfd(2)` representing available completions. The `user_data` in each queue entry is a block, which executes the `onCompletion(cqe:)` method of the `Submission<T>` instance in the ring's isolated context. Care must be taken to manager pointer lifetimes across the event lifecycle.
+
+Examples
+--------
+
+Here's an example of a TCP echo server, adapted from [IORingTCPEcho](blob/main/Examples/IORingTCPEcho/IORingTCPEcho.swift).
+
+```swift
+import AsyncExtensions
+import IORing
+import IORingUtils
+
+let socket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_INET), type: SOCK_STREAM, protocol: 0)
+try socket.setReuseAddr()
+try socket.setTcpNoDelay()
+try socket.bind(port: 10000)
+try socket.listen(backlog: 10)
+
+let clients: AnyAsyncSequence<Socket> = try await socket.accept()
+for try await client in clients {
+    Task {
+        repeat {
+            let data = try await client.receive(count: bufferSize)
+            try await client.send(data)
+        } while true
+    }
+}
+```
+
+Further examples can be found in [Examples](Examples).
 
 Notes
 -----
