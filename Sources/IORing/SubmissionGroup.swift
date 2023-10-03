@@ -57,9 +57,9 @@ actor SubmissionGroup<T: Sendable> {
   /// will never be submitted.
   ///
   func enqueue(submission: SingleshotSubmission<T>) {
+    submissions.append(submission)
     queue.enqueue { group in
       await submission.enqueue()
-      group.submissions.append(submission)
     }
   }
 
