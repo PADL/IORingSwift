@@ -20,8 +20,7 @@ jobs:
         release-version: 5.9
     - name: Install packages
       run: sudo apt-get install -y liburing-dev
-    - name: Env
-      run: pwd && ls -al
+    - uses: actions/checkout@v3
     - name: Build
       run: swift build -v
     - name: Run tests
