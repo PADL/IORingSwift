@@ -1,4 +1,4 @@
-@testable import IORingSwift
+@testable import IORing
 import XCTest
 
 final class IORingSwiftTests: XCTestCase {
