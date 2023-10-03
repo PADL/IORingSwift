@@ -18,6 +18,10 @@ jobs:
     - uses: sersoft-gmbh/swifty-linux-action@v3
       with:
         release-version: 5.9
+    - name: Install packages
+      run: sudo apt-get install -y liburing-dev
+    - name: Env
+      run: pwd && ls -al
     - name: Build
       run: swift build -v
     - name: Run tests
