@@ -44,11 +44,11 @@ public final class IORing: CustomStringConvertible {
   private let entries: Int
   private let ringFd: Int32
 
-  final class FixedBuffer {
+  private final class FixedBuffer {
     let count: Int
-    let size: Int
-    var storage: UnsafeMutablePointer<UInt8>
-    var indices: UnsafeMutableBufferPointer<iovec>
+    private let size: Int
+    private var storage: UnsafeMutablePointer<UInt8>
+    private var indices: UnsafeMutableBufferPointer<iovec>
 
     var iov: UnsafeMutablePointer<iovec> {
       indices.baseAddress!
@@ -114,6 +114,7 @@ public final class IORing: CustomStringConvertible {
 
   struct SqeFlags: OptionSet {
     typealias RawValue = UInt8
+
     let rawValue: RawValue
 
     init(rawValue: RawValue) {
