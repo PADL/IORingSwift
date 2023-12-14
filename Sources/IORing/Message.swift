@@ -88,13 +88,13 @@ public final class Message: @unchecked Sendable {
     self.address = address
     self.buffer = buffer
     self.flags = flags
-    Swift.withUnsafeMutablePointer(to: &self.address) { pointer in
-      // forces didSet to be called
-      _ = pointer
-    }
     self.buffer.withUnsafeMutableBytes { bytes in
-      // forces didSet to be called
-      _ = bytes
+      iov_storage.iov_base = bytes.baseAddress
+      iov_storage.iov_len = bytes.count
+    }
+    Swift.withUnsafeMutablePointer(to: &self.address) { pointer in
+      storage.msg_name = UnsafeMutableRawPointer(pointer)
+      storage.msg_namelen = (try? pointer.pointee.size) ?? 0
     }
     Swift.withUnsafeMutablePointer(to: &iov_storage) { iov_storage in
       storage.msg_iov = iov_storage
