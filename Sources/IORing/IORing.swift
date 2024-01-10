@@ -170,9 +170,9 @@ public final class IORing: CustomStringConvertible {
     if let ioRingQueueEntriesEnvVar = getenv("SWIFT_IORING_QUEUE_ENTRIES"),
        let entries = Int(String(cString: ioRingQueueEntriesEnvVar))
     {
-      return entries
+      entries
     } else {
-      return DefaultIORingQueueEntries
+      DefaultIORingQueueEntries
     }
   }
 
