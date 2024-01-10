@@ -25,6 +25,8 @@ void *io_uring_sqe_set_block(struct io_uring_sqe *sqe,
 
 static void invoke_cqe_block(struct io_uring_cqe *cqe) {
   auto block = reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
+  if (block == nullptr)
+    return; // FIXME: this seems to trigger since adding cancellation support, is it a race?
   block(cqe);
   if ((cqe->flags & IORING_CQE_F_MORE) == 0) {
     _Block_release(block);
