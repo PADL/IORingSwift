@@ -21,6 +21,22 @@ import AsyncExtensions
 import CIORingShims
 import Glibc
 
+// IORING_ASYNC_CANCEL_xxx not in our liburing
+struct AsyncCancelFlags: OptionSet {
+  typealias RawValue = CInt
+
+  let rawValue: RawValue
+
+  init(rawValue: RawValue) {
+    self.rawValue = rawValue
+  }
+
+  static let all = AsyncCancelFlags(rawValue: 1 << 0)
+  static let fd = AsyncCancelFlags(rawValue: 1 << 1)
+  static let any = AsyncCancelFlags(rawValue: 1 << 2)
+  static let fdFixed = AsyncCancelFlags(rawValue: 1 << 3)
+}
+
 @IORingActor
 class Submission<T: Sendable>: CustomStringConvertible {
   // reference to owner which owns ring
@@ -34,6 +50,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
   fileprivate let opcode: io_uring_op
   /// assigned submission queue entry for this object
   private let sqe: UnsafeMutablePointer<io_uring_sqe>
+  private var cancellationToken: UnsafeMutableRawPointer?
 
   public nonisolated var description: String {
     "(\(type(of: self)))(fd: \(fd.fileDescriptor), opcode: \(opcodeDescription(opcode)), handler: \(String(describing: handler)))"
@@ -88,11 +105,23 @@ class Submission<T: Sendable>: CustomStringConvertible {
   /// because actors are reentrant, `setBlock()` must be called immediately after
   /// the io_uring assigned a SQE (or, at least before any suspension point)
   private func setBlock() {
-    io_uring_sqe_set_block(sqe) { cqe in
+    cancellationToken = io_uring_sqe_set_block(sqe) { cqe in
       let cqe = cqe.pointee
       Task { @IORingActor in
         await self.onCompletion(cqe: cqe)
       }
+    }
+  }
+
+  func cancel() async throws {
+    do {
+      precondition(cancellationToken != nil)
+      let sqe = try ring.getSqe()
+      io_uring_prep_cancel(sqe, cancellationToken, AsyncCancelFlags.all.rawValue)
+      try ring.submit()
+    } catch {
+      IORing.logDebug(message: "failed to cancel submission \(self)")
+      throw error
     }
   }
 
@@ -197,17 +226,22 @@ final class SingleshotSubmission<T: Sendable>: Submission<T> {
   }
 
   func submit() async throws -> T {
-    try await withCheckedThrowingContinuation { continuation in
-      // guaranteed to run immediately
-      self.continuation = continuation
-      Task {
-        if group != nil {
-          await ready()
-        } else {
-          try ring.submit()
+    try await withTaskCancellationHandler(operation: {
+      try await withCheckedThrowingContinuation { continuation in
+        // guaranteed to run immediately
+        self.continuation = continuation
+        Task {
+          if group != nil {
+            await ready()
+          } else {
+            try ring.submit()
+          }
         }
       }
-    }
+    }, onCancel: {
+      // if the operation supports it, will cause the operation to fail early
+      Task { @IORingActor in try await cancel() }
+    })
   }
 
   override func onCompletion(cqe: io_uring_cqe) async {
@@ -451,6 +485,9 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
         // if IORING_CQE_F_MORE is not set, we need to issue a new request
         // try to do this implictily
         resubmit()
+      }
+      if Task.isCancelled {
+        try await cancel()
       }
     } catch {
       channel.fail(error)

@@ -33,8 +33,9 @@ int32_t io_uring_op_to_int(io_uring_op op);
 typedef void (^io_uring_cqe_block)(struct io_uring_cqe *_Nonnull);
 
 /// Retains and sets block in submission queue event
-void io_uring_sqe_set_block(struct io_uring_sqe *_Nonnull sqe,
-                            _Nonnull io_uring_cqe_block block);
+void * _Nonnull
+io_uring_sqe_set_block(struct io_uring_sqe *_Nonnull sqe,
+                       _Nonnull io_uring_cqe_block block);
 
 /// Enrol a `io_uring` for `io_uring_cqe_block` processing
 int io_uring_init_cq_handler(void *_Nullable *_Nonnull,
