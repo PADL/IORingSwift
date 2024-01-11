@@ -45,8 +45,8 @@ public final class IORing: CustomStringConvertible {
   private let ringFd: Int32
 
   private final class FixedBuffer {
-    let count: Int
-    private let size: Int
+    fileprivate let count: Int
+    fileprivate let size: Int
     private var storage: UnsafeMutablePointer<UInt8>
     private var indices: UnsafeMutableBufferPointer<iovec>
 
@@ -784,7 +784,7 @@ public extension IORing {
     _ body: (UnsafeMutableBufferPointer<UInt8>) throws -> U
   ) async throws -> U {
     guard let fixedBuffers else { throw Errno.invalidArgument }
-    let count = count ?? fixedBuffers.count
+    let count = count ?? fixedBuffers.size
     try fixedBuffers.validate(index: bufferIndex, count: count, offset: bufferOffset)
 
     let nread: Int = try await io_uring_op_read_fixed(
@@ -809,7 +809,7 @@ public extension IORing {
     to fd: FileDescriptorRepresentable
   ) async throws -> Int {
     guard let fixedBuffers else { throw Errno.invalidArgument }
-    let count = count ?? fixedBuffers.count
+    let count = count ?? fixedBuffers.size
     guard count <= data.count else { throw Errno.outOfRange }
     try fixedBuffers.validate(index: bufferIndex, count: count, offset: bufferOffset)
 
