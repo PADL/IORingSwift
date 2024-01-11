@@ -22,10 +22,11 @@ import IORingUtils
 public struct IORingDeviceSpy {
   private let blockSize: Int
   private let ring: IORing
+  private let fixed = false
 
   public static func main() async throws {
     if CommandLine.arguments.count < 2 {
-      print("Usage: \(CommandLine.arguments[0]) [device] <[block_size]>")
+      Swift.print("Usage: \(CommandLine.arguments[0]) [device] <[block_size]>")
       exit(1)
     }
 
@@ -47,7 +48,9 @@ public struct IORingDeviceSpy {
     ring = IORing.shared
     self.blockSize = blockSize
 
-    try await ring.registerFixedBuffers(count: 1, size: blockSize)
+    if fixed {
+      try await ring.registerFixedBuffers(count: 1, size: blockSize)
+    }
   }
 
   func spy(device: String) async throws {
@@ -60,10 +63,29 @@ public struct IORingDeviceSpy {
       try fd.set(tty: tty)
     }
 
+    if fixed {
+      try await readFixed(from: fd)
+    } else {
+      try await read(from: fd)
+    }
+  }
+
+  func print(_ data: [UInt8]) {
+    Swift.print(data.map { String(format: "%02x", $0) }.joined())
+  }
+
+  func readFixed(from fd: FileDescriptorRepresentable) async throws {
     repeat {
       try await ring.readFixed(count: blockSize, bufferIndex: 0, from: fd) {
-        print($0.map { String(format: "%02x", $0) }.joined())
+        self.print([UInt8]($0))
       }
+    } while !Task.isCancelled
+  }
+
+  func read(from fd: FileDescriptorRepresentable) async throws {
+    repeat {
+      let bytes = try await ring.read(count: blockSize, from: fd)
+      self.print(bytes)
     } while !Task.isCancelled
   }
 }
