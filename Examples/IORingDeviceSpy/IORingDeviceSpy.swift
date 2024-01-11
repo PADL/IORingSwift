@@ -1,0 +1,69 @@
+//
+// Copyright (c) 2024 PADL Software Pty Ltd
+//
+// Licensed under the Apache License, Version 2.0 (the License);
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an 'AS IS' BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+import Glibc
+import IORing
+import IORingUtils
+
+@main
+public struct IORingDeviceSpy {
+  private let blockSize: Int
+  private let ring: IORing
+
+  public static func main() async throws {
+    if CommandLine.arguments.count < 2 {
+      print("Usage: \(CommandLine.arguments[0]) [device] <[block_size]>")
+      exit(1)
+    }
+
+    let blockSize: Int
+
+    if CommandLine.arguments.count > 2 {
+      blockSize = Int(CommandLine.arguments[2])!
+    } else {
+      blockSize = 1
+    }
+
+    let spy = try await IORingDeviceSpy(blockSize: blockSize)
+    let device = CommandLine.arguments[1]
+
+    try await spy.spy(device: device)
+  }
+
+  init(blockSize: Int = 1) async throws {
+    ring = IORing.shared
+    self.blockSize = blockSize
+
+    try await ring.registerFixedBuffers(count: 1, size: blockSize)
+  }
+
+  func spy(device: String) async throws {
+    let fd = try FileHandle(fileDescriptor: open(device, O_RDONLY), closeOnDealloc: true)
+
+    try fd.setBlocking(false)
+    if fd.isATty {
+      var tty = try fd.getTty()
+      try tty.setN81(speed: 115_200)
+      try fd.set(tty: tty)
+    }
+
+    repeat {
+      try await ring.readFixed(count: blockSize, bufferIndex: 0, from: fd) {
+        print($0.map { String(format: "%02x", $0) }.joined())
+      }
+    } while !Task.isCancelled
+  }
+}

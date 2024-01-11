@@ -147,6 +147,12 @@ let package = Package(
       path: "Examples/IORingUDPServer",
       linkerSettings: [] + ASANLinkerSettings
     ),
+    .executableTarget(
+      name: "IORingDeviceSpy",
+      dependencies: ["IORing", "IORingUtils"],
+      path: "Examples/IORingDeviceSpy",
+      linkerSettings: [] + ASANLinkerSettings
+    ),
   ],
   cLanguageStandard: .c18,
   cxxLanguageStandard: .cxx20
