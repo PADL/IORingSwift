@@ -66,42 +66,49 @@ public final class IORing: CustomStringConvertible {
       }
     }
 
-    func validate(index: UInt16, count: Int, offset: Int) throws {
-      guard index < count, count + offset <= size else {
+    func validate(
+      count: Int,
+      bufferIndex: UInt16,
+      bufferOffset: Int
+    ) throws {
+      guard bufferIndex < self.count, count + bufferOffset <= size else {
         throw Errno.outOfRange
       }
     }
 
     func unsafeMutablePointer(
-      at index: UInt16,
+      at bufferIndex: UInt16,
       range: Range<Int>
     ) throws -> UnsafeMutableBufferPointer<UInt8> {
       try unsafeMutablePointer(
-        at: index,
+        at: bufferIndex,
         count: range.upperBound - range.lowerBound,
-        offset: range.lowerBound
+        bufferOffset: range.lowerBound
       )
     }
 
     func unsafeMutablePointer(
-      at index: UInt16,
+      at bufferIndex: UInt16,
       count: Int,
-      offset: Int
+      bufferOffset: Int
     ) throws -> UnsafeMutableBufferPointer<UInt8> {
-      guard index < count, count + offset <= size else {
+      guard bufferIndex < count, count + bufferOffset <= size else {
         throw Errno.outOfRange
       }
 
-      return UnsafeMutableBufferPointer(start: storage + Int(index) * size + offset, count: count)
+      return UnsafeMutableBufferPointer(
+        start: storage + Int(bufferIndex) * size + bufferOffset,
+        count: count
+      )
     }
 
     func unsafeMutableRawPointer(
-      at index: UInt16,
+      at bufferIndex: UInt16,
       count: Int,
-      offset: Int
+      bufferOffset: Int
     ) throws -> UnsafeMutableRawPointer {
       try UnsafeMutableRawPointer(
-        unsafeMutablePointer(at: index, count: count, offset: offset)
+        unsafeMutablePointer(at: bufferIndex, count: count, bufferOffset: bufferOffset)
           .baseAddress!
       )
     }
@@ -410,7 +417,7 @@ private extension IORing {
       address: fixedBuffers!.unsafeMutableRawPointer(
         at: bufferIndex,
         count: count,
-        offset: bufferOffset
+        bufferOffset: bufferOffset
       ),
       length: CUnsignedInt(count),
       offset: offset,
@@ -458,7 +465,7 @@ private extension IORing {
       address: fixedBuffers!.unsafeMutableRawPointer(
         at: bufferIndex,
         count: count,
-        offset: bufferOffset
+        bufferOffset: bufferOffset
       ),
       length: CUnsignedInt(count),
       offset: offset,
@@ -785,7 +792,11 @@ public extension IORing {
   ) async throws -> U {
     guard let fixedBuffers else { throw Errno.invalidArgument }
     let count = count ?? fixedBuffers.size
-    try fixedBuffers.validate(index: bufferIndex, count: count, offset: bufferOffset)
+    try fixedBuffers.validate(
+      count: count,
+      bufferIndex: bufferIndex,
+      bufferOffset: bufferOffset
+    )
 
     let nread: Int = try await io_uring_op_read_fixed(
       fd: fd, count: count, offset: offset, bufferIndex: bufferIndex,
@@ -795,7 +806,7 @@ public extension IORing {
     let address = try fixedBuffers.unsafeMutablePointer(
       at: bufferIndex,
       count: nread,
-      offset: bufferOffset
+      bufferOffset: bufferOffset
     )
     return try body(address)
   }
@@ -811,12 +822,16 @@ public extension IORing {
     guard let fixedBuffers else { throw Errno.invalidArgument }
     let count = count ?? fixedBuffers.size
     guard count <= data.count else { throw Errno.outOfRange }
-    try fixedBuffers.validate(index: bufferIndex, count: count, offset: bufferOffset)
+    try fixedBuffers.validate(
+      count: count,
+      bufferIndex: bufferIndex,
+      bufferOffset: bufferOffset
+    )
 
     let address = try fixedBuffers.unsafeMutableRawPointer(
       at: bufferIndex,
       count: count,
-      offset: bufferOffset
+      bufferOffset: bufferOffset
     )
     data.withUnsafeBytes { bytes in
       _ = memcpy(address, UnsafeRawPointer(bytes.baseAddress!), count)
@@ -842,12 +857,16 @@ public extension IORing {
     guard let fixedBuffers else { throw Errno.invalidArgument }
     let count = count ?? fixedBuffers.count
     guard count <= data.count else { throw Errno.outOfRange }
-    try fixedBuffers.validate(index: bufferIndex, count: count, offset: bufferOffset)
+    try fixedBuffers.validate(
+      count: count,
+      bufferIndex: bufferIndex,
+      bufferOffset: bufferOffset
+    )
 
     let address = try fixedBuffers.unsafeMutableRawPointer(
       at: bufferIndex,
       count: count,
-      offset: bufferOffset
+      bufferOffset: bufferOffset
     )
     data.withUnsafeBytes { bytes in
       _ = memcpy(address, UnsafeRawPointer(bytes.baseAddress!), count)
@@ -892,7 +911,11 @@ public extension IORing {
   ) async throws {
     guard let fixedBuffers else { throw Errno.invalidArgument }
     let count = count ?? fixedBuffers.count
-    try fixedBuffers.validate(index: bufferIndex, count: count, offset: 0)
+    try fixedBuffers.validate(
+      count: count,
+      bufferIndex: bufferIndex,
+      bufferOffset: 0
+    )
 
     let result = try await withSubmissionGroup { (group: SubmissionGroup<Int>) in
       let _: SingleshotSubmission<Int> = try await io_uring_op_read_fixed(
