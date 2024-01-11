@@ -22,7 +22,7 @@ import IORingUtils
 public struct IORingDeviceSpy {
   private let blockSize: Int
   private let ring: IORing
-  private let fixed = false
+  private let fixed = true
 
   public static func main() async throws {
     if CommandLine.arguments.count < 2 {
