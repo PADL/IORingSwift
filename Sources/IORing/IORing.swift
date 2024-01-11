@@ -92,7 +92,7 @@ public final class IORing: CustomStringConvertible {
       count: Int,
       bufferOffset: Int
     ) throws -> UnsafeMutableBufferPointer<UInt8> {
-      guard bufferIndex < count, count + bufferOffset <= size else {
+      guard bufferIndex < self.count, count + bufferOffset <= size else {
         throw Errno.outOfRange
       }
 
