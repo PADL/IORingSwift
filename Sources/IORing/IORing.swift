@@ -422,7 +422,6 @@ private extension IORing {
     }
   }
 
-  // FIXME: support partial reads
   func io_uring_op_read_fixed(
     fd: FileDescriptorRepresentable,
     count: Int,
@@ -471,7 +470,6 @@ private extension IORing {
     }
   }
 
-  // FIXME: support partial writes
   func io_uring_op_write_fixed(
     fd: FileDescriptorRepresentable,
     count: Int,
@@ -679,34 +677,19 @@ public extension IORing {
     count: Int? = nil,
     offset: Int = -1,
     from fd: FileDescriptorRepresentable
-  ) async throws -> Bool {
-    var nread = 0
-    let count = count ?? buffer.count
-
-    // handle short reads; breaking reads into blocks should be done by caller
-    repeat {
-      let nbytes = try await io_uring_op_read(
-        fd: fd,
-        buffer: &buffer,
-        count: count - nread,
-        offset: offset == -1 ? -1 : offset + nread
-      )
-      if nbytes == 0 {
-        // done reading
-        return false
-      }
-      nread += nbytes
-    } while nread < count
-
-    return true
+  ) async throws -> Int {
+    try await io_uring_op_read(
+      fd: fd,
+      buffer: &buffer,
+      count: count ?? buffer.count,
+      offset: offset
+    )
   }
 
   func read(count: Int, from fd: FileDescriptorRepresentable) async throws -> [UInt8] {
     var buffer = [UInt8](repeating: 0, count: count)
-    guard try await read(into: &buffer, count: count, from: fd) else {
-      return []
-    }
-    return buffer
+    let nread = try await read(into: &buffer, count: count, from: fd)
+    return Array(buffer.prefix(nread))
   }
 
   func write(
@@ -714,19 +697,13 @@ public extension IORing {
     count: Int? = nil,
     offset: Int = -1,
     to fd: FileDescriptorRepresentable
-  ) async throws {
-    var nwritten = 0
-    let count = count ?? data.count
-
-    // handle short writes; breaking writes into blocks should be done by caller
-    repeat {
-      nwritten += try await io_uring_op_write(
-        fd: fd,
-        buffer: data,
-        count: count - nwritten,
-        offset: offset == -1 ? -1 : offset + nwritten
-      )
-    } while nwritten < count
+  ) async throws -> Int {
+    try await io_uring_op_write(
+      fd: fd,
+      buffer: data,
+      count: count ?? data.count,
+      offset: offset
+    )
   }
 
   func receive(

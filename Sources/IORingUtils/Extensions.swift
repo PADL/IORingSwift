@@ -59,7 +59,7 @@ public extension IORing {
         }
 
         var buffer = [UInt8](repeating: 0, count: 1)
-        if try await ring.read(into: &buffer, count: 1, from: fd) == false {
+        if try await ring.read(into: &buffer, count: 1, from: fd) != 1 {
           return nil
         }
         return buffer.first

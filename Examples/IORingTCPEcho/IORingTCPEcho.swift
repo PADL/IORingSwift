@@ -57,9 +57,11 @@ public struct IORingTCPEcho {
       var more = false
       repeat {
         var buffer = [UInt8](repeating: 0, count: 1)
-        more = try await client.read(into: &buffer, count: 1)
+        more = try await client.read(into: &buffer, count: 1) == 1
         if more {
-          try await client.write(buffer, count: 1)
+          guard try await client.write(buffer, count: 1) == 1 else {
+            break
+          }
         }
       } while more
     } catch {

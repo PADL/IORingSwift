@@ -189,7 +189,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     try await ring.connect(fileHandle, to: address)
   }
 
-  public func read(into buffer: inout [UInt8], count: Int) async throws -> Bool {
+  public func read(into buffer: inout [UInt8], count: Int) async throws -> Int {
     guard let fileHandle else { throw Errno.badFileDescriptor }
     return try await ring.read(
       into: &buffer,
@@ -207,9 +207,9 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     )
   }
 
-  public func write(_ buffer: [UInt8], count: Int) async throws {
+  public func write(_ buffer: [UInt8], count: Int) async throws -> Int {
     guard let fileHandle else { throw Errno.badFileDescriptor }
-    try await ring.write(
+    return try await ring.write(
       buffer,
       count: count,
       offset: -1,
