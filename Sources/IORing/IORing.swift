@@ -48,21 +48,26 @@ public final class IORing: CustomStringConvertible {
     fileprivate let count: Int
     fileprivate let size: Int
     private var storage: UnsafeMutablePointer<UInt8>
-    private var indices: UnsafeMutableBufferPointer<iovec>
+    private var iovecs: UnsafeMutableBufferPointer<iovec>
 
     var iov: UnsafeMutablePointer<iovec> {
-      indices.baseAddress!
+      iovecs.baseAddress!
     }
 
     init(count: Int, size: Int) {
-      self.count = count
-      self.size = size
+      self.count = count // number of buffers
+      self.size = size // size of each buffer
+
+      // use allocate() so we have a stable address, but allocate in a contiguous block
       storage = .allocate(capacity: size * count)
-      indices = .allocate(capacity: count)
+      storage.initialize(to: 0)
+
+      iovecs = .allocate(capacity: count)
+      iovecs.initialize(repeating: iovec())
 
       for i in 0..<count {
-        indices[i].iov_base = UnsafeMutableRawPointer(storage + i * size)
-        indices[i].iov_len = size
+        iovecs[i].iov_base = UnsafeMutableRawPointer(storage + i * size)
+        iovecs[i].iov_len = size
       }
     }
 
@@ -92,12 +97,11 @@ public final class IORing: CustomStringConvertible {
       count: Int,
       bufferOffset: Int
     ) throws -> UnsafeMutableBufferPointer<UInt8> {
-      guard bufferIndex < self.count, count + bufferOffset <= size else {
-        throw Errno.outOfRange
-      }
+      try validate(count: count, bufferIndex: bufferIndex, bufferOffset: bufferOffset)
 
       return UnsafeMutableBufferPointer(
-        start: storage + Int(bufferIndex) * size + bufferOffset,
+        start: iovecs[Int(bufferIndex)].iov_base
+          .bindMemory(to: UInt8.self, capacity: size) + bufferOffset,
         count: count
       )
     }
@@ -115,7 +119,7 @@ public final class IORing: CustomStringConvertible {
 
     deinit {
       storage.deallocate()
-      indices.deallocate()
+      iovecs.deallocate()
     }
   }
 
@@ -285,7 +289,6 @@ public final class IORing: CustomStringConvertible {
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
     bufferIndex: UInt16 = 0,
-    bufferGroup: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) async throws -> T {
@@ -300,7 +303,6 @@ public final class IORing: CustomStringConvertible {
       ioprio: ioprio,
       moreFlags: moreFlags,
       bufferIndex: bufferIndex,
-      bufferGroup: bufferGroup,
       socketAddress: socketAddress,
       handler: handler
     ).submit()
@@ -314,8 +316,7 @@ public final class IORing: CustomStringConvertible {
     flags: IORing.SqeFlags = IORing.SqeFlags(),
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
-    bufferIndex: UInt16 = 0,
-    bufferGroup: UInt16 = 0,
+    bufferIndexOrGroup: UInt16 = 0,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) throws -> AsyncThrowingChannel<T, Error> {
     try MultishotSubmission(
@@ -328,8 +329,7 @@ public final class IORing: CustomStringConvertible {
       flags: flags,
       ioprio: ioprio,
       moreFlags: moreFlags,
-      bufferIndex: bufferIndex,
-      bufferGroup: bufferGroup,
+      bufferIndexOrGroup: bufferIndexOrGroup,
       socketAddress: nil,
       handler: handler
     ).submit()
@@ -403,10 +403,10 @@ private extension IORing {
 
   func io_uring_op_read_fixed(
     fd: FileDescriptorRepresentable,
-    count: Int,
+    count: Int, // number of bytes to read
     offset: Int, // offset into the file we are reading
-    bufferIndex: UInt16,
-    bufferOffset: Int, // offset into the fixed buffer
+    bufferIndex: UInt16, // buffer selector
+    bufferOffset: Int, // offset into the fixed buffers
     link: Bool = false,
     group: SubmissionGroup<Int>? = nil
   ) async throws -> SingleshotSubmission<Int> {
@@ -431,9 +431,9 @@ private extension IORing {
 
   func io_uring_op_read_fixed(
     fd: FileDescriptorRepresentable,
-    count: Int,
+    count: Int, // number of bytes to write
     offset: Int, // offset into the file we are writing
-    bufferIndex: UInt16,
+    bufferIndex: UInt16, // buffer selector
     bufferOffset: Int, // offset into the fixed buffer
     link: Bool = false,
     group: SubmissionGroup<Int>? = nil
@@ -593,7 +593,7 @@ private extension IORing {
         flags: SqeFlags.bufferSelect,
         ioprio: RecvSendIoPrio.multishot,
         moreFlags: flags,
-        bufferGroup: holder.bufferGroup
+        bufferIndexOrGroup: holder.bufferGroup
       ) { [holder] cqe in
         // because the default for multishots is to resubmit when IORING_CQE_F_MORE is unset,
         // we don't need to deallocate the buffer here. FIXME: do this when channel closes.

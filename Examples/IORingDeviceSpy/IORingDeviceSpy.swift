@@ -22,7 +22,7 @@ import IORingUtils
 public struct IORingDeviceSpy {
   private let blockSize: Int
   private let ring: IORing
-  private let fixed = true
+  private let fixed = true // compile time constant for using fixed buffers
 
   public static func main() async throws {
     if CommandLine.arguments.count < 2 {
@@ -49,7 +49,8 @@ public struct IORingDeviceSpy {
     self.blockSize = blockSize
 
     if fixed {
-      try await ring.registerFixedBuffers(count: 1, size: blockSize)
+      // allocate more than one buffer to test we can access non-zero indexed buffers
+      try await ring.registerFixedBuffers(count: 2, size: blockSize)
     }
   }
 
@@ -76,7 +77,7 @@ public struct IORingDeviceSpy {
 
   func readFixed(from fd: FileDescriptorRepresentable) async throws {
     repeat {
-      try await ring.readFixed(count: blockSize, bufferIndex: 0, from: fd) {
+      try await ring.readFixed(count: blockSize, bufferIndex: 1, from: fd) {
         self.print([UInt8]($0))
       }
     } while !Task.isCancelled

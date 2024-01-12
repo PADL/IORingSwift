@@ -92,14 +92,12 @@ class Submission<T: Sendable>: CustomStringConvertible {
     flags: UInt8,
     ioprio: UInt16,
     moreFlags: UInt32,
-    bufferIndex: UInt16,
-    bufferGroup: UInt16
+    bufferIndexOrGroup: UInt16
   ) {
     io_uring_sqe_set_flags(sqe, UInt32(flags))
     sqe.pointee.ioprio = ioprio
     sqe.pointee.fsync_flags = moreFlags
-    sqe.pointee.buf_index = bufferIndex
-    sqe.pointee.buf_group = bufferGroup
+    sqe.pointee.buf_index = bufferIndexOrGroup // this is an anonymous union
   }
 
   /// because actors are reentrant, `setBlock()` must be called immediately after
@@ -135,8 +133,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
     flags: IORing.SqeFlags = IORing.SqeFlags(),
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
-    bufferIndex: UInt16 = 0,
-    bufferGroup: UInt16 = 0,
+    bufferIndexOrGroup: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) throws {
@@ -151,8 +148,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
       flags: flags.rawValue,
       ioprio: ioprio,
       moreFlags: moreFlags,
-      bufferIndex: bufferIndex,
-      bufferGroup: bufferGroup
+      bufferIndexOrGroup: bufferIndexOrGroup
     )
     if let socketAddress {
       try socketAddress.withSockAddr { socketAddress in
@@ -199,7 +195,6 @@ final class SingleshotSubmission<T: Sendable>: Submission<T> {
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
     bufferIndex: UInt16 = 0,
-    bufferGroup: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
     group: SubmissionGroup<T>? = nil,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
@@ -215,8 +210,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T> {
       flags: flags,
       ioprio: ioprio,
       moreFlags: moreFlags,
-      bufferIndex: bufferIndex,
-      bufferGroup: bufferGroup,
+      bufferIndexOrGroup: bufferIndex,
       socketAddress: socketAddress,
       handler: handler
     )
@@ -305,7 +299,7 @@ final class BufferSubmission<U>: Submission<()> {
       length: UInt32(size),
       offset: offset,
       flags: flags,
-      bufferGroup: bufferGroup
+      bufferIndexOrGroup: bufferGroup
     ) { _ in }
   }
 
@@ -390,8 +384,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
   private let flags: IORing.SqeFlags
   private let ioprio: UInt16
   private let moreFlags: UInt32
-  private let bufferIndex: UInt16
-  private let bufferGroup: UInt16
+  private let bufferIndexOrGroup: UInt16
   private let socketAddress: sockaddr_storage?
 
   override init(
@@ -404,8 +397,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
     flags: IORing.SqeFlags = IORing.SqeFlags(),
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
-    bufferIndex: UInt16 = 0,
-    bufferGroup: UInt16 = 0,
+    bufferIndexOrGroup: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) throws {
@@ -415,8 +407,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
     self.flags = flags
     self.ioprio = ioprio
     self.moreFlags = moreFlags
-    self.bufferIndex = bufferIndex
-    self.bufferGroup = bufferGroup
+    self.bufferIndexOrGroup = bufferIndexOrGroup
     self.socketAddress = socketAddress
 
     try super.init(
@@ -429,8 +420,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
       flags: flags,
       ioprio: ioprio,
       moreFlags: moreFlags,
-      bufferIndex: bufferIndex,
-      bufferGroup: bufferGroup,
+      bufferIndexOrGroup: bufferIndexOrGroup,
       socketAddress: socketAddress,
       handler: handler
     )
@@ -447,8 +437,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
       flags: submission.flags,
       ioprio: submission.ioprio,
       moreFlags: submission.moreFlags,
-      bufferIndex: submission.bufferIndex,
-      bufferGroup: submission.bufferGroup,
+      bufferIndexOrGroup: submission.bufferIndexOrGroup,
       socketAddress: submission.socketAddress,
       handler: submission.handler
     )
