@@ -501,7 +501,7 @@ extension sockaddr_un: SocketAddress, @unchecked Sendable {
 
     try withUnsafeMutablePointer(to: &sun.sun_path) { path in
       let start = path.propertyBasePointer(to: \.0)!
-      let capacity = MemoryLayout.size(ofValue: path)
+      let capacity = MemoryLayout.size(ofValue: path.pointee)
       if capacity <= presentationAddress.utf8.count {
         throw Errno.outOfRange
       }
