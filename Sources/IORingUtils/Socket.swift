@@ -201,7 +201,11 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     var buffer = [UInt8]()
 
     repeat {
-      buffer += try await ring.read(count: count, from: fileHandle)
+      let _buffer = try await ring.read(count: count, from: fileHandle)
+      if _buffer.count == 0 {
+        break // EOF
+      }
+      buffer += _buffer
     } while awaitingAllRead && buffer.count < count
 
     return buffer
