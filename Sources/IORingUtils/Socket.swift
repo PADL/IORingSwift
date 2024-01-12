@@ -191,30 +191,36 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
 
   public func read(into buffer: inout [UInt8], count: Int) async throws -> Int {
     guard let fileHandle else { throw Errno.badFileDescriptor }
-    return try await ring.read(
-      into: &buffer,
-      count: count,
-      offset: -1,
-      from: fileHandle
-    )
+
+    return try await ring.read(into: &buffer, count: count, from: fileHandle)
   }
 
-  public func read(count: Int) async throws -> [UInt8] {
+  public func read(count: Int, awaitingAllRead: Bool) async throws -> [UInt8] {
     guard let fileHandle else { throw Errno.badFileDescriptor }
-    return try await ring.read(
-      count: count,
-      from: fileHandle
-    )
+
+    var buffer = [UInt8]()
+
+    repeat {
+      buffer += try await ring.read(count: count, from: fileHandle)
+    } while awaitingAllRead && buffer.count < count
+
+    return buffer
   }
 
-  public func write(_ buffer: [UInt8], count: Int) async throws -> Int {
+  public func write(_ buffer: [UInt8], count: Int, awaitingAllWritten: Bool) async throws -> Int {
     guard let fileHandle else { throw Errno.badFileDescriptor }
-    return try await ring.write(
-      buffer,
-      count: count,
-      offset: -1,
-      to: fileHandle
-    )
+
+    var nwritten = 0
+
+    repeat {
+      nwritten += try await ring.write(
+        Array(buffer[nwritten..<count]),
+        count: count - nwritten,
+        to: fileHandle
+      )
+    } while awaitingAllWritten && nwritten < count
+
+    return nwritten
   }
 
   public func receive(count: Int) async throws -> [UInt8] {
