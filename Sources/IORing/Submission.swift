@@ -118,7 +118,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
       io_uring_prep_cancel(sqe, cancellationToken, AsyncCancelFlags.all.rawValue)
       try ring.submit()
     } catch {
-      IORing.logDebug(message: "failed to cancel submission \(self)")
+      IORing.shared.logger.debug("failed to cancel submission \(self)")
       throw error
     }
   }
@@ -167,9 +167,9 @@ class Submission<T: Sendable>: CustomStringConvertible {
     guard cqe.res >= 0 else {
       let error = Errno(rawValue: cqe.res)
       if error != .brokenPipe {
-        IORing
-          .logDebug(
-            message: "\(type(of: self)) completion fileDescriptor: \(fd) opcode: \(opcodeDescription(opcode)) error: \(Errno(rawValue: cqe.res))"
+        IORing.shared.logger
+          .debug(
+            "\(type(of: self)) completion fileDescriptor: \(fd) opcode: \(opcodeDescription(opcode)) error: \(Errno(rawValue: cqe.res))"
           )
       }
       throw error
@@ -452,16 +452,10 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
     do {
       // this will allocate a new SQE with the same channel, fd, opcode and handler
       let resubmission = try MultishotSubmission(self)
-      IORing
-        .logDebug(
-          message: "resubmitting multishot submission \(resubmission)"
-        )
+      IORing.shared.logger.debug("resubmitting multishot submission \(resubmission)")
       _ = try resubmission.submit()
     } catch {
-      IORing
-        .logDebug(
-          message: "resubmitting multishot submission failed: \(error)"
-        )
+      IORing.shared.logger.debug("resubmitting multishot submission failed: \(error)")
       channel.fail(error)
     }
   }

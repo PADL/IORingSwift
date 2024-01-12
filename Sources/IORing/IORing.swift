@@ -22,6 +22,7 @@ import CIORingShims
 @_implementationOnly
 import CIOURing
 import Glibc
+import Logging
 
 // MARK: - actor
 
@@ -43,6 +44,8 @@ public final class IORing: CustomStringConvertible {
   private var nextBufferGroup: UInt16 = 1
   private let entries: Int
   private let ringFd: Int32
+
+  var logger = Logger(label: "com.padl.IORing")
 
   private final class FixedBuffer {
     fileprivate let count: Int
@@ -171,10 +174,6 @@ public final class IORing: CustomStringConvertible {
     withUnsafePointer(to: self) { pointer in
       "\(type(of: self))(\(pointer))"
     }
-  }
-
-  static func logDebug(message: String, functionName: String = #function) {
-    debugPrint("IORing.\(functionName): \(message)")
   }
 
   private nonisolated static func getIORingQueueEntries() -> Int {
