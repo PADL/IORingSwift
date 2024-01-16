@@ -60,7 +60,7 @@ let package = Package(
     .package(url: "https://github.com/apple/swift-async-algorithms", from: "0.1.0"),
     .package(url: "https://github.com/lhoward/AsyncExtensions", branch: "linux"),
     .package(url: "https://github.com/dfed/swift-async-queue", from: "0.4.0"),
-    .package(url: "https://github.com/apple/swift-log", from: "1.0.0"),
+    .package(url: "https://github.com/apple/swift-log", branch: "main"),
   ],
   targets: [
     .systemLibrary(
