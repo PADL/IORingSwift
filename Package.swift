@@ -87,10 +87,10 @@ let package = Package(
                      .product(name: "Logging", package: "swift-log"),
                      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")],
       cSettings: [
-        .define("_XOPEN_SOURCE=500"),
+        .define("_XOPEN_SOURCE=700"),
       ],
       cxxSettings: [
-        .define("_XOPEN_SOURCE=500"),
+        .define("_XOPEN_SOURCE=700"),
       ],
       swiftSettings: [
         .enableExperimentalFeature("StrictConcurrency"),

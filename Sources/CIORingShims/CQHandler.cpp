@@ -80,5 +80,3 @@ void io_uring_deinit_cq_handler(void *handle, struct io_uring *ring) {
 #error implement io_uring_deinit_cq_handler() for your platform
 #endif
 }
-
-int32_t io_uring_op_to_int(io_uring_op op) { return static_cast<int32_t>(op); }

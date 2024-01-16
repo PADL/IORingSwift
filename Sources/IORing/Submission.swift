@@ -47,17 +47,17 @@ class Submission<T: Sendable>: CustomStringConvertible {
   fileprivate let fd: FileDescriptorRepresentable
 
   /// opcode, useful for debugging
-  fileprivate let opcode: io_uring_op
+  fileprivate let opcode: IORingOperation
   /// assigned submission queue entry for this object
   private let sqe: UnsafeMutablePointer<io_uring_sqe>
   private var cancellationToken: UnsafeMutableRawPointer?
 
   public nonisolated var description: String {
-    "(\(type(of: self)))(fd: \(fd.fileDescriptor), opcode: \(opcodeDescription(opcode)), handler: \(String(describing: handler)))"
+    "(\(type(of: self)))(fd: \(fd.fileDescriptor), opcode: \(opcode), handler: \(String(describing: handler)))"
   }
 
   private func prepare(
-    _ opcode: io_uring_op,
+    _ opcode: IORingOperation,
     sqe: UnsafeMutablePointer<io_uring_sqe>,
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer?,
@@ -65,7 +65,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
     offset: Int
   ) {
     io_uring_prep_rw(
-      io_uring_op_to_int(opcode),
+      Int32(opcode.rawValue),
       sqe,
       fd.fileDescriptor,
       address,
@@ -125,7 +125,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
 
   init(
     ring: IORing,
-    _ opcode: io_uring_op,
+    _ opcode: IORingOperation,
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
     length: CUnsignedInt = 0,
@@ -169,7 +169,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
       if error != .brokenPipe {
         IORing.shared.logger
           .debug(
-            "\(type(of: self)) completion fileDescriptor: \(fd) opcode: \(opcodeDescription(opcode)) error: \(Errno(rawValue: cqe.res))"
+            "\(type(of: self)) completion fileDescriptor: \(fd) opcode: \(opcode) error: \(Errno(rawValue: cqe.res))"
           )
       }
       throw error
@@ -186,7 +186,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T> {
 
   init(
     ring: IORing,
-    _ opcode: io_uring_op,
+    _ opcode: IORingOperation,
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
     length: CUnsignedInt = 0,
@@ -293,7 +293,7 @@ final class BufferSubmission<U>: Submission<()> {
 
     try super.init(
       ring: ring,
-      IORING_OP_PROVIDE_BUFFERS,
+      .IORING_OP_PROVIDE_BUFFERS,
       fd: BufferCount(count: count),
       address: buffer,
       length: UInt32(size),
@@ -389,7 +389,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
 
   override init(
     ring: IORing,
-    _ opcode: io_uring_op,
+    _ opcode: IORingOperation,
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
     length: CUnsignedInt = 0,
@@ -478,110 +478,165 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
   }
 }
 
-private func opcodeDescription(_ opcode: io_uring_op) -> String {
-  switch opcode {
-  case IORING_OP_NOP:
-    "nop"
-  case IORING_OP_READV:
-    "readv"
-  case IORING_OP_WRITEV:
-    "writev"
-  case IORING_OP_FSYNC:
-    "fsync"
-  case IORING_OP_READ_FIXED:
-    "read_fixed"
-  case IORING_OP_WRITE_FIXED:
-    "write_fixed"
-  case IORING_OP_POLL_ADD:
-    "add"
-  case IORING_OP_POLL_REMOVE:
-    "remove"
-  case IORING_OP_SYNC_FILE_RANGE:
-    "sync_file_range"
-  case IORING_OP_SENDMSG:
-    "sendmsg"
-  case IORING_OP_RECVMSG:
-    "recvmsg"
-  case IORING_OP_TIMEOUT:
-    "timeout"
-  case IORING_OP_TIMEOUT_REMOVE:
-    "timeout_remove"
-  case IORING_OP_ACCEPT:
-    "accept"
-  case IORING_OP_ASYNC_CANCEL:
-    "async_cancel"
-  case IORING_OP_LINK_TIMEOUT:
-    "link_timeout"
-  case IORING_OP_CONNECT:
-    "connect"
-  case IORING_OP_FALLOCATE:
-    "fallocate"
-  case IORING_OP_OPENAT:
-    "openat"
-  case IORING_OP_CLOSE:
-    "close"
-  case IORING_OP_FILES_UPDATE:
-    "files_update"
-  case IORING_OP_STATX:
-    "statx"
-  case IORING_OP_READ:
-    "read"
-  case IORING_OP_WRITE:
-    "write"
-  case IORING_OP_FADVISE:
-    "fadvise"
-  case IORING_OP_MADVISE:
-    "madvise"
-  case IORING_OP_SEND:
-    "send"
-  case IORING_OP_RECV:
-    "recv"
-  case IORING_OP_OPENAT2:
-    "openat2"
-  case IORING_OP_EPOLL_CTL:
-    "epoll_ctl"
-  case IORING_OP_SPLICE:
-    "splice"
-  case IORING_OP_PROVIDE_BUFFERS:
-    "provide_buffers"
-  case IORING_OP_REMOVE_BUFFERS:
-    "remove_buffers"
-  case IORING_OP_TEE:
-    "tee"
-  case IORING_OP_SHUTDOWN:
-    "shutdown"
-  case IORING_OP_RENAMEAT:
-    "renameat"
-  case IORING_OP_UNLINKAT:
-    "unlinkat"
-  case IORING_OP_MKDIRAT:
-    "mkdirat"
-  case IORING_OP_SYMLINKAT:
-    "symlinkat"
-  case IORING_OP_LINKAT:
-    "linkat"
-  /*
-   case IORING_OP_MSG_RING:
-   return "msg_ring"
-   case IORING_OP_FSETXATTR:
-   return "fsetxattr"
-   case IORING_OP_SETXATTR:
-   return "setxattr"
-   case IORING_OP_FGETXATTR:
-   return "fgetxattr"
-   case IORING_OP_GETXATTR:
-   return "getxattr"
-   case IORING_OP_SOCKET:
-   return "socket"
-   case IORING_OP_URING_CMD:
-   return "uring_cmd"
-   case IORING_OP_SEND_ZC:
-   return "send_zc"
-   case IORING_OP_SENDMSG_ZC:
-   return "sendmsg_zc"
-   */
-  default:
-    "unknown"
+enum IORingOperation: UInt32 {
+  // TODO: Swifty names
+  case IORING_OP_NOP = 0
+  case IORING_OP_READV
+  case IORING_OP_WRITEV
+  case IORING_OP_FSYNC
+  case IORING_OP_READ_FIXED
+  case IORING_OP_WRITE_FIXED
+  case IORING_OP_POLL_ADD
+  case IORING_OP_POLL_REMOVE
+  case IORING_OP_SYNC_FILE_RANGE
+  case IORING_OP_SENDMSG
+  case IORING_OP_RECVMSG
+  case IORING_OP_TIMEOUT
+  case IORING_OP_TIMEOUT_REMOVE
+  case IORING_OP_ACCEPT
+  case IORING_OP_ASYNC_CANCEL
+  case IORING_OP_LINK_TIMEOUT
+  case IORING_OP_CONNECT
+  case IORING_OP_FALLOCATE
+  case IORING_OP_OPENAT
+  case IORING_OP_CLOSE
+  case IORING_OP_FILES_UPDATE
+  case IORING_OP_STATX
+  case IORING_OP_READ
+  case IORING_OP_WRITE
+  case IORING_OP_FADVISE
+  case IORING_OP_MADVISE
+  case IORING_OP_SEND
+  case IORING_OP_RECV
+  case IORING_OP_OPENAT2
+  case IORING_OP_EPOLL_CTL
+  case IORING_OP_SPLICE
+  case IORING_OP_PROVIDE_BUFFERS
+  case IORING_OP_REMOVE_BUFFERS
+  case IORING_OP_TEE
+  case IORING_OP_SHUTDOWN
+  case IORING_OP_RENAMEAT
+  case IORING_OP_UNLINKAT
+  case IORING_OP_MKDIRAT
+  case IORING_OP_SYMLINKAT
+  case IORING_OP_LINKAT
+  case IORING_OP_MSG_RING
+  case IORING_OP_FSETXATTR
+  case IORING_OP_SETXATTR
+  case IORING_OP_FGETXATTR
+  case IORING_OP_GETXATTR
+  case IORING_OP_SOCKET
+  case IORING_OP_URING_CMD
+  case IORING_OP_SEND_ZC
+  case IORING_OP_SENDMSG_ZC
+
+  init(_ op: io_uring_op) {
+    self.init(rawValue: op.rawValue)!
+  }
+}
+
+extension IORingOperation: CustomStringConvertible {
+  var description: String {
+    switch self {
+    case .IORING_OP_NOP:
+      "nop"
+    case .IORING_OP_READV:
+      "readv"
+    case .IORING_OP_WRITEV:
+      "writev"
+    case .IORING_OP_FSYNC:
+      "fsync"
+    case .IORING_OP_READ_FIXED:
+      "read_fixed"
+    case .IORING_OP_WRITE_FIXED:
+      "write_fixed"
+    case .IORING_OP_POLL_ADD:
+      "add"
+    case .IORING_OP_POLL_REMOVE:
+      "remove"
+    case .IORING_OP_SYNC_FILE_RANGE:
+      "sync_file_range"
+    case .IORING_OP_SENDMSG:
+      "sendmsg"
+    case .IORING_OP_RECVMSG:
+      "recvmsg"
+    case .IORING_OP_TIMEOUT:
+      "timeout"
+    case .IORING_OP_TIMEOUT_REMOVE:
+      "timeout_remove"
+    case .IORING_OP_ACCEPT:
+      "accept"
+    case .IORING_OP_ASYNC_CANCEL:
+      "async_cancel"
+    case .IORING_OP_LINK_TIMEOUT:
+      "link_timeout"
+    case .IORING_OP_CONNECT:
+      "connect"
+    case .IORING_OP_FALLOCATE:
+      "fallocate"
+    case .IORING_OP_OPENAT:
+      "openat"
+    case .IORING_OP_CLOSE:
+      "close"
+    case .IORING_OP_FILES_UPDATE:
+      "files_update"
+    case .IORING_OP_STATX:
+      "statx"
+    case .IORING_OP_READ:
+      "read"
+    case .IORING_OP_WRITE:
+      "write"
+    case .IORING_OP_FADVISE:
+      "fadvise"
+    case .IORING_OP_MADVISE:
+      "madvise"
+    case .IORING_OP_SEND:
+      "send"
+    case .IORING_OP_RECV:
+      "recv"
+    case .IORING_OP_OPENAT2:
+      "openat2"
+    case .IORING_OP_EPOLL_CTL:
+      "epoll_ctl"
+    case .IORING_OP_SPLICE:
+      "splice"
+    case .IORING_OP_PROVIDE_BUFFERS:
+      "provide_buffers"
+    case .IORING_OP_REMOVE_BUFFERS:
+      "remove_buffers"
+    case .IORING_OP_TEE:
+      "tee"
+    case .IORING_OP_SHUTDOWN:
+      "shutdown"
+    case .IORING_OP_RENAMEAT:
+      "renameat"
+    case .IORING_OP_UNLINKAT:
+      "unlinkat"
+    case .IORING_OP_MKDIRAT:
+      "mkdirat"
+    case .IORING_OP_SYMLINKAT:
+      "symlinkat"
+    case .IORING_OP_LINKAT:
+      "linkat"
+    case .IORING_OP_MSG_RING:
+      "msg_ring"
+    case .IORING_OP_FSETXATTR:
+      "fsetxattr"
+    case .IORING_OP_SETXATTR:
+      "setxattr"
+    case .IORING_OP_FGETXATTR:
+      "fgetxattr"
+    case .IORING_OP_GETXATTR:
+      "getxattr"
+    case .IORING_OP_SOCKET:
+      "socket"
+    case .IORING_OP_URING_CMD:
+      "uring_cmd"
+    case .IORING_OP_SEND_ZC:
+      "send_zc"
+    case .IORING_OP_SENDMSG_ZC:
+      "sendmsg_zc"
+    }
   }
 }
 

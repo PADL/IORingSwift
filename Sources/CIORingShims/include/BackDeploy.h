@@ -28,8 +28,6 @@
 extern "C" {
 #endif
 
-typedef intptr_t io_uring_op;
-
 struct io_uring_recvmsg_out {
   uint32_t namelen;
   uint32_t controllen;

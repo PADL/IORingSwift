@@ -27,8 +27,6 @@
 extern "C" {
 #endif
 
-int32_t io_uring_op_to_int(io_uring_op op);
-
 /// Completion queue event block, released after last event received
 typedef void (^io_uring_cqe_block)(struct io_uring_cqe *_Nonnull);
 
