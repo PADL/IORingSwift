@@ -529,10 +529,6 @@ enum IORingOperation: UInt32 {
   case IORING_OP_URING_CMD
   case IORING_OP_SEND_ZC
   case IORING_OP_SENDMSG_ZC
-
-  init(_ op: io_uring_op) {
-    self.init(rawValue: op.rawValue)!
-  }
 }
 
 extension IORingOperation: CustomStringConvertible {
