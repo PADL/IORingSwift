@@ -342,7 +342,7 @@ private extension IORing {
     flags: UInt32 = 0
   ) async throws {
     try await prepareAndSubmit(
-      .IORING_OP_ASYNC_CANCEL,
+      .async_cancel,
       fd: fd,
       flags: IORing.SqeFlags(link: link),
       moreFlags: flags
@@ -354,7 +354,7 @@ private extension IORing {
     link: Bool = false
   ) async throws {
     try await prepareAndSubmit(
-      .IORING_OP_CLOSE,
+      .close,
       fd: fd,
       flags: IORing.SqeFlags(link: link)
     ) { _ in }
@@ -368,7 +368,7 @@ private extension IORing {
     link: Bool = false
   ) async throws -> Int {
     try await prepareAndSubmit(
-      .IORING_OP_READ,
+      .read,
       fd: fd,
       address: buffer,
       length: CUnsignedInt(count),
@@ -388,7 +388,7 @@ private extension IORing {
     link: Bool = false
   ) async throws -> Int {
     try await prepareAndSubmit(
-      .IORING_OP_WRITE,
+      .write,
       fd: fd,
       address: buffer,
       length: CUnsignedInt(count),
@@ -411,7 +411,7 @@ private extension IORing {
   ) async throws -> SingleshotSubmission<Int> {
     try await SingleshotSubmission(
       ring: self,
-      .IORING_OP_READ_FIXED,
+      .read_fixed,
       fd: fd,
       address: fixedBuffers!.unsafeMutableRawPointer(
         at: bufferIndex,
@@ -459,7 +459,7 @@ private extension IORing {
   ) async throws -> SingleshotSubmission<Int> {
     try await SingleshotSubmission(
       ring: self,
-      .IORING_OP_WRITE_FIXED,
+      .write_fixed,
       fd: fd,
       address: fixedBuffers!.unsafeMutableRawPointer(
         at: bufferIndex,
@@ -504,7 +504,7 @@ private extension IORing {
     link: Bool = false
   ) async throws {
     try await prepareAndSubmit(
-      .IORING_OP_SEND,
+      .send,
       fd: fd,
       address: buffer,
       length: CUnsignedInt(buffer.count),
@@ -525,7 +525,7 @@ private extension IORing {
     link: Bool = false
   ) async throws {
     try await prepareAndSubmit(
-      .IORING_OP_RECV,
+      .recv,
       fd: fd,
       address: buffer,
       length: CUnsignedInt(buffer.count),
@@ -545,7 +545,7 @@ private extension IORing {
   ) throws -> AsyncThrowingChannel<[UInt8], Error> {
     var buffer = [UInt8](repeating: 0, count: count)
     return try prepareAndSubmitMultishot(
-      .IORING_OP_RECV,
+      .recv,
       fd: fd,
       address: &buffer[0],
       length: CUnsignedInt(count),
@@ -564,7 +564,7 @@ private extension IORing {
   ) async throws {
     try await message.withUnsafeMutablePointer { pointer in
       try await prepareAndSubmit(
-        .IORING_OP_RECVMSG,
+        .recvmsg,
         fd: fd,
         address: pointer,
         length: 1,
@@ -586,7 +586,7 @@ private extension IORing {
     return try await holder.withUnsafeMutablePointer { pointer in
       try await MultishotSubmission(
         ring: self,
-        .IORING_OP_RECVMSG,
+        .recvmsg,
         fd: fd,
         address: pointer,
         flags: SqeFlags.bufferSelect,
@@ -612,7 +612,7 @@ private extension IORing {
   ) async throws {
     try await message.withUnsafeMutablePointer { pointer in
       try await prepareAndSubmit(
-        .IORING_OP_SENDMSG,
+        .sendmsg,
         fd: fd,
         address: pointer,
         length: 1,
@@ -629,7 +629,7 @@ private extension IORing {
     link: Bool = false
   ) async throws -> FileDescriptorRepresentable {
     try await prepareAndSubmit(
-      .IORING_OP_ACCEPT,
+      .accept,
       fd: fd,
       flags: IORing.SqeFlags(link: link),
       moreFlags: flags
@@ -643,7 +643,7 @@ private extension IORing {
     flags: UInt32 = 0
   ) throws -> AsyncThrowingChannel<FileDescriptorRepresentable, Error> {
     try prepareAndSubmitMultishot(
-      .IORING_OP_ACCEPT,
+      .accept,
       fd: fd,
       ioprio: AcceptIoPrio.multishot,
       moreFlags: flags
@@ -659,7 +659,7 @@ private extension IORing {
   ) async throws {
     var address = address
     try await prepareAndSubmit(
-      .IORING_OP_CONNECT,
+      .connect,
       fd: fd,
       address: &address,
       offset: Int(address.size),
