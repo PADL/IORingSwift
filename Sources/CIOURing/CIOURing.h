@@ -16,4 +16,9 @@
 
 #pragma once
 
+#define _XOPEN_SOURCE 700
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE 1
+#endif
+
 #include <liburing.h>
