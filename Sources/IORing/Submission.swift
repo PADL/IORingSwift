@@ -100,6 +100,9 @@ class Submission<T: Sendable>: CustomStringConvertible {
       precondition(cancellationToken != nil)
       let sqe = try ring.getSqe()
       io_uring_prep_cancel(sqe, cancellationToken, 0)
+      _ = io_uring_sqe_set_block(sqe) { cqe in
+        self.onCancel(cqe: cqe.pointee)
+      }
       try ring.submit()
     } catch {
       IORing.shared.logger.debug("failed to cancel submission \(self)")
@@ -143,6 +146,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
   }
 
   func onCompletion(cqe: io_uring_cqe) async { fatalError("must be implemented by concrete class") }
+  func onCancel(cqe: io_uring_cqe) {}
 
   func throwingErrno(
     cqe: io_uring_cqe,
