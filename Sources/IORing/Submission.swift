@@ -21,22 +21,6 @@ import AsyncExtensions
 import CIORingShims
 import Glibc
 
-// IORING_ASYNC_CANCEL_xxx not in our liburing
-struct AsyncCancelFlags: OptionSet {
-  typealias RawValue = CInt
-
-  let rawValue: RawValue
-
-  init(rawValue: RawValue) {
-    self.rawValue = rawValue
-  }
-
-  static let all = AsyncCancelFlags(rawValue: 1 << 0)
-  static let fd = AsyncCancelFlags(rawValue: 1 << 1)
-  static let any = AsyncCancelFlags(rawValue: 1 << 2)
-  static let fdFixed = AsyncCancelFlags(rawValue: 1 << 3)
-}
-
 @IORingActor
 class Submission<T: Sendable>: CustomStringConvertible {
   // reference to owner which owns ring
@@ -115,7 +99,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
     do {
       precondition(cancellationToken != nil)
       let sqe = try ring.getSqe()
-      io_uring_prep_cancel(sqe, cancellationToken, AsyncCancelFlags.all.rawValue)
+      io_uring_prep_cancel(sqe, cancellationToken, 0)
       try ring.submit()
     } catch {
       IORing.shared.logger.debug("failed to cancel submission \(self)")
@@ -528,6 +512,21 @@ enum IORingOperation: UInt32 {
   case uring_cmd
   case send_zc
   case sendmsg_zc
+}
+
+struct AsyncCancelFlags: OptionSet {
+  typealias RawValue = CInt
+
+  let rawValue: RawValue
+
+  init(rawValue: RawValue) {
+    self.rawValue = rawValue
+  }
+
+  static let all = AsyncCancelFlags(rawValue: 1 << 0)
+  static let fd = AsyncCancelFlags(rawValue: 1 << 1)
+  static let any = AsyncCancelFlags(rawValue: 1 << 2)
+  static let fdFixed = AsyncCancelFlags(rawValue: 1 << 3)
 }
 
 extension Submission: Equatable {
