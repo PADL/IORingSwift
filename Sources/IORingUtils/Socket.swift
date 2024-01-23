@@ -265,7 +265,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
   }
 }
 
-private func parsePresentationAddress(_ presentationAddress: String) -> (String, UInt16?) {
+private func parseIPv4PresentationAddress(_ presentationAddress: String) -> (String, UInt16?) {
   var port: UInt16?
   let addressPort = presentationAddress.split(separator: ":", maxSplits: 2)
   if addressPort.count > 1 {
@@ -273,6 +273,20 @@ private func parsePresentationAddress(_ presentationAddress: String) -> (String,
   }
 
   return (String(addressPort.first!), port)
+}
+
+public func parseIPv6PresentationAddress(_ presentationAddress: String) throws
+  -> (String, UInt16?)
+{
+  let ipv6Regex: Regex = #/\[([0-9a-fA-F:]+)\](:(\d+))?/#
+  let port: UInt16?
+  let addressPort = presentationAddress.firstMatch(of: ipv6Regex)
+
+  guard let address = addressPort?.1 else { throw Errno(rawValue: EINVAL) }
+  if let portString = addressPort?.3 { port = UInt16(portString) }
+  else { port = nil }
+
+  return (String(address), port)
 }
 
 public protocol SocketAddress: Sendable {
@@ -391,7 +405,7 @@ extension sockaddr_in: SocketAddress, @unchecked Sendable {
   public init(family: sa_family_t, presentationAddress: String) throws {
     guard family == AF_INET else { throw Errno.invalidArgument }
     self = sockaddr_in()
-    let (address, port) = parsePresentationAddress(presentationAddress)
+    let (address, port) = parseIPv4PresentationAddress(presentationAddress)
     var sin_port = UInt16()
     var sin_addr = in_addr()
     _ = try Errno.throwingErrno {
@@ -443,7 +457,7 @@ extension sockaddr_in6: SocketAddress, @unchecked Sendable {
   public init(family: sa_family_t, presentationAddress: String) throws {
     guard family == AF_INET6 else { throw Errno.invalidArgument }
     self = sockaddr_in6()
-    let (address, port) = parsePresentationAddress(presentationAddress)
+    let (address, port) = try parseIPv6PresentationAddress(presentationAddress)
     var sin6_port = UInt16()
     var sin6_addr = in6_addr()
     _ = try Errno.throwingErrno {
@@ -468,7 +482,7 @@ extension sockaddr_in6: SocketAddress, @unchecked Sendable {
         throw Errno.lastError
       }
       let port = UInt16(bigEndian: sin6.sin6_port)
-      return "\(String(cString: result)):\(port)"
+      return "[\(String(cString: result))]:\(port)"
     }
   }
 
