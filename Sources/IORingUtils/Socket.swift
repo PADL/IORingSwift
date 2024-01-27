@@ -593,16 +593,14 @@ extension sockaddr_ll: SocketAddress, @unchecked Sendable {
       return byte
     }
 
-    guard bytes.count == 6 else { throw Errno.invalidArgument }
+    guard bytes.count == ETH_ALEN else { throw Errno.invalidArgument }
 
-    try withUnsafeMutablePointer(to: &sll.sll_addr) { addr in
+    withUnsafeMutablePointer(to: &sll.sll_addr) { addr in
       let start = addr.propertyBasePointer(to: \.0)!
       let capacity = MemoryLayout.size(ofValue: addr.pointee)
-      if capacity <= presentationAddress.utf8.count {
-        throw Errno.outOfRange
-      }
+      precondition(capacity >= ETH_ALEN)
       _ = start.withMemoryRebound(to: UInt8.self, capacity: capacity) { dst in
-        memcpy(UnsafeMutableRawPointer(mutating: dst), bytes, capacity)
+        memcpy(UnsafeMutableRawPointer(mutating: dst), bytes, Int(ETH_ALEN))
       }
     }
     self = sll
@@ -614,15 +612,15 @@ extension sockaddr_ll: SocketAddress, @unchecked Sendable {
 
   public var presentationAddress: String {
     get throws {
-      String(
-        format: "%02x:%02x:%02x:%02x:%02x:%02x",
-        sll_addr.0,
-        sll_addr.1,
-        sll_addr.2,
-        sll_addr.3,
-        sll_addr.4,
-        sll_addr.5
-      )
+      var sll = self
+      return withUnsafeMutablePointer(to: &sll.sll_addr) { addr in
+        let start = addr.propertyBasePointer(to: \.0)!
+        let capacity = MemoryLayout.size(ofValue: addr.pointee)
+        return start.withMemoryRebound(to: UInt8.self, capacity: capacity) { dst in
+          UnsafeBufferPointer(start: dst, count: Int(ETH_ALEN)).map { String(format: "%02x", $0) }
+            .joined(separator: ":")
+        }
+      }
     }
   }
 
