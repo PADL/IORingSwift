@@ -16,5 +16,6 @@
 
 #pragma once
 
+#include <linux/if_packet.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>

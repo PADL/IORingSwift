@@ -56,8 +56,8 @@ let package = Package(
       targets: ["IORingFoundation"]
     ),
     .library(
-      name: "CNetLink",
-      targets: ["CNetLink"]
+      name: "CLinuxSockAddr",
+      targets: ["CLinuxSockAddr"]
     ),
   ],
   dependencies: [
@@ -72,7 +72,7 @@ let package = Package(
       providers: [.apt(["liburing-dev"])]
     ),
     .systemLibrary(
-      name: "CNetLink"
+      name: "CLinuxSockAddr"
     ),
     .target(
       name: "CIORingShims",
@@ -118,7 +118,7 @@ let package = Package(
       name: "IORingUtils",
       dependencies: ["IORing",
                      "AsyncExtensions",
-                     "CNetLink",
+                     "CLinuxSockAddr",
                      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")],
       swiftSettings: [
         .enableExperimentalFeature("StrictConcurrency"),

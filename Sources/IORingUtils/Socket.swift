@@ -17,7 +17,7 @@
 import AsyncAlgorithms
 @preconcurrency
 import AsyncExtensions
-import CNetLink
+import CLinuxSockAddr
 import Glibc
 import IORing
 
@@ -333,6 +333,8 @@ extension sockaddr: SocketAddress, @unchecked Sendable {
       return socklen_t(MemoryLayout<sockaddr_in6>.size)
     case AF_LOCAL:
       return socklen_t(MemoryLayout<sockaddr_un>.size)
+    case AF_PACKET:
+      return socklen_t(MemoryLayout<sockaddr_ll>.size)
     case AF_NETLINK:
       return socklen_t(MemoryLayout<sockaddr_nl>.size)
     default:
@@ -363,6 +365,10 @@ extension sockaddr: SocketAddress, @unchecked Sendable {
           }
         case AF_LOCAL:
           try $0.withMemoryRebound(to: sockaddr_un.self, capacity: 1) {
+            try $0.pointee.presentationAddress
+          }
+        case AF_PACKET:
+          try $0.withMemoryRebound(to: sockaddr_ll.self, capacity: 1) {
             try $0.pointee.presentationAddress
           }
         case AF_NETLINK:
@@ -571,6 +577,70 @@ extension sockaddr_un: SocketAddress, @unchecked Sendable {
   }
 }
 
+extension sockaddr_ll: SocketAddress, @unchecked Sendable {
+  public static var family: sa_family_t {
+    sa_family_t(AF_PACKET)
+  }
+
+  public init(family: sa_family_t, presentationAddress: String) throws {
+    guard family == AF_PACKET else { throw Errno.invalidArgument }
+
+    var sll = sockaddr_ll()
+    sll.sll_family = family
+
+    let bytes = try presentationAddress.split(separator: ":").map {
+      guard let byte = UInt8($0) else { throw Errno.invalidArgument }
+      return byte
+    }
+
+    guard bytes.count == 6 else { throw Errno.invalidArgument }
+
+    try withUnsafeMutablePointer(to: &sll.sll_addr) { addr in
+      let start = addr.propertyBasePointer(to: \.0)!
+      let capacity = MemoryLayout.size(ofValue: addr.pointee)
+      if capacity <= presentationAddress.utf8.count {
+        throw Errno.outOfRange
+      }
+      _ = start.withMemoryRebound(to: UInt8.self, capacity: capacity) { dst in
+        memcpy(UnsafeMutableRawPointer(mutating: dst), bytes, capacity)
+      }
+    }
+    self = sll
+  }
+
+  public var size: socklen_t {
+    socklen_t(MemoryLayout<Self>.size)
+  }
+
+  public var presentationAddress: String {
+    get throws {
+      String(
+        format: "%02x:%02x:%02x:%02x:%02x:%02x",
+        sll_addr.0,
+        sll_addr.1,
+        sll_addr.2,
+        sll_addr.3,
+        sll_addr.4,
+        sll_addr.5
+      )
+    }
+  }
+
+  public var port: UInt16 {
+    get throws {
+      throw Errno.addressFamilyNotSupported
+    }
+  }
+
+  public func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>) throws -> T) rethrows -> T {
+    try withUnsafePointer(to: self) { sun in
+      try sun.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+        try body(sa)
+      }
+    }
+  }
+}
+
 extension sockaddr_nl: SocketAddress, @unchecked Sendable {
   public static var family: sa_family_t {
     sa_family_t(AF_NETLINK)
@@ -632,6 +702,9 @@ extension sockaddr_storage: SocketAddress, @unchecked Sendable {
     case AF_LOCAL:
       var sun = try sockaddr_un(family: family, presentationAddress: presentationAddress)
       _ = memcpy(&ss, &sun, Int(sun.size))
+    case AF_PACKET:
+      var sll = try sockaddr_ll(family: family, presentationAddress: presentationAddress)
+      _ = memcpy(&ss, &sll, Int(sll.size))
     case AF_NETLINK:
       var snl = try sockaddr_nl(family: family, presentationAddress: presentationAddress)
       _ = memcpy(&ss, &snl, Int(snl.size))
@@ -693,6 +766,8 @@ public extension sockaddr_storage {
       bytesRequired = MemoryLayout<sockaddr_in6>.size
     case AF_LOCAL:
       bytesRequired = MemoryLayout<sockaddr_un>.size
+    case AF_PACKET:
+      bytesRequired = MemoryLayout<sockaddr_ll>.size
     case AF_NETLINK:
       bytesRequired = MemoryLayout<sockaddr_nl>.size
     default:
