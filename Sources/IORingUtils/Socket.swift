@@ -17,6 +17,7 @@
 import AsyncAlgorithms
 @preconcurrency
 import AsyncExtensions
+import CNetLink
 import Glibc
 import IORing
 
@@ -332,6 +333,8 @@ extension sockaddr: SocketAddress, @unchecked Sendable {
       return socklen_t(MemoryLayout<sockaddr_in6>.size)
     case AF_LOCAL:
       return socklen_t(MemoryLayout<sockaddr_un>.size)
+    case AF_NETLINK:
+      return socklen_t(MemoryLayout<sockaddr_nl>.size)
     default:
       return 0
     }
@@ -360,6 +363,10 @@ extension sockaddr: SocketAddress, @unchecked Sendable {
           }
         case AF_LOCAL:
           try $0.withMemoryRebound(to: sockaddr_un.self, capacity: 1) {
+            try $0.pointee.presentationAddress
+          }
+        case AF_NETLINK:
+          try $0.withMemoryRebound(to: sockaddr_nl.self, capacity: 1) {
             try $0.pointee.presentationAddress
           }
         default:
@@ -564,6 +571,50 @@ extension sockaddr_un: SocketAddress, @unchecked Sendable {
   }
 }
 
+extension sockaddr_nl: SocketAddress, @unchecked Sendable {
+  public static var family: sa_family_t {
+    sa_family_t(AF_NETLINK)
+  }
+
+  public init(family: sa_family_t, presentationAddress: String) throws {
+    guard let pid = UInt32(presentationAddress) else { throw Errno.invalidArgument }
+    try self.init(family: family, pid: pid, groups: 0)
+  }
+
+  public init(family: sa_family_t, pid: UInt32, groups: UInt32) throws {
+    guard family == AF_NETLINK else { throw Errno.invalidArgument }
+
+    self.init()
+    nl_family = family
+    nl_pid = pid
+    nl_groups = groups
+  }
+
+  public var size: socklen_t {
+    socklen_t(MemoryLayout<Self>.size)
+  }
+
+  public var presentationAddress: String {
+    get throws {
+      String(describing: nl_pid)
+    }
+  }
+
+  public var port: UInt16 {
+    get throws {
+      throw Errno.addressFamilyNotSupported
+    }
+  }
+
+  public func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>) throws -> T) rethrows -> T {
+    try withUnsafePointer(to: self) { sun in
+      try sun.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+        try body(sa)
+      }
+    }
+  }
+}
+
 extension sockaddr_storage: SocketAddress, @unchecked Sendable {
   public static var family: sa_family_t {
     sa_family_t(AF_UNSPEC)
@@ -581,6 +632,9 @@ extension sockaddr_storage: SocketAddress, @unchecked Sendable {
     case AF_LOCAL:
       var sun = try sockaddr_un(family: family, presentationAddress: presentationAddress)
       _ = memcpy(&ss, &sun, Int(sun.size))
+    case AF_NETLINK:
+      var snl = try sockaddr_nl(family: family, presentationAddress: presentationAddress)
+      _ = memcpy(&ss, &snl, Int(snl.size))
     default:
       throw Errno.addressFamilyNotSupported
     }
@@ -639,6 +693,8 @@ public extension sockaddr_storage {
       bytesRequired = MemoryLayout<sockaddr_in6>.size
     case AF_LOCAL:
       bytesRequired = MemoryLayout<sockaddr_un>.size
+    case AF_NETLINK:
+      bytesRequired = MemoryLayout<sockaddr_nl>.size
     default:
       throw Errno.addressFamilyNotSupported
     }

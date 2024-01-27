@@ -67,6 +67,9 @@ let package = Package(
       name: "CIOURing",
       providers: [.apt(["liburing-dev"])]
     ),
+    .systemLibrary(
+      name: "CNetLink"
+    ),
     .target(
       name: "CIORingShims",
       dependencies: ["CIOURing"],
@@ -111,6 +114,7 @@ let package = Package(
       name: "IORingUtils",
       dependencies: ["IORing",
                      "AsyncExtensions",
+                     "CNetLink",
                      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")],
       swiftSettings: [
         .enableExperimentalFeature("StrictConcurrency"),
