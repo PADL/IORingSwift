@@ -55,6 +55,10 @@ let package = Package(
       name: "IORingFoundation",
       targets: ["IORingFoundation"]
     ),
+    .library(
+      name: "CNetLink",
+      targets: ["CNetLink"]
+    ),
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-async-algorithms", from: "0.1.0"),
