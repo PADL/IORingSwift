@@ -589,7 +589,7 @@ extension sockaddr_ll: SocketAddress, @unchecked Sendable {
     sll.sll_family = family
 
     let bytes = try presentationAddress.split(separator: ":").map {
-      guard let byte = UInt8($0) else { throw Errno.invalidArgument }
+      guard let byte = UInt8($0, radix: 16) else { throw Errno.invalidArgument }
       return byte
     }
 
