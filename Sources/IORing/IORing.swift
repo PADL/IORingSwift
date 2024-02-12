@@ -45,7 +45,7 @@ public final class IORing: CustomStringConvertible {
   private let entries: Int
   private let ringFd: Int32
 
-  var logger = Logger(label: "com.padl.IORing")
+  let logger = Logger(label: "com.padl.IORing")
 
   private final class FixedBuffer {
     fileprivate let count: Int
