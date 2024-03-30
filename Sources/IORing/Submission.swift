@@ -20,6 +20,7 @@ import AsyncExtensions
 @_implementationOnly
 import CIORingShims
 import Glibc
+import SystemPackage
 
 @IORingActor
 class Submission<T: Sendable>: CustomStringConvertible {

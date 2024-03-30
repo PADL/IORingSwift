@@ -20,6 +20,7 @@ import AsyncExtensions
 import CLinuxSockAddr
 import Glibc
 import IORing
+import SystemPackage
 
 public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
   private let fileHandle: FileHandle!

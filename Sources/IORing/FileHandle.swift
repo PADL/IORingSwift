@@ -15,29 +15,38 @@
 //
 
 import Glibc
+import SystemPackage
 
 /// FileDescriptorRepresentable is required for lifecycle management so file
 /// descriptors are not closed whilst there are outstanding completions
 public protocol FileDescriptorRepresentable: Sendable {
-  var fileDescriptor: Int32 { get }
+  var fileDescriptor: CInt { get }
 }
 
 /// Include our own FileHandle for accept() so we do not need to import Foundation
 public final class FileHandle: FileDescriptorRepresentable, CustomStringConvertible, Sendable {
-  public let fileDescriptor: Int32
+  public var fileDescriptor: CInt { _fileDescriptor.rawValue }
+  private let _fileDescriptor: FileDescriptor
   private let closeOnDealloc: Bool
 
-  public init(fileDescriptor: Int32, closeOnDealloc: Bool = false) throws {
+  public convenience init(fileDescriptor: CInt, closeOnDealloc: Bool = false) throws {
     if fileDescriptor < 0 {
-      let lastError = Errno.lastError
-      if lastError.rawValue == 0 {
+      let lastError = errno
+      if lastError == 0 {
         throw Errno.badFileDescriptor
       } else {
-        throw lastError
+        throw Errno(rawValue: lastError)
       }
     }
+    try self.init(
+      fileDescriptor: FileDescriptor(rawValue: fileDescriptor),
+      closeOnDealloc: closeOnDealloc
+    )
+  }
+
+  public init(fileDescriptor: FileDescriptor, closeOnDealloc: Bool = false) throws {
     self.closeOnDealloc = closeOnDealloc
-    self.fileDescriptor = fileDescriptor
+    _fileDescriptor = fileDescriptor
   }
 
   public var description: String {
@@ -45,20 +54,20 @@ public final class FileHandle: FileDescriptorRepresentable, CustomStringConverti
   }
 
   deinit {
-    if closeOnDealloc, fileDescriptor != -1 {
-      close(self.fileDescriptor)
+    if closeOnDealloc, _fileDescriptor.rawValue != -1 {
+      try? self._fileDescriptor.close()
     }
   }
 }
 
 extension FileHandle: Equatable {
   public static func == (lhs: FileHandle, rhs: FileHandle) -> Bool {
-    lhs.fileDescriptor == rhs.fileDescriptor
+    lhs._fileDescriptor == rhs._fileDescriptor
   }
 }
 
 extension FileHandle: Hashable {
   public func hash(into hasher: inout Hasher) {
-    fileDescriptor.hash(into: &hasher)
+    _fileDescriptor.hash(into: &hasher)
   }
 }

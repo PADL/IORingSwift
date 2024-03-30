@@ -18,6 +18,7 @@ import AsyncExtensions
 import Glibc
 import IORing
 import IORingUtils
+import SystemPackage
 
 @main
 public struct IORingUDPClient {

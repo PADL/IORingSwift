@@ -65,6 +65,7 @@ let package = Package(
     .package(url: "https://github.com/lhoward/AsyncExtensions", branch: "linux"),
     .package(url: "https://github.com/dfed/swift-async-queue", from: "0.4.0"),
     .package(url: "https://github.com/apple/swift-log", from: "1.5.4"),
+    .package(url: "https://github.com/apple/swift-system", from: "1.0.0"),
   ],
   targets: [
     .systemLibrary(
@@ -94,6 +95,7 @@ let package = Package(
       name: "IORing",
       dependencies: ["CIORingShims",
                      "AsyncExtensions",
+                     .product(name: "SystemPackage", package: "swift-system"),
                      .product(name: "AsyncQueue", package: "swift-async-queue"),
                      .product(name: "Logging", package: "swift-log"),
                      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")],

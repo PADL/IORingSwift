@@ -17,6 +17,7 @@
 import AsyncExtensions
 import Glibc
 import IORing
+import SystemPackage
 
 private func hexDescription(_ bytes: [UInt8]) -> String {
   bytes.reduce("") { $0 + String(format: "%02x", $1) }
@@ -137,4 +138,8 @@ public extension FileDescriptorRepresentable {
       throw Errno.invalidArgument
     }
   }
+}
+
+extension Errno {
+  static var lastError: Errno { Errno(rawValue: errno) }
 }
