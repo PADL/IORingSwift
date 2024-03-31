@@ -71,3 +71,7 @@ extension FileHandle: Hashable {
     _fileDescriptor.hash(into: &hasher)
   }
 }
+
+extension FileDescriptor: FileDescriptorRepresentable {
+  public var fileDescriptor: CInt { rawValue }
+}
