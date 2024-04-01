@@ -126,3 +126,14 @@ extension sockaddr_storage {
     self = ss
   }
 }
+
+public extension Errno {
+  @discardableResult
+  static func throwingErrno(_ body: @escaping () -> RawValue) throws -> RawValue {
+    let result = body()
+    if result < 0 {
+      throw Errno(rawValue: -result)
+    }
+    return result
+  }
+}
