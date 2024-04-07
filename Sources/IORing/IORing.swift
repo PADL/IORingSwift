@@ -212,7 +212,7 @@ public final class IORing: CustomStringConvertible {
     let error = io_uring_init_cq_handler(&cqHandle, &self.ring)
     guard error == 0 else {
       io_uring_queue_exit(&ring)
-      throw Errno(rawValue: error)
+      throw Errno(rawValue: -error)
     }
   }
 

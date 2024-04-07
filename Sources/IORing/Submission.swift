@@ -154,11 +154,11 @@ class Submission<T: Sendable>: CustomStringConvertible {
     _ body: @escaping @Sendable (_: io_uring_cqe) throws -> T
   ) throws -> T {
     guard cqe.res >= 0 else {
-      let error = Errno(rawValue: cqe.res)
+      let error = Errno(rawValue: -cqe.res)
       if error != .brokenPipe {
         IORing.shared.logger
           .debug(
-            "\(type(of: self)) completion fileDescriptor: \(fd) opcode: \(opcode) error: \(Errno(rawValue: cqe.res))"
+            "\(type(of: self)) completion fileDescriptor: \(fd) opcode: \(opcode) error: \(Errno(rawValue: -cqe.res))"
           )
       }
       throw error
