@@ -36,7 +36,7 @@ public actor IORingActor {
 public final class IORing: CustomStringConvertible {
   public nonisolated static let shared = try! IORing(entries: nil, flags: 0, shared: true)
 
-  private static let DefaultIORingQueueEntries = 128
+  private nonisolated static let DefaultIORingQueueEntries = 128
 
   private var ring: io_uring
   private var cqHandle: UnsafeMutableRawPointer?
