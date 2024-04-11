@@ -251,7 +251,7 @@ final class BufferSubmission<U>: Submission<()> {
 
   let size: Int
   let bufferGroup: UInt16
-  let buffer: UnsafeMutablePointer<U>!
+  let buffer: UnsafeMutablePointer<U>
   let deallocate: Bool
 
   override func onCompletion(cqe: io_uring_cqe) async {}
@@ -262,7 +262,7 @@ final class BufferSubmission<U>: Submission<()> {
 
   nonisolated func bufferPointer(id bufferID: Int) -> UnsafeMutablePointer<U> {
     precondition(bufferID < count)
-    return buffer! + (bufferID * size)
+    return buffer + (bufferID * size)
   }
 
   init(
@@ -275,6 +275,8 @@ final class BufferSubmission<U>: Submission<()> {
     bufferGroup: UInt16,
     deallocate: Bool
   ) throws {
+    guard let buffer else { throw Errno.invalidArgument }
+
     self.size = size
     self.bufferGroup = bufferGroup
     self.deallocate = deallocate
@@ -357,7 +359,7 @@ final class BufferSubmission<U>: Submission<()> {
   }
 
   deinit {
-    if deallocate, let buffer {
+    if deallocate {
       buffer.deallocate()
     }
   }

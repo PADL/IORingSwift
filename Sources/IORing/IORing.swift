@@ -27,6 +27,8 @@ import SystemPackage
 
 // MARK: - actor
 
+extension io_uring: @unchecked Sendable {}
+
 @globalActor
 public actor IORingActor {
   public static let shared = IORingActor()
@@ -563,7 +565,7 @@ private extension IORing {
     flags: UInt32 = 0,
     link: Bool = false
   ) async throws {
-    try await message.withUnsafeMutablePointer { pointer in
+    try await message.withUnsafeMutablePointer { @IORingActor pointer in
       try await prepareAndSubmit(
         .recvmsg,
         fd: fd,
@@ -584,8 +586,8 @@ private extension IORing {
   ) async throws -> AsyncThrowingChannel<Message, Error> {
     // FIXME: combine message holder buffer registration with multishot registration to avoid extra system call
     let holder = try await MessageHolder(ring: self, size: count, count: capacity)
-    return try await holder.withUnsafeMutablePointer { pointer in
-      try await MultishotSubmission(
+    return try await holder.withUnsafeMutablePointer { @IORingActor pointer in
+      try MultishotSubmission(
         ring: self,
         .recvmsg,
         fd: fd,
@@ -611,7 +613,7 @@ private extension IORing {
     flags: UInt32 = 0,
     link: Bool = false
   ) async throws {
-    try await message.withUnsafeMutablePointer { pointer in
+    try await message.withUnsafeMutablePointer { @IORingActor pointer in
       try await prepareAndSubmit(
         .sendmsg,
         fd: fd,
