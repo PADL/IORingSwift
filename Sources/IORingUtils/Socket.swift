@@ -22,6 +22,7 @@ import Glibc
 import IORing
 import SystemPackage
 
+@IORingActor
 public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
   private let fileHandle: FileHandle!
   private let domain: sa_family_t
@@ -168,7 +169,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
 
   public func accept() async throws -> AnyAsyncSequence<Socket> {
     guard let fileHandle else { throw Errno.badFileDescriptor }
-    return try await ring.accept(from: fileHandle).map { Socket(
+    return try await ring.accept(from: fileHandle).map { await Socket(
       ring: ring,
       fileHandle: $0 as! FileHandle
     ) }

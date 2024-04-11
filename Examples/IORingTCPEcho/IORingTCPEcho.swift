@@ -34,23 +34,23 @@ public struct IORingTCPEcho {
       exit(1)
     }
 
-    let echo = try IORingTCPEcho(port: port)
+    let echo = try await IORingTCPEcho(port: port)
     try await echo.runMultishot()
   }
 
-  init(port: UInt16, bufferSize: Int = 32, backlog: Int = 5) throws {
+  init(port: UInt16, bufferSize: Int = 32, backlog: Int = 5) async throws {
     self.bufferSize = bufferSize
     ring = try IORing()
-    socket = try Socket(
+    socket = try await Socket(
       ring: ring,
       domain: sa_family_t(AF_INET),
       type: SOCK_STREAM,
       protocol: 0
     )
-    try socket.setReuseAddr()
-    try socket.setTcpNoDelay()
-    try socket.bind(port: port)
-    try socket.listen(backlog: backlog)
+    try await socket.setReuseAddr()
+    try await socket.setTcpNoDelay()
+    try await socket.bind(port: port)
+    try await socket.listen(backlog: backlog)
   }
 
   func readWriteEcho(client: Socket) async {

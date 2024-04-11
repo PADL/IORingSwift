@@ -33,18 +33,23 @@ public struct IORingUDPServer {
       exit(1)
     }
 
-    let server = try IORingUDPServer()
+    let server = try await IORingUDPServer()
     try await server.bind(port: port)
     try await server.run()
   }
 
-  init() throws {
+  init() async throws {
     ring = IORing.shared
-    socket = try Socket(ring: ring, domain: sa_family_t(AF_INET), type: SOCK_DGRAM, protocol: 0)
+    socket = try await Socket(
+      ring: ring,
+      domain: sa_family_t(AF_INET),
+      type: SOCK_DGRAM,
+      protocol: 0
+    )
   }
 
   func bind(port: UInt16) async throws {
-    try socket.bind(port: port)
+    try await socket.bind(port: port)
   }
 
   func run() async throws {
