@@ -213,6 +213,32 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     return buffer
   }
 
+  public func readFixed(
+    count: Int,
+    bufferIndex: UInt16,
+    awaitingAllRead: Bool
+  ) async throws -> [UInt8] {
+    guard let fileHandle else { throw Errno.badFileDescriptor }
+
+    var buffer = [UInt8]()
+
+    repeat {
+      let _buffer = try await ring.readFixed(
+        count: count,
+        bufferIndex: bufferIndex,
+        from: fileHandle
+      ) {
+        Array($0)
+      }
+      if _buffer.count == 0 {
+        break // EOF
+      }
+      buffer += _buffer
+    } while awaitingAllRead && buffer.count < count
+
+    return buffer
+  }
+
   public func write(_ buffer: [UInt8], count: Int, awaitingAllWritten: Bool) async throws -> Int {
     guard let fileHandle else { throw Errno.badFileDescriptor }
 
@@ -225,6 +251,26 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
         to: fileHandle
       )
     } while awaitingAllWritten && nwritten < count
+
+    return nwritten
+  }
+
+  public func writeFixed(
+    _ buffer: [UInt8],
+    bufferIndex: UInt16,
+    awaitingAllWritten: Bool
+  ) async throws -> Int {
+    guard let fileHandle else { throw Errno.badFileDescriptor }
+
+    var nwritten = 0
+
+    repeat {
+      nwritten += try await ring.writeFixed(
+        Array(buffer[nwritten..<buffer.count]),
+        bufferIndex: bufferIndex,
+        to: fileHandle
+      )
+    } while awaitingAllWritten && nwritten < buffer.count
 
     return nwritten
   }
