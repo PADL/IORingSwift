@@ -37,19 +37,14 @@ public struct IORingUDPClient {
     }
 
     let message = CommandLine.arguments[2]
-    let client = try await IORingUDPClient()
+    let client = try IORingUDPClient()
     try await client.connect(to: address)
     try await client.send(message: message)
   }
 
-  init() async throws {
+  init() throws {
     ring = IORing.shared
-    socket = try await Socket(
-      ring: ring,
-      domain: sa_family_t(AF_INET),
-      type: SOCK_DGRAM,
-      protocol: 0
-    )
+    socket = try Socket(ring: ring, domain: sa_family_t(AF_INET), type: SOCK_DGRAM, protocol: 0)
   }
 
   func connect(to address: any SocketAddress) async throws {
