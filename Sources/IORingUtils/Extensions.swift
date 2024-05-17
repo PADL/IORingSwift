@@ -129,7 +129,7 @@ public extension FileDescriptorRepresentable {
   func getSize() throws -> Int {
     var st = stat()
 
-    throwingGlobalErrno {
+    try Errno.throwingGlobalErrno {
       fstat(fileDescriptor, &st)
     }
 
