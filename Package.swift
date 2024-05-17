@@ -40,7 +40,7 @@ let cqHandlerType: CQHandlerType = .dispatch
 let package = Package(
   name: "IORingSwift",
   platforms: [
-    .macOS(.v10_15),
+    .macOS(.v13),
   ],
   products: [
     .library(
