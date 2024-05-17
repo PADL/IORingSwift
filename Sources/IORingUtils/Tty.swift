@@ -49,7 +49,7 @@ public extension termios {
 
   mutating func set(speed: UInt32) throws {
     var tty = self
-    try Errno.throwingErrno {
+    try Errno.throwingGlobalErrno {
       cfsetspeed(&tty, speed)
     }
     self = tty
@@ -89,14 +89,14 @@ public extension termios {
 public extension FileDescriptorRepresentable {
   func set(tty: termios) throws {
     var tty = tty
-    try Errno.throwingErrno {
+    try Errno.throwingGlobalErrno {
       tcsetattr(self.fileDescriptor, TCSANOW, &tty)
     }
   }
 
   func getTty() throws -> termios {
     var tty = termios()
-    try Errno.throwingErrno {
+    try Errno.throwingGlobalErrno {
       tcgetattr(self.fileDescriptor, &tty)
     }
     return tty

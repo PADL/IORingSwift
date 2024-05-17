@@ -24,7 +24,8 @@ import CIOURing
 import Glibc
 import SystemPackage
 
-extension msghdr: @unchecked Sendable {}
+extension msghdr: @unchecked
+Sendable {}
 
 public struct Control {
   public var level: Int32

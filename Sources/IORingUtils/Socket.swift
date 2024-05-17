@@ -66,7 +66,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
 
     _ = try withUnsafeMutablePointer(to: &ss) { pointer in
       try pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
-        try Errno.throwingErrno {
+        try Errno.throwingGlobalErrno {
           body(fileHandle.fileDescriptor, sa, &length)
         }
       }
@@ -102,7 +102,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
   public func setBooleanOption(level: CInt = SOL_SOCKET, option: CInt, to value: Bool) throws {
     guard let fileHandle else { throw Errno.badFileDescriptor }
     var value: CInt = value ? 1 : 0
-    try Errno.throwingErrno { setsockopt(
+    try Errno.throwingGlobalErrno { setsockopt(
       fileHandle.fileDescriptor,
       level,
       option,
@@ -148,7 +148,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
   public func bind(to address: any SocketAddress) throws {
     guard let fileHandle else { throw Errno.badFileDescriptor }
     _ = try address.withSockAddr { sa in
-      try Errno.throwingErrno {
+      try Errno.throwingGlobalErrno {
         SwiftGlibc.bind(fileHandle.fileDescriptor, sa, address.size)
       }
     }
@@ -156,7 +156,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
 
   public func listen(backlog: Int = 128) throws {
     guard let fileHandle else { throw Errno.badFileDescriptor }
-    _ = try Errno.throwingErrno {
+    _ = try Errno.throwingGlobalErrno {
       SwiftGlibc.listen(fileHandle.fileDescriptor, Int32(backlog))
     }
   }
@@ -182,7 +182,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     guard let fileHandle else { throw Errno.badFileDescriptor }
     try fileHandle.setBlocking(false)
     _ = try address.withSockAddr { sa in
-      try Errno.throwingErrno {
+      try Errno.throwingGlobalErrno {
         SwiftGlibc.connect(fileHandle.fileDescriptor, sa, address.size)
       }
     }

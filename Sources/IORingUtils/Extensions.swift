@@ -101,14 +101,14 @@ extension IORing {
 
 public extension FileDescriptorRepresentable {
   func set(flags: Int32, mask: Int32) throws {
-    var flags = try Errno.throwingErrno { fcntl(self.fileDescriptor, F_GETFL, 0) }
+    var flags = try Errno.throwingGlobalErrno { fcntl(self.fileDescriptor, F_GETFL, 0) }
     flags &= ~mask
     flags |= mask
-    try Errno.throwingErrno { fcntl(self.fileDescriptor, F_SETFL, flags) }
+    try Errno.throwingGlobalErrno { fcntl(self.fileDescriptor, F_SETFL, flags) }
   }
 
   func get(flag: Int32) throws -> Bool {
-    let flags = try Errno.throwingErrno { fcntl(self.fileDescriptor, F_GETFL, 0) }
+    let flags = try Errno.throwingGlobalErrno { fcntl(self.fileDescriptor, F_GETFL, 0) }
     return flags & flag != 0
   }
 
@@ -143,4 +143,13 @@ public extension FileDescriptorRepresentable {
 
 extension Errno {
   static var lastError: Errno { Errno(rawValue: errno) }
+
+  @discardableResult
+  static func throwingGlobalErrno(_ body: @escaping () -> CInt) throws -> CInt {
+    let result = body()
+    if result < 0 {
+      throw Errno(rawValue: errno)
+    }
+    return result
+  }
 }
