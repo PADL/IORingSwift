@@ -55,10 +55,6 @@ let package = Package(
       name: "IORingFoundation",
       targets: ["IORingFoundation"]
     ),
-    .library(
-      name: "CLinuxSockAddr",
-      targets: ["CLinuxSockAddr"]
-    ),
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-async-algorithms", from: "1.0.0"),
@@ -66,14 +62,12 @@ let package = Package(
     .package(url: "https://github.com/dfed/swift-async-queue", from: "0.4.0"),
     .package(url: "https://github.com/apple/swift-log", from: "1.5.4"),
     .package(url: "https://github.com/apple/swift-system", from: "1.0.0"),
+    .package(url: "https://github.com/padl/SocketAddress", from: "0.0.1"),
   ],
   targets: [
     .systemLibrary(
       name: "CIOURing",
       providers: [.apt(["liburing-dev"])]
-    ),
-    .systemLibrary(
-      name: "CLinuxSockAddr"
     ),
     .target(
       name: "CIORingShims",
@@ -120,7 +114,7 @@ let package = Package(
       name: "IORingUtils",
       dependencies: ["IORing",
                      "AsyncExtensions",
-                     "CLinuxSockAddr",
+                     "SocketAddress",
                      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")],
       swiftSettings: [
         .enableExperimentalFeature("StrictConcurrency"),

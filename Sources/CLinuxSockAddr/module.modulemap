@@ -1,3 +1,0 @@
-module CLinuxSockAddr {
-    header "CLinuxSockAddr.h"
-}
