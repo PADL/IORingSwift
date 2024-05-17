@@ -129,8 +129,8 @@ public extension FileDescriptorRepresentable {
   func getSize() throws -> Int {
     var st = stat()
 
-    if fstat(fileDescriptor, &st) < 0 {
-      throw Errno.lastError
+    throwingGlobalErrno {
+      fstat(fileDescriptor, &st)
     }
 
     if st.st_mode & S_IFMT == S_IFREG {
@@ -145,10 +145,10 @@ extension Errno {
   static var lastError: Errno { Errno(rawValue: errno) }
 
   @discardableResult
-  static func throwingGlobalErrno(_ body: @escaping () -> CInt) throws -> CInt {
+  public static func throwingGlobalErrno(_ body: @escaping () -> CInt) throws -> CInt {
     let result = body()
     if result < 0 {
-      throw Errno(rawValue: errno)
+      throw Errno.lastError
     }
     return result
   }
