@@ -36,43 +36,17 @@ public struct Control {
 public final class Message: @unchecked Sendable {
   // FIXME: again, this is a workaround for _XOPEN_SOURCE=500 clang importer issues
   public var name: [UInt8] {
-    get {
-      withUnsafeBytes(of: address) {
-        Array($0)
-      }
-    }
-    set {
-      address = try! sockaddr_storage(bytes: newValue)
+    withUnsafeBytes(of: address) {
+      Array($0)
     }
   }
 
-  public var address: sockaddr_storage {
-    didSet {
-      Swift.withUnsafeMutablePointer(to: &address) { pointer in
-        storage.msg_name = UnsafeMutableRawPointer(pointer)
-        storage.msg_namelen = (try? pointer.pointee.size) ?? 0
-      }
-    }
-  }
-
-  public var buffer: [UInt8] {
-    didSet {
-      buffer.withUnsafeMutableBytes { bytes in
-        iov_storage.iov_base = bytes.baseAddress
-        iov_storage.iov_len = bytes.count
-      }
-    }
-  }
-
-  public var control = [Control]()
+  public private(set) var address: sockaddr_storage
+  public private(set) var buffer: [UInt8]
+  public private(set) var control = [Control]()
 
   public var flags: UInt32 {
-    get {
-      UInt32(storage.msg_flags)
-    }
-    set {
-      storage.msg_flags = Int32(newValue)
-    }
+    UInt32(storage.msg_flags)
   }
 
   private var storage = msghdr()
@@ -90,11 +64,11 @@ public final class Message: @unchecked Sendable {
   init(address: sockaddr_storage, buffer: [UInt8] = [], flags: UInt32 = 0) {
     self.address = address
     self.buffer = buffer
-    self.flags = flags
-    self.buffer.withUnsafeMutableBytes { bytes in
-      iov_storage.iov_base = bytes.baseAddress
-      iov_storage.iov_len = bytes.count
+    storage.msg_flags = CInt(flags)
+    Swift.withUnsafeMutablePointer(to: &self.buffer) {
+      iov_storage.iov_base = UnsafeMutableRawPointer(mutating: $0)
     }
+    iov_storage.iov_len = self.buffer.count
     Swift.withUnsafeMutablePointer(to: &self.address) { pointer in
       storage.msg_name = UnsafeMutableRawPointer(pointer)
       storage.msg_namelen = (try? pointer.pointee.size) ?? 0
@@ -120,7 +94,7 @@ public final class Message: @unchecked Sendable {
     } else {
       sockaddr_storage()
     }
-    self.init(address: ss, buffer: buffer, flags: 0)
+    self.init(address: ss, buffer: buffer, flags: flags)
   }
 
   public convenience init(capacity: Int, flags: UInt32 = 0) {
