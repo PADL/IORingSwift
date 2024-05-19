@@ -14,10 +14,8 @@
 // limitations under the License.
 //
 
-@_implementationOnly
-import AsyncQueue
-@_implementationOnly
 import AsyncAlgorithms
+import AsyncQueue
 import Glibc
 
 extension SingleshotSubmission {

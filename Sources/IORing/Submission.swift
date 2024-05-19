@@ -14,7 +14,6 @@
 // limitations under the License.
 //
 
-@_implementationOnly
 import AsyncAlgorithms
 import AsyncExtensions
 @_implementationOnly
