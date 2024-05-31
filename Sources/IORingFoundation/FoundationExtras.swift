@@ -23,34 +23,7 @@ import SystemPackage
 public extension Data {
   var socketAddress: any SocketAddress {
     get throws {
-      try withUnsafeBytes { data -> (any SocketAddress) in
-        var family = sa_family_t(AF_UNSPEC)
-
-        try data.withMemoryRebound(to: sockaddr.self) {
-          let sa = $0.baseAddress!.pointee
-          family = sa.sa_family
-          guard sa.size <= self.count else { // ignores trailing bytes
-            throw Errno.addressFamilyNotSupported
-          }
-        }
-
-        switch Int32(family) {
-        case AF_INET:
-          var sin = sockaddr_in()
-          memcpy(&sin, data.baseAddress!, Int(sin.size))
-          return sin
-        case AF_INET6:
-          var sin6 = sockaddr_in6()
-          memcpy(&sin6, data.baseAddress!, Int(sin6.size))
-          return sin6
-        case AF_LOCAL:
-          var sun = sockaddr_un()
-          memcpy(&sun, data.baseAddress!, Int(sun.size))
-          return sun
-        default:
-          throw Errno.addressFamilyNotSupported
-        }
-      }
+      try AnySocketAddress(bytes: Array(self))
     }
   }
 }
