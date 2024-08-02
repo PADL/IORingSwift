@@ -80,12 +80,21 @@ public extension IORing {
   }
 }
 
-extension UnsafeMutablePointer {
+extension UnsafePointer {
   func propertyBasePointer<Property>(to property: KeyPath<Pointee, Property>)
     -> UnsafePointer<Property>?
   {
     guard let offset = MemoryLayout<Pointee>.offset(of: property) else { return nil }
     return (UnsafeRawPointer(self) + offset).assumingMemoryBound(to: Property.self)
+  }
+}
+
+extension UnsafeMutablePointer {
+  func propertyBasePointer<Property>(to property: KeyPath<Pointee, Property>)
+    -> UnsafeMutablePointer<Property>?
+  {
+    guard let offset = MemoryLayout<Pointee>.offset(of: property) else { return nil }
+    return (UnsafeMutableRawPointer(self) + offset).assumingMemoryBound(to: Property.self)
   }
 }
 

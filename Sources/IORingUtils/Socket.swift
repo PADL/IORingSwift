@@ -142,6 +142,43 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     try setBooleanOption(level: CInt(IPPROTO_TCP), option: TCP_NODELAY, to: true)
   }
 
+  private func _addOrDropMembership(
+    _ add: Bool,
+    address: sockaddr_ll,
+    on interfaceIndex: Int
+  ) throws {
+    guard let fileHandle else { throw Errno.badFileDescriptor }
+    var address = address
+    var mreq = packet_mreq()
+    mreq.mr_ifindex = Int32(interfaceIndex)
+    mreq.mr_type = UInt16(PACKET_MR_MULTICAST)
+    mreq.mr_alen = UInt16(address.sll_halen)
+    withUnsafeMutablePointer(to: &mreq.mr_address) { dstAddress in
+      withUnsafePointer(to: &address.sll_addr) { srcAddress in
+        let dstAddressPtr = dstAddress.propertyBasePointer(to: \.0)!
+        let srcAddressPtr = srcAddress.propertyBasePointer(to: \.0)!
+        memcpy(dstAddressPtr, srcAddressPtr, Int(address.sll_halen))
+      }
+    }
+    try Errno.throwingGlobalErrno {
+      setsockopt(
+        fileHandle.fileDescriptor,
+        SOL_PACKET,
+        add ? PACKET_ADD_MEMBERSHIP : PACKET_DROP_MEMBERSHIP,
+        &mreq,
+        socklen_t(MemoryLayout<packet_mreq>.size)
+      )
+    }
+  }
+
+  public func addMulticastMembership(for address: sockaddr_ll, on interfaceIndex: Int) throws {
+    try _addOrDropMembership(true, address: address, on: interfaceIndex)
+  }
+
+  public func dropMulticastMembership(for address: sockaddr_ll, on interfaceIndex: Int) throws {
+    try _addOrDropMembership(false, address: address, on: interfaceIndex)
+  }
+
   public func bind(port: UInt16) throws {
     switch Int32(domain) {
     case AF_INET:
