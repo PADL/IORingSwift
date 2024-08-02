@@ -144,13 +144,12 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
 
   private func _addOrDropMembership(
     _ add: Bool,
-    address: sockaddr_ll,
-    on interfaceIndex: Int
+    address: sockaddr_ll
   ) throws {
     guard let fileHandle else { throw Errno.badFileDescriptor }
     var address = address
     var mreq = packet_mreq()
-    mreq.mr_ifindex = Int32(interfaceIndex)
+    mreq.mr_ifindex = address.sll_ifindex
     mreq.mr_type = UInt16(PACKET_MR_MULTICAST)
     mreq.mr_alen = UInt16(address.sll_halen)
     withUnsafeMutablePointer(to: &mreq.mr_address) { dstAddress in
@@ -171,12 +170,12 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     }
   }
 
-  public func addMulticastMembership(for address: sockaddr_ll, on interfaceIndex: Int) throws {
-    try _addOrDropMembership(true, address: address, on: interfaceIndex)
+  public func addMulticastMembership(for address: sockaddr_ll) throws {
+    try _addOrDropMembership(true, address: address)
   }
 
-  public func dropMulticastMembership(for address: sockaddr_ll, on interfaceIndex: Int) throws {
-    try _addOrDropMembership(false, address: address, on: interfaceIndex)
+  public func dropMulticastMembership(for address: sockaddr_ll) throws {
+    try _addOrDropMembership(false, address: address)
   }
 
   public func bind(port: UInt16) throws {
