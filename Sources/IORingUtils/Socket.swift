@@ -349,7 +349,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
   }
 
   @IORingActor
-  public func receive(count: Int) async throws -> AnyAsyncSequence<[UInt8]> {
+  public func receive(count: Int) throws -> AnyAsyncSequence<[UInt8]> {
     guard let fileHandle else { throw Errno.badFileDescriptor }
     return try ring.receive(
       count: count,
