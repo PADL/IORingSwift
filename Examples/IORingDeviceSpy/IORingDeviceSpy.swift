@@ -30,12 +30,10 @@ public struct IORingDeviceSpy {
       exit(1)
     }
 
-    let blockSize: Int
-
-    if CommandLine.arguments.count > 2 {
-      blockSize = Int(CommandLine.arguments[2])!
+    let blockSize = if CommandLine.arguments.count > 2 {
+      Int(CommandLine.arguments[2])!
     } else {
-      blockSize = 1
+      1
     }
 
     let spy = try await IORingDeviceSpy(blockSize: blockSize)

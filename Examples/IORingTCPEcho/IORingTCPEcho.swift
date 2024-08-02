@@ -74,7 +74,7 @@ public struct IORingTCPEcho {
   func receiveSendEcho(client: Socket) async {
     do {
       repeat {
-        let data = try await client.receive(count: bufferSize)
+        let data: [UInt8] = try await client.receive(count: bufferSize)
         try await client.send(data)
       } while true
     } catch {
