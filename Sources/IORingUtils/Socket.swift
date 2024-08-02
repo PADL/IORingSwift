@@ -111,6 +111,25 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     ) }
   }
 
+  public func setStringOption(level: CInt = SOL_SOCKET, option: CInt, to value: String) throws {
+    guard let fileHandle else { throw Errno.badFileDescriptor }
+    try Errno.throwingGlobalErrno {
+      value.utf8CString.withUnsafeBytes {
+        setsockopt(
+          fileHandle.fileDescriptor,
+          level,
+          option,
+          UnsafeMutableRawPointer(mutating: $0.baseAddress),
+          socklen_t(value.utf8.count)
+        )
+      }
+    }
+  }
+
+  public func bindTo(device: String) throws {
+    try setStringOption(option: SO_BINDTODEVICE, to: device)
+  }
+
   public func setReuseAddr() throws {
     try setBooleanOption(option: SO_REUSEADDR, to: true)
   }
