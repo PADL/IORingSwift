@@ -126,6 +126,23 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     }
   }
 
+  public func setOpaqueOption<T>(
+    level: CInt = SOL_SOCKET,
+    option: CInt,
+    to value: UnsafePointer<T>
+  ) throws {
+    guard let fileHandle else { throw Errno.badFileDescriptor }
+    try Errno.throwingGlobalErrno {
+      setsockopt(
+        fileHandle.fileDescriptor,
+        level,
+        option,
+        UnsafeMutableRawPointer(mutating: value),
+        socklen_t(MemoryLayout<T>.size)
+      )
+    }
+  }
+
   public func bindTo(device: String) throws {
     try setStringOption(option: SO_BINDTODEVICE, to: device)
   }
