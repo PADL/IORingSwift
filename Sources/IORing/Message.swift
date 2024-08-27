@@ -95,6 +95,7 @@ public final class Message: @unchecked Sendable {
       sockaddr_storage()
     }
     self.init(address: ss, buffer: buffer, flags: flags)
+    storage.msg_namelen = socklen_t(name?.count ?? MemoryLayout<sockaddr_storage>.size)
   }
 
   public convenience init(capacity: Int, flags: UInt32 = 0) {
