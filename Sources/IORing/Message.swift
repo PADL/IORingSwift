@@ -65,8 +65,8 @@ public final class Message: @unchecked Sendable {
     self.address = address
     self.buffer = buffer
     storage.msg_flags = CInt(flags)
-    Swift.withUnsafeMutablePointer(to: &self.buffer) {
-      iov_storage.iov_base = UnsafeMutableRawPointer(mutating: $0)
+    self.buffer.withUnsafeMutableBytes {
+      iov_storage.iov_base = UnsafeMutableRawPointer(mutating: $0.baseAddress)
     }
     iov_storage.iov_len = self.buffer.count
     Swift.withUnsafeMutablePointer(to: &self.address) { pointer in
