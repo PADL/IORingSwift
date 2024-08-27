@@ -67,6 +67,10 @@ extension sockaddr {
         return socklen_t(MemoryLayout<sockaddr_in6>.size)
       case AF_LOCAL:
         return socklen_t(MemoryLayout<sockaddr_un>.size)
+      case AF_PACKET:
+        return socklen_t(MemoryLayout<sockaddr_ll>.size)
+      case AF_NETLINK:
+        return socklen_t(MemoryLayout<sockaddr_nl>.size)
       default:
         throw Errno.addressFamilyNotSupported
       }
@@ -116,6 +120,10 @@ extension sockaddr_storage {
       bytesRequired = MemoryLayout<sockaddr_in6>.size
     case AF_LOCAL:
       bytesRequired = MemoryLayout<sockaddr_un>.size
+    case AF_PACKET:
+      bytesRequired = MemoryLayout<sockaddr_ll>.size
+    case AF_NETLINK:
+      bytesRequired = MemoryLayout<sockaddr_nl>.size
     default:
       throw Errno.addressFamilyNotSupported
     }

@@ -21,4 +21,8 @@
 #define _DEFAULT_SOURCE 1
 #endif
 
+#include <linux/if_ether.h>
+#include <linux/if_packet.h>
+#include <linux/netlink.h>
+
 #include <liburing.h>
