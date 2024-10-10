@@ -537,7 +537,7 @@ struct AsyncCancelFlags: OptionSet {
 
 extension Submission: Equatable {
   public nonisolated static func == (lhs: Submission, rhs: Submission) -> Bool {
-    ObjectIdentifier(lhs) == ObjectIdentifier(rhs)
+    lhs === rhs
   }
 }
 

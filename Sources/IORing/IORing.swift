@@ -949,7 +949,7 @@ public extension IORing {
 
 extension IORing: Equatable {
   public nonisolated static func == (lhs: IORing, rhs: IORing) -> Bool {
-    ObjectIdentifier(lhs) == ObjectIdentifier(rhs)
+    lhs === rhs
   }
 }
 
