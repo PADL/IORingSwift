@@ -406,3 +406,142 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     return fileHandle.fileDescriptor < 0
   }
 }
+
+struct in6_pktinfo {
+  var ipi6_addr: in6_addr
+  var ipi6_ifindex: CUnsignedInt
+}
+
+extension Message {
+  static func withControlMessage(
+    control: UnsafeRawPointer,
+    controllen: Int,
+    _ body: (cmsghdr, UnsafeRawBufferPointer) -> ()
+  ) {
+    let controlBuffer = UnsafeRawBufferPointer(start: control, count: Int(controllen))
+    var cmsgHeaderIndex = 0
+
+    while true {
+      let cmsgDataIndex = cmsgHeaderIndex + MemoryLayout<cmsghdr>.stride
+
+      if cmsgDataIndex > controllen {
+        break
+      }
+
+      let header = controlBuffer.load(fromByteOffset: cmsgHeaderIndex, as: cmsghdr.self)
+      if Int(header.cmsg_len) < MemoryLayout<cmsghdr>.stride {
+        break
+      }
+
+      cmsgHeaderIndex = cmsgDataIndex
+      cmsgHeaderIndex += Int(header.cmsg_len) - MemoryLayout<cmsghdr>.stride
+      if cmsgHeaderIndex > controlBuffer.count {
+        break
+      }
+      body(
+        header,
+        UnsafeRawBufferPointer(rebasing: controlBuffer[cmsgDataIndex..<cmsgHeaderIndex])
+      )
+
+      cmsgHeaderIndex += MemoryLayout<cmsghdr>.alignment - 1
+      cmsgHeaderIndex &= ~(MemoryLayout<cmsghdr>.alignment - 1)
+    }
+  }
+
+  static func getPacketInfoControl(
+    msghdr: msghdr
+  ) -> (UInt32?, (any SocketAddress)?) {
+    var interfaceIndex: UInt32?
+    var localAddress: (any SocketAddress)?
+
+    withControlMessage(
+      control: msghdr.msg_control,
+      controllen: msghdr.msg_controllen
+    ) { cmsghdr, cmsgdata in
+      switch Int(cmsghdr.cmsg_level) {
+      case IPPROTO_IP:
+        guard cmsghdr.cmsg_type == IP_PKTINFO else { break }
+        cmsgdata.baseAddress!
+          .withMemoryRebound(to: in_pktinfo.self, capacity: 1) { pktinfo in
+            var sin = sockaddr_in()
+            sin.sin_addr = pktinfo.pointee.ipi_addr
+            interfaceIndex = UInt32(pktinfo.pointee.ipi_ifindex)
+            localAddress = sin
+          }
+      case IPPROTO_IPV6:
+        guard cmsghdr.cmsg_type == IPV6_PKTINFO else { break }
+        cmsgdata.baseAddress!
+          .withMemoryRebound(to: in6_pktinfo.self, capacity: 1) { pktinfo in
+            var sin6 = sockaddr_in6()
+            sin6.sin6_addr = pktinfo.pointee.ipi6_addr
+            interfaceIndex = UInt32(pktinfo.pointee.ipi6_ifindex)
+            localAddress = sin6
+          }
+      default:
+        break
+      }
+    }
+
+    return (interfaceIndex, localAddress)
+  }
+
+  static func withPacketInfoControl<T>(
+    family: sa_family_t,
+    interfaceIndex: UInt32?,
+    address: (some SocketAddress)?,
+    _ body: (UnsafePointer<cmsghdr>?, Int) -> T
+  ) -> T {
+    switch Int32(family) {
+    case AF_INET:
+      let buffer = ManagedBuffer<cmsghdr, in_pktinfo>.create(minimumCapacity: 1) { buffer in
+        buffer.withUnsafeMutablePointers { header, element in
+          header.pointee
+            .cmsg_len = Int(MemoryLayout<cmsghdr>.size + MemoryLayout<in_pktinfo>.size)
+          header.pointee.cmsg_level = SOL_SOCKET
+          header.pointee.cmsg_type = Int32(IPPROTO_IP)
+          element.pointee.ipi_ifindex = Int32(interfaceIndex ?? 0)
+          if let address {
+            var address = address
+            withUnsafePointer(to: &address) {
+              $0.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+                element.pointee.ipi_addr = $0.pointee.sin_addr
+              }
+            }
+          } else {
+            element.pointee.ipi_addr.s_addr = 0
+          }
+
+          return header.pointee
+        }
+      }
+
+      return buffer.withUnsafeMutablePointerToHeader { body($0, Int($0.pointee.cmsg_len)) }
+    case AF_INET6:
+      let buffer = ManagedBuffer<cmsghdr, in6_pktinfo>.create(minimumCapacity: 1) { buffer in
+        buffer.withUnsafeMutablePointers { header, element in
+          header.pointee
+            .cmsg_len = Int(MemoryLayout<cmsghdr>.size + MemoryLayout<in6_pktinfo>.size)
+          header.pointee.cmsg_level = SOL_SOCKET
+          header.pointee.cmsg_type = Int32(IPPROTO_IPV6)
+          element.pointee.ipi6_ifindex = interfaceIndex ?? 0
+          if let address {
+            var address = address
+            withUnsafePointer(to: &address) {
+              $0.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
+                element.pointee.ipi6_addr = $0.pointee.sin6_addr
+              }
+            }
+          } else {
+            element.pointee.ipi6_addr = in6_addr()
+          }
+
+          return header.pointee
+        }
+      }
+
+      return buffer.withUnsafeMutablePointerToHeader { body($0, Int($0.pointee.cmsg_len)) }
+    default:
+      return body(nil, 0)
+    }
+  }
+}
