@@ -545,7 +545,7 @@ private extension IORing {
     count: Int,
     link: Bool = false
   ) throws -> AsyncThrowingChannel<[UInt8], Error> {
-    var buffer = [UInt8](repeating: 0, count: count)
+    var buffer = [UInt8]._unsafelyInitialized(count: count)
     return try prepareAndSubmitMultishot(
       .recv,
       fd: fd,
@@ -695,7 +695,7 @@ public extension IORing {
   }
 
   func read(count: Int, from fd: FileDescriptorRepresentable) async throws -> [UInt8] {
-    var buffer = [UInt8](repeating: 0, count: count)
+    var buffer = [UInt8]._unsafelyInitialized(count: count)
     let nread = try await read(into: &buffer, count: count, from: fd)
     return Array(buffer.prefix(nread))
   }
@@ -722,7 +722,7 @@ public extension IORing {
   }
 
   func receive(count: Int, from fd: FileDescriptorRepresentable) async throws -> [UInt8] {
-    var buffer = [UInt8](repeating: 0, count: count)
+    var buffer = [UInt8]._unsafelyInitialized(count: count)
     try await io_uring_op_recv(fd: fd, buffer: &buffer)
     return buffer
   }
@@ -956,5 +956,13 @@ extension IORing: Equatable {
 extension IORing: Hashable {
   public nonisolated func hash(into hasher: inout Hasher) {
     ObjectIdentifier(self).hash(into: &hasher)
+  }
+}
+
+package extension [UInt8] {
+  static func _unsafelyInitialized(count: Int) -> Self {
+    Self(unsafeUninitializedCapacity: count) { _, initializedCount in
+      initializedCount = count
+    }
   }
 }

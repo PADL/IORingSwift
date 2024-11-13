@@ -30,10 +30,12 @@ extension Message: CustomStringConvertible {
     buffer: [UInt8],
     flags: UInt32 = 0
   ) throws {
-    var addressBuffer = [UInt8](repeating: 0, count: Int(address.size))
-    addressBuffer.withUnsafeMutableBytes { bytes in
+    let addressSize = Int(address.size)
+    let addressBuffer = [UInt8](unsafeUninitializedCapacity: Int(address.size)) { buffer,
+      initializedCount in
       var storage = address.asStorage()
-      _ = memcpy(bytes.baseAddress!, &storage, bytes.count)
+      _ = memcpy(buffer.baseAddress!, &storage, addressSize)
+      initializedCount = addressSize
     }
     try self.init(name: addressBuffer, buffer: buffer, flags: flags)
   }
