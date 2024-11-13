@@ -26,12 +26,6 @@ import SystemPackage
 extension msghdr: @unchecked
 Sendable {}
 
-public struct Control {
-  public var level: Int32
-  public var type: Int32
-  public var data: [UInt8]
-}
-
 // TODO: support for CMSG
 public final class Message: @unchecked Sendable {
   // FIXME: again, this is a workaround for _XOPEN_SOURCE=500 clang importer issues
@@ -43,7 +37,6 @@ public final class Message: @unchecked Sendable {
 
   public private(set) var address: sockaddr_storage
   public private(set) var buffer: [UInt8]
-  public private(set) var control = [Control]()
 
   public var flags: UInt32 {
     UInt32(storage.msg_flags)
