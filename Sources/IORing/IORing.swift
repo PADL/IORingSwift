@@ -145,12 +145,13 @@ public final class IORing: CustomStringConvertible {
       }
     }
 
-    static let fixedFile = SqeFlags(rawValue: 1 << IOSQE_FIXED_FILE_BIT)
-    static let ioDrain = SqeFlags(rawValue: 1 << IOSQE_IO_DRAIN_BIT)
-    static let ioLink = SqeFlags(rawValue: 1 << IOSQE_IO_LINK_BIT)
-    static let ioHardLink = SqeFlags(rawValue: 1 << IOSQE_IO_HARDLINK_BIT)
-    static let async = SqeFlags(rawValue: 1 << IOSQE_ASYNC_BIT)
-    static let bufferSelect = SqeFlags(rawValue: 1 << IOSQE_BUFFER_SELECT_BIT)
+    static let fixedFile = SqeFlags(rawValue: 1 << 0) // IOSQE_FIXED_FILE_BIT
+    static let ioDrain = SqeFlags(rawValue: 1 << 1) // IOSQE_IO_DRAIN_BIT
+    static let ioLink = SqeFlags(rawValue: 1 << 2) // IOSQE_IO_LINK_BIT
+    static let ioHardLink = SqeFlags(rawValue: 1 << 3) // IOSQE_IO_HARDLINK_BIT
+    static let async = SqeFlags(rawValue: 1 << 4) // IOSQE_ASYNC_BIT
+    static let bufferSelect = SqeFlags(rawValue: 1 << 5) // IOSQE_BUFFER_SELECT_BIT
+    static let cqeSkipSuccess = SqeFlags(rawValue: 1 << 6) // IOSQE_CQE_SKIP_SUCCESS_BIT
   }
 
   private struct AcceptIoPrio: OptionSet {
