@@ -26,15 +26,9 @@ import SystemPackage
 
 // MARK: - actor
 
-extension io_uring: @unchecked Sendable {}
+extension io_uring: @retroactive @unchecked Sendable {}
 
-@globalActor
-public actor IORingActor {
-  public static let shared = IORingActor()
-}
-
-@IORingActor
-public final class IORing: CustomStringConvertible {
+public actor IORing: CustomStringConvertible {
   public nonisolated static let shared = try! IORing(entries: nil, flags: 0, shared: true)
 
   private nonisolated static let DefaultIORingQueueEntries = 128
@@ -189,11 +183,11 @@ public final class IORing: CustomStringConvertible {
     }
   }
 
-  public convenience nonisolated init(entries: Int? = nil, flags: UInt32 = 0) throws {
+  public init(entries: Int? = nil, flags: UInt32 = 0) throws {
     try self.init(entries: entries, flags: flags, shared: false)
   }
 
-  private nonisolated init(entries: Int?, flags: UInt32, shared: Bool) throws {
+  private init(entries: Int?, flags: UInt32, shared: Bool) throws {
     let entries = entries ?? IORing.getIORingQueueEntries()
     var ring = io_uring()
     var params = io_uring_params()
@@ -320,8 +314,8 @@ public final class IORing: CustomStringConvertible {
     moreFlags: UInt32 = 0,
     bufferIndexOrGroup: UInt16 = 0,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
-  ) throws -> AsyncThrowingChannel<T, Error> {
-    try MultishotSubmission(
+  ) async throws -> AsyncThrowingChannel<T, Error> {
+    try await MultishotSubmission(
       ring: self,
       opcode,
       fd: fd,
@@ -545,9 +539,9 @@ private extension IORing {
     fd: FileDescriptorRepresentable,
     count: Int,
     link: Bool = false
-  ) throws -> AsyncThrowingChannel<[UInt8], Error> {
+  ) async throws -> AsyncThrowingChannel<[UInt8], Error> {
     var buffer = [UInt8]._unsafelyInitialized(count: count)
-    return try prepareAndSubmitMultishot(
+    return try await prepareAndSubmitMultishot(
       .recv,
       fd: fd,
       address: &buffer[0],
@@ -565,7 +559,7 @@ private extension IORing {
     flags: UInt32 = 0,
     link: Bool = false
   ) async throws {
-    try await message.withUnsafeMutablePointer { @IORingActor pointer in
+    try await message.withUnsafeMutablePointer { pointer in
       try await prepareAndSubmit(
         .recvmsg,
         fd: fd,
@@ -586,8 +580,8 @@ private extension IORing {
   ) async throws -> AsyncThrowingChannel<Message, Error> {
     // FIXME: combine message holder buffer registration with multishot registration to avoid extra system call
     let holder = try await MessageHolder(ring: self, size: count, count: capacity)
-    return try await holder.withUnsafeMutablePointer { @IORingActor pointer in
-      try MultishotSubmission(
+    return try await holder.withUnsafeMutablePointer { pointer in
+      try await MultishotSubmission(
         ring: self,
         .recvmsg,
         fd: fd,
@@ -613,7 +607,7 @@ private extension IORing {
     flags: UInt32 = 0,
     link: Bool = false
   ) async throws {
-    try await message.withUnsafeMutablePointer { @IORingActor pointer in
+    try await message.withUnsafeMutablePointer { pointer in
       try await prepareAndSubmit(
         .sendmsg,
         fd: fd,
@@ -644,8 +638,8 @@ private extension IORing {
   func io_uring_op_multishot_accept(
     fd: FileDescriptorRepresentable,
     flags: UInt32 = 0
-  ) throws -> AsyncThrowingChannel<FileDescriptorRepresentable, Error> {
-    try prepareAndSubmitMultishot(
+  ) async throws -> AsyncThrowingChannel<FileDescriptorRepresentable, Error> {
+    try await prepareAndSubmitMultishot(
       .accept,
       fd: fd,
       ioprio: AcceptIoPrio.multishot,
@@ -718,8 +712,8 @@ public extension IORing {
   func receive(
     count: Int,
     from fd: FileDescriptorRepresentable
-  ) throws -> AnyAsyncSequence<[UInt8]> {
-    try io_uring_op_recv_multishot(fd: fd, count: count).eraseToAnyAsyncSequence()
+  ) async throws -> AnyAsyncSequence<[UInt8]> {
+    try await io_uring_op_recv_multishot(fd: fd, count: count).eraseToAnyAsyncSequence()
   }
 
   func receive(count: Int, from fd: FileDescriptorRepresentable) async throws -> [UInt8] {
@@ -760,10 +754,10 @@ public extension IORing {
     try await io_uring_op_accept(fd: fd)
   }
 
-  func accept(from fd: FileDescriptorRepresentable) throws
+  func accept(from fd: FileDescriptorRepresentable) async throws
     -> AnyAsyncSequence<FileDescriptorRepresentable>
   {
-    try io_uring_op_multishot_accept(fd: fd).eraseToAnyAsyncSequence()
+    try await io_uring_op_multishot_accept(fd: fd).eraseToAnyAsyncSequence()
   }
 
   func connect(_ fd: FileDescriptorRepresentable, to address: sockaddr_storage) async throws {

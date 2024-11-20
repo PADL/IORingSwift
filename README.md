@@ -16,8 +16,6 @@ The intention is that this will also eventually support the real-time I/O subsys
 Architecture
 ------------
 
-IORing operations are isolated to the `IORingActor` global actor.
-
 IORing is generally designed to be used as a singleton (`IORing.shared`), however because of some present API limitations to do with allocating fixed buffers, you may need to allocate separate instances. At present all instances share the same actor context and `io_uring` work queue, so there is no performance benefit to allocating more instances. (This should be considered an implementation detail, however.)
 
 Public API provides structured concurrency wrappers around common operations such as reading and writing. Multishot APIs, such as `accept(2)`, which can return multiple completions over time return an `AnyAsyncSequence`. Internally, wrappers allocate a concrete instance of `Submission<T>`, representing an initialized Submission Queue Entry (SQE), which is then submitted to the `io_uring`. Completion handlers are handled by having `libdispatch` monitor an `eventfd(2)` representing available completions. The `user_data` in each queue entry is a block, which executes the `onCompletion(cqe:)` method of the `Submission<T>` instance in the ring's isolated context. Care must be taken to manager pointer lifetimes across the event lifecycle.

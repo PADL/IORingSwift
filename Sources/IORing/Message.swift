@@ -110,12 +110,12 @@ final class MessageHolder: @unchecked Sendable {
   private var bufferSubmission: BufferSubmission<UInt8>
   let bufferGroup: UInt16
 
-  init(ring: IORing, size: Int, count: Int, flags: UInt32 = 0) async throws {
+  init(ring: isolated IORing, size: Int, count: Int, flags: UInt32 = 0) async throws {
     if size % MemoryLayout<io_uring_recvmsg_out>.alignment != 0 {
       throw Errno.invalidArgument
     }
     self.size = size + MemoryLayout<io_uring_recvmsg_out>.size + MemoryLayout<sockaddr_storage>.size
-    bufferSubmission = try await BufferSubmission(ring: ring, size: size, count: count)
+    bufferSubmission = try BufferSubmission(ring: ring, size: size, count: count)
     bufferGroup = bufferSubmission.bufferGroup
     Swift.withUnsafeMutablePointer(to: &address) {
       self.storage.msg_name = UnsafeMutableRawPointer($0)
@@ -150,7 +150,7 @@ final class MessageHolder: @unchecked Sendable {
 
       // make the buffer available for reuse once we've copied the contents
       defer {
-        Task { @IORingActor in
+        Task {
           try await bufferSubmission.reprovideAndSubmit(id: bufferID)
         }
       }
@@ -175,7 +175,6 @@ final class MessageHolder: @unchecked Sendable {
     }
   }
 
-  @IORingActor
   func withUnsafeMutablePointer<T: Sendable>(
     _ body: @Sendable (UnsafeMutablePointer<msghdr>) async throws
       -> T

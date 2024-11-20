@@ -44,7 +44,7 @@ actor SubmissionGroup<T: Sendable> {
   fileprivate let readinessChannel = AsyncChannel<()>()
   fileprivate let resultChannel = AsyncThrowingChannel<T, Error>()
 
-  init(ring: IORing) async throws {
+  init(ring: isolated IORing) async throws {
     self.ring = ring
     queue.adoptExecutionContext(of: self)
   }
