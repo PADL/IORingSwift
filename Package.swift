@@ -73,14 +73,10 @@ let package = Package(
       name: "CIORingShims",
       dependencies: ["CIOURing"],
       cSettings: [
-        .define("_XOPEN_SOURCE=700"),
-        .define("_DEFAULT_SOURCE"),
         .define("\(cqHandlerType.rawValue)=1"),
         .unsafeFlags(["-I", SwiftLibRoot] + ASANCFlags),
       ],
       cxxSettings: [
-        .define("_XOPEN_SOURCE=700"),
-        .define("_DEFAULT_SOURCE"),
         .define("\(cqHandlerType.rawValue)=1"),
         .unsafeFlags(["-I", SwiftLibRoot] + ASANCFlags),
       ]
@@ -93,14 +89,6 @@ let package = Package(
                      .product(name: "AsyncQueue", package: "swift-async-queue"),
                      .product(name: "Logging", package: "swift-log"),
                      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")],
-      cSettings: [
-        .define("_XOPEN_SOURCE=700"),
-        .define("_DEFAULT_SOURCE"),
-      ],
-      cxxSettings: [
-        .define("_XOPEN_SOURCE=700"),
-        .define("_DEFAULT_SOURCE"),
-      ],
       swiftSettings: [
         .enableExperimentalFeature("StrictConcurrency"),
         .unsafeFlags(ASANSwiftFlags),
