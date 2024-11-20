@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023 PADL Software Pty Ltd
+// Copyright (c) 2023-2024 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -16,13 +16,9 @@
 
 #pragma once
 
-#define _XOPEN_SOURCE 700
-#ifndef _DEFAULT_SOURCE
-#define _DEFAULT_SOURCE 1
-#endif
-
 #include <linux/if_ether.h>
 #include <linux/if_packet.h>
 #include <linux/netlink.h>
+#include <linux/rtnetlink.h>
 
 #include <liburing.h>

@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023 PADL Software Pty Ltd
+// Copyright (c) 2023-2024 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -18,7 +18,9 @@ import AsyncAlgorithms
 import AsyncExtensions
 @_implementationOnly
 import CIORingShims
+import CLinuxSockAddr
 import Glibc
+import SocketAddress
 import SystemPackage
 
 @IORingActor
@@ -121,7 +123,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
     bufferIndexOrGroup: UInt16 = 0,
-    socketAddress: sockaddr_storage? = nil,
+    socketAddress: (any SocketAddress)? = nil,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) throws {
     sqe = try ring.getSqe()
@@ -183,7 +185,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T> {
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
     bufferIndex: UInt16 = 0,
-    socketAddress: sockaddr_storage? = nil,
+    socketAddress: (any SocketAddress)? = nil,
     group: SubmissionGroup<T>? = nil,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) async throws {
@@ -375,7 +377,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
   private let ioprio: UInt16
   private let moreFlags: UInt32
   private let bufferIndexOrGroup: UInt16
-  private let socketAddress: sockaddr_storage?
+  private let socketAddress: (any SocketAddress)?
 
   override init(
     ring: IORing,
@@ -388,7 +390,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
     bufferIndexOrGroup: UInt16 = 0,
-    socketAddress: sockaddr_storage? = nil,
+    socketAddress: (any SocketAddress)? = nil,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) throws {
     self.address = address

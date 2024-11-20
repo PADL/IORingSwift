@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023 PADL Software Pty Ltd
+// Copyright (c) 2023-2024 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -20,8 +20,10 @@ import AsyncExtensions
 import CIORingShims
 @_implementationOnly
 import CIOURing
+import CLinuxSockAddr
 import Glibc
 import Logging
+import SocketAddress
 import SystemPackage
 
 // MARK: - actor
@@ -291,7 +293,7 @@ public final class IORing: CustomStringConvertible {
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
     bufferIndex: UInt16 = 0,
-    socketAddress: sockaddr_storage? = nil,
+    socketAddress: (any SocketAddress)? = nil,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) async throws -> T {
     try await SingleshotSubmission(
@@ -502,7 +504,7 @@ private extension IORing {
   func io_uring_op_send(
     fd: FileDescriptorRepresentable,
     buffer: [UInt8],
-    to socketAddress: sockaddr_storage? = nil,
+    to socketAddress: (any SocketAddress)? = nil,
     flags: UInt32 = 0,
     link: Bool = false
   ) async throws {
@@ -657,7 +659,7 @@ private extension IORing {
 
   func io_uring_op_connect(
     fd: FileDescriptorRepresentable,
-    address: sockaddr_storage,
+    address: any SocketAddress,
     link: Bool = false
   ) async throws {
     var address = address
@@ -766,22 +768,13 @@ public extension IORing {
     try io_uring_op_multishot_accept(fd: fd).eraseToAnyAsyncSequence()
   }
 
-  func connect(_ fd: FileDescriptorRepresentable, to address: sockaddr_storage) async throws {
+  func connect(_ fd: FileDescriptorRepresentable, to address: any SocketAddress) async throws {
     try await io_uring_op_connect(fd: fd, address: address)
   }
 
-  // FIXME: _XOPEN_SOURCE=500 is implictly defined by liburing.h and is also defined
-  // when building IORing (so we can import CIORingShims). However we can't expect
-  // depending packages to also define this, and in not doing so we lose the ability
-  // to define APIs with `sockaddr_storage` and friends as the clang importer does
-  // not know the types defined with and without _XOPEN_SOURCE=500 are equivalent.
-  //
-  // Provide an escape hatch by encoding sockaddr_storage into [UInt8]. We can provide
-  // wrapper APIs in IORingUtils that take the non-X/Open sockaddr layout.
-
   func connect(_ fd: FileDescriptorRepresentable, to address: [UInt8]) async throws {
-    let ss = try sockaddr_storage(bytes: address)
-    try await io_uring_op_connect(fd: fd, address: ss)
+    let sa = try AnySocketAddress(bytes: address)
+    try await io_uring_op_connect(fd: fd, address: sa)
   }
 
   func readFixed<U>(

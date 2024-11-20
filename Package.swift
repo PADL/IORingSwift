@@ -71,7 +71,8 @@ let package = Package(
     ),
     .target(
       name: "CIORingShims",
-      dependencies: ["CIOURing"],
+      dependencies: ["CIOURing",
+                     .product(name: "CLinuxSockAddr", package: "SocketAddress")],
       cSettings: [
         .define("\(cqHandlerType.rawValue)=1"),
         .unsafeFlags(["-I", SwiftLibRoot] + ASANCFlags),
@@ -85,6 +86,8 @@ let package = Package(
       name: "IORing",
       dependencies: ["CIORingShims",
                      "AsyncExtensions",
+                     "SocketAddress",
+                     .product(name: "CLinuxSockAddr", package: "SocketAddress"),
                      .product(name: "SystemPackage", package: "swift-system"),
                      .product(name: "AsyncQueue", package: "swift-async-queue"),
                      .product(name: "Logging", package: "swift-log"),

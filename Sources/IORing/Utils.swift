@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023 PADL Software Pty Ltd
+// Copyright (c) 2023-2024 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ import CIORingShims
 @_implementationOnly
 import CIOURing
 import Glibc
+import SocketAddress
 import SystemPackage
 
 // MARK: - iovec extensions
@@ -52,86 +53,6 @@ extension iovec {
       iov_base: mutableBufferPointer.baseAddress! + offset,
       iov_len: count
     )
-  }
-}
-
-// MARK: - sockaddr extensions
-
-extension sockaddr {
-  var size: socklen_t {
-    get throws {
-      switch Int32(sa_family) {
-      case AF_INET:
-        return socklen_t(MemoryLayout<sockaddr_in>.size)
-      case AF_INET6:
-        return socklen_t(MemoryLayout<sockaddr_in6>.size)
-      case AF_LOCAL:
-        return socklen_t(MemoryLayout<sockaddr_un>.size)
-      case AF_PACKET:
-        return socklen_t(MemoryLayout<sockaddr_ll>.size)
-      case AF_NETLINK:
-        return socklen_t(MemoryLayout<sockaddr_nl>.size)
-      default:
-        throw Errno.addressFamilyNotSupported
-      }
-    }
-  }
-}
-
-extension sockaddr_storage {
-  // FIXME: DRY IORingUtils
-  func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>) throws -> T) rethrows -> T {
-    try withUnsafePointer(to: self) {
-      try $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        try body($0)
-      }
-    }
-  }
-
-  var size: socklen_t {
-    get throws {
-      try withSockAddr {
-        try $0.pointee.size
-      }
-    }
-  }
-}
-
-extension sockaddr {
-  init(bytes: [UInt8]) throws {
-    guard bytes.count >= MemoryLayout<Self>.size else {
-      throw Errno.outOfRange
-    }
-    var sa = sockaddr()
-    memcpy(&sa, bytes, MemoryLayout<Self>.size)
-    self = sa
-  }
-}
-
-extension sockaddr_storage {
-  init(bytes: [UInt8]) throws {
-    let sa = try sockaddr(bytes: bytes)
-    var ss = Self()
-    let bytesRequired: Int
-    switch Int32(sa.sa_family) {
-    case AF_INET:
-      bytesRequired = MemoryLayout<sockaddr_in>.size
-    case AF_INET6:
-      bytesRequired = MemoryLayout<sockaddr_in6>.size
-    case AF_LOCAL:
-      bytesRequired = MemoryLayout<sockaddr_un>.size
-    case AF_PACKET:
-      bytesRequired = MemoryLayout<sockaddr_ll>.size
-    case AF_NETLINK:
-      bytesRequired = MemoryLayout<sockaddr_nl>.size
-    default:
-      throw Errno.addressFamilyNotSupported
-    }
-    guard bytes.count >= bytesRequired else {
-      throw Errno.outOfRange
-    }
-    memcpy(&ss, bytes, bytesRequired)
-    self = ss
   }
 }
 

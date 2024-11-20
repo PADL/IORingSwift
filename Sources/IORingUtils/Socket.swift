@@ -59,7 +59,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     Int32,
     UnsafeMutablePointer<sockaddr>,
     UnsafeMutablePointer<socklen_t>
-  ) -> CInt) throws -> sockaddr_storage {
+  ) -> CInt) throws -> any SocketAddress {
     guard let fileHandle else { throw Errno.badFileDescriptor }
     var ss = sockaddr_storage()
     var length = ss.size

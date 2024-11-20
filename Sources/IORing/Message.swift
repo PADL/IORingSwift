@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023 PADL Software Pty Ltd
+// Copyright (c) 2023-2024 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -20,7 +20,9 @@ import AsyncExtensions
 import CIORingShims
 @_implementationOnly
 import CIOURing
+import CLinuxSockAddr
 import Glibc
+import SocketAddress
 import SystemPackage
 
 extension msghdr: @unchecked
@@ -28,14 +30,7 @@ Sendable {}
 
 // TODO: support for CMSG
 public final class Message: @unchecked Sendable {
-  // FIXME: again, this is a workaround for _XOPEN_SOURCE=500 clang importer issues
-  public var name: [UInt8] {
-    withUnsafeBytes(of: address) {
-      Array($0)
-    }
-  }
-
-  public private(set) var address: sockaddr_storage
+  public private(set) var address: any SocketAddress
   public private(set) var buffer: [UInt8]
 
   public var flags: UInt32 {
@@ -54,8 +49,12 @@ public final class Message: @unchecked Sendable {
     try await body(&storage)
   }
 
-  init(address: sockaddr_storage, buffer: [UInt8] = [], flags: UInt32 = 0) {
-    self.address = address
+  public init(address: (any SocketAddress)? = nil, buffer: [UInt8] = [], flags: UInt32 = 0) {
+    if let address {
+      self.address = address
+    } else {
+      self.address = sockaddr_storage()
+    }
     self.buffer = buffer
     storage.msg_flags = CInt(flags)
     self.buffer.withUnsafeMutableBytes {
@@ -76,19 +75,14 @@ public final class Message: @unchecked Sendable {
     Self(address: address, buffer: buffer, flags: flags)
   }
 
-  // FIXME: see note below about _XOPEN_SOURCE=500 sockaddr clang importer issues
   public convenience init(
-    name: [UInt8]? = nil,
+    name: [UInt8],
     buffer: [UInt8] = [],
     flags: UInt32 = 0
   ) throws {
-    let ss: sockaddr_storage = if let name {
-      try sockaddr_storage(bytes: name)
-    } else {
-      sockaddr_storage()
-    }
+    let ss = try sockaddr_storage(bytes: name)
     self.init(address: ss, buffer: buffer, flags: flags)
-    storage.msg_namelen = socklen_t(name?.count ?? MemoryLayout<sockaddr_storage>.size)
+    storage.msg_namelen = socklen_t(name.count)
   }
 
   public convenience init(capacity: Int, flags: UInt32 = 0) {
