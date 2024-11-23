@@ -19,16 +19,6 @@ func tryGuessSwiftLibRoot() -> String {
 }
 
 let SwiftLibRoot = tryGuessSwiftLibRoot()
-let EnableASAN = false
-var ASANCFlags: [String] = []
-var ASANSwiftFlags: [String] = []
-var ASANLinkerSettings: [LinkerSetting] = []
-
-if EnableASAN {
-  ASANCFlags.append("-fsanitize=address")
-  ASANSwiftFlags.append("-sanitize=address")
-  ASANLinkerSettings.append(LinkerSetting.linkedLibrary("asan"))
-}
 
 enum CQHandlerType: String {
   case dispatch = "DISPATCH_IO_URING"
@@ -75,14 +65,12 @@ let package = Package(
       cSettings: [
         .define("_XOPEN_SOURCE=700"),
         .define("_DEFAULT_SOURCE"),
-        .define("\(cqHandlerType.rawValue)=1"),
-        .unsafeFlags(["-I", SwiftLibRoot] + ASANCFlags),
+        .define("\(cqHandlerType.rawValue)=1")
       ],
       cxxSettings: [
         .define("_XOPEN_SOURCE=700"),
         .define("_DEFAULT_SOURCE"),
         .define("\(cqHandlerType.rawValue)=1"),
-        .unsafeFlags(["-I", SwiftLibRoot] + ASANCFlags),
       ]
     ),
     .target(
@@ -103,7 +91,6 @@ let package = Package(
       ],
       swiftSettings: [
         .enableExperimentalFeature("StrictConcurrency"),
-        .unsafeFlags(ASANSwiftFlags),
       ]
     ),
     .testTarget(
@@ -118,7 +105,6 @@ let package = Package(
                      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")],
       swiftSettings: [
         .enableExperimentalFeature("StrictConcurrency"),
-        .unsafeFlags(ASANSwiftFlags),
       ]
     ),
     .target(
@@ -126,44 +112,37 @@ let package = Package(
       dependencies: ["IORingUtils"],
       swiftSettings: [
         .enableExperimentalFeature("StrictConcurrency"),
-        .unsafeFlags(ASANSwiftFlags),
       ]
     ),
     .executableTarget(
       name: "IORingCat",
       dependencies: ["IORing", "IORingUtils"],
-      path: "Examples/IORingCat",
-      linkerSettings: [] + ASANLinkerSettings
+      path: "Examples/IORingCat"
     ),
     .executableTarget(
       name: "IORingCopy",
       dependencies: ["IORing", "IORingUtils"],
-      path: "Examples/IORingCopy",
-      linkerSettings: [] + ASANLinkerSettings
+      path: "Examples/IORingCopy"
     ),
     .executableTarget(
       name: "IORingTCPEcho",
       dependencies: ["IORing", "IORingUtils"],
-      path: "Examples/IORingTCPEcho",
-      linkerSettings: [] + ASANLinkerSettings
+      path: "Examples/IORingTCPEcho"
     ),
     .executableTarget(
       name: "IORingUDPClient",
       dependencies: ["IORing", "IORingUtils"],
-      path: "Examples/IORingUDPClient",
-      linkerSettings: [] + ASANLinkerSettings
+      path: "Examples/IORingUDPClient"
     ),
     .executableTarget(
       name: "IORingUDPServer",
       dependencies: ["IORing", "IORingUtils"],
-      path: "Examples/IORingUDPServer",
-      linkerSettings: [] + ASANLinkerSettings
+      path: "Examples/IORingUDPServer"
     ),
     .executableTarget(
       name: "IORingDeviceSpy",
       dependencies: ["IORing", "IORingUtils"],
-      path: "Examples/IORingDeviceSpy",
-      linkerSettings: [] + ASANLinkerSettings
+      path: "Examples/IORingDeviceSpy"
     ),
   ],
   cLanguageStandard: .c18,
