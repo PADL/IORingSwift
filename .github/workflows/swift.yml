@@ -1,27 +1,24 @@
-# This workflow will build a Swift project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-swift
-
-name: Swift
+name: build
 
 on:
   push:
-    branches: [ "main" ]
   pull_request:
-    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
-  build:
-
-    runs-on: ubuntu-latest
-
+  linux:
+    runs-on: ubuntu-24.04
+    container: swift:6.0
     steps:
-    - uses: sersoft-gmbh/swifty-linux-action@v3
-      with:
-        release-version: 5.9
-    - name: Install packages
-      run: sudo apt-get install -y liburing-dev
-    - uses: actions/checkout@v3
-    - name: Build
-      run: swift build -v
-    - name: Run tests
-      run: swift test -v
+      - name: Packages
+        run: |
+          apt-get update
+          apt-get install -y liburing-dev
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Version
+        run: swift --version
+      - name: Build
+        run: swift build --build-tests
+      - name: Test
+        run: swift test --skip-build
