@@ -10,15 +10,6 @@
       }
     },
     {
-      "identity" : "clinuxgcd",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/PADL/CLinuxGCD",
-      "state" : {
-        "revision" : "75635d354c4ef14675803e2d6c5dd08026e7b61a",
-        "version" : "6.0.2"
-      }
-    },
-    {
       "identity" : "socketaddress",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/PADL/SocketAddress",
@@ -68,8 +59,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-log",
       "state" : {
-        "revision" : "96a2f8a0fa41e9e09af4585e2724c4e825410b91",
-        "version" : "1.6.2"
+        "revision" : "9cb486020ebf03bfa5b5df985387a14a98744537",
+        "version" : "1.6.1"
       }
     },
     {
