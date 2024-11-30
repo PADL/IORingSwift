@@ -53,6 +53,7 @@ let package = Package(
     .package(url: "https://github.com/apple/swift-log", from: "1.6.2"),
     .package(url: "https://github.com/apple/swift-system", from: "1.0.0"),
     .package(url: "https://github.com/PADL/SocketAddress", from: "0.0.1"),
+    .package(url: "https://github.com/PADL/CLinuxGCD", from: "6.0.2"),
   ],
   targets: [
     .systemLibrary(
@@ -61,7 +62,10 @@ let package = Package(
     ),
     .target(
       name: "CIORingShims",
-      dependencies: ["CIOURing"],
+      dependencies: ["CIOURing",
+                     .product(name: "CBlockHeaders", package: "CLinuxGCD"),
+                     .product(name: "CDispatchHeaders", package: "CLinuxGCD")
+      ],
       cSettings: [
         .define("_XOPEN_SOURCE=700"),
         .define("_DEFAULT_SOURCE"),
@@ -143,8 +147,6 @@ let package = Package(
       name: "IORingDeviceSpy",
       dependencies: ["IORing", "IORingUtils"],
       path: "Examples/IORingDeviceSpy"
-    ),
-  ],
-  cLanguageStandard: .c18,
-  cxxLanguageStandard: .cxx20
+    )
+  ]
 )
