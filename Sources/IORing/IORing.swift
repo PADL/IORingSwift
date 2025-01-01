@@ -850,34 +850,39 @@ public extension IORing {
   // happen
   func writeReadFixed(
     _ data: inout [UInt8],
-    count: Int? = nil,
+    writeCount: Int? = nil,
+    readCount: Int? = nil,
     offset: Int = -1,
     bufferIndex: UInt16,
     bufferOffset: Int = 0,
     fd: FileDescriptorRepresentable
   ) async throws {
     guard let fixedBuffers else { throw Errno.invalidArgument }
-    let count = count ?? fixedBuffers.count
-    guard count <= data.count else { throw Errno.outOfRange }
+
+    let writeCount = writeCount ?? fixedBuffers.size
+    let readCount = readCount ?? fixedBuffers.size
+
+    guard writeCount <= data.count, readCount <= data.count else { throw Errno.outOfRange }
+
     try fixedBuffers.validate(
-      count: count,
+      count: max(readCount, writeCount),
       bufferIndex: bufferIndex,
       bufferOffset: bufferOffset
     )
 
     let address = try fixedBuffers.unsafeMutableRawPointer(
       at: bufferIndex,
-      count: count,
+      count: writeCount,
       bufferOffset: bufferOffset
     )
     data.withUnsafeBytes { bytes in
-      _ = memcpy(address, UnsafeRawPointer(bytes.baseAddress!), count)
+      _ = memcpy(address, UnsafeRawPointer(bytes.baseAddress!), writeCount)
     }
 
     let result = try await withSubmissionGroup { (group: SubmissionGroup<Int>) in
       let _: SingleshotSubmission<Int> = try await io_uring_op_write_fixed(
         fd: fd,
-        count: count,
+        count: writeCount,
         offset: offset,
         bufferIndex: bufferIndex,
         bufferOffset: 0,
@@ -887,7 +892,7 @@ public extension IORing {
 
       let _: SingleshotSubmission<Int> = try await io_uring_op_read_fixed(
         fd: fd,
-        count: count,
+        count: readCount,
         offset: offset,
         bufferIndex: bufferIndex,
         bufferOffset: 0,
@@ -900,7 +905,7 @@ public extension IORing {
     }
 
     data.withUnsafeMutableBytes { bytes in
-      _ = memcpy(UnsafeMutableRawPointer(bytes.baseAddress!), address, count)
+      _ = memcpy(UnsafeMutableRawPointer(bytes.baseAddress!), address, readCount)
     }
   }
 
