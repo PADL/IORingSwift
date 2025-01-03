@@ -20,8 +20,17 @@ import IORing
 import SocketAddress
 import SystemPackage
 
+private func byteToHex(_ byte: UInt8) -> String {
+  let hexAlphabet = Array("0123456789abcdef".utf8)
+  return String(unsafeUninitializedCapacity: 2) { ptr -> Int in
+    ptr[0] = hexAlphabet[Int(byte / 16)]
+    ptr[1] = hexAlphabet[Int(byte % 16)]
+    return 2
+  }
+}
+
 private func hexDescription(_ bytes: [UInt8]) -> String {
-  bytes.reduce("") { $0 + String(format: "%02x", $1) }
+  bytes.reduce("") { $0 + byteToHex($1) }
 }
 
 extension Message: CustomStringConvertible {
