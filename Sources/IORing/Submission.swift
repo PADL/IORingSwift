@@ -86,6 +86,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
 
   /// because actors are reentrant, `setBlock()` must be called immediately after
   /// the io_uring assigned a SQE (or, at least before any suspension point)
+  /// FIXME: `swift_allocObject()` here appears to be a potential performance issue
   private func setBlock() {
     cancellationToken = io_uring_sqe_set_block(sqe) { cqe in
       let cqe = cqe.pointee
