@@ -70,7 +70,7 @@ public struct IORingDeviceSpy {
   }
 
   func print(_ data: [UInt8]) {
-    Swift.print(data.map { String(format: "%02x", $0) }.joined())
+    Swift.print(data.map { String($0, radix: 16) }.joined())
   }
 
   func readFixed(from fd: FileDescriptorRepresentable) async throws {
