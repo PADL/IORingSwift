@@ -56,7 +56,7 @@ actor SubmissionGroup<T: Sendable> {
   ///
   func enqueue(submission: SingleshotSubmission<T>) {
     submissions.append(submission)
-    queue.enqueue { _ in
+    Task(on: queue) { _ in
       await submission.enqueue()
     }
   }
@@ -81,7 +81,7 @@ actor SubmissionGroup<T: Sendable> {
   /// - Collect results from results channel
   ///
   func finish() async throws -> [T] {
-    await queue.enqueueAndWait { _ in }
+    await Task(on: queue) { _ in }.value
     await allReady()
     try await ring.submit()
     readinessChannel.finish()

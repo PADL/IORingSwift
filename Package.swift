@@ -49,7 +49,7 @@ let package = Package(
   dependencies: [
     .package(url: "https://github.com/apple/swift-async-algorithms", from: "1.0.0"),
     .package(url: "https://github.com/lhoward/AsyncExtensions", from: "0.9.0"),
-    .package(url: "https://github.com/dfed/swift-async-queue", from: "0.4.0"),
+    .package(url: "https://github.com/dfed/swift-async-queue", from: "0.7.0"),
     .package(url: "https://github.com/apple/swift-log", from: "1.6.2"),
     .package(url: "https://github.com/apple/swift-system", from: "1.0.0"),
     .package(url: "https://github.com/PADL/SocketAddress", from: "0.0.1"),
@@ -65,7 +65,7 @@ let package = Package(
       cSettings: [
         .define("_XOPEN_SOURCE=700"),
         .define("_DEFAULT_SOURCE"),
-        .define("\(cqHandlerType.rawValue)=1")
+        .define("\(cqHandlerType.rawValue)=1"),
       ],
       cxxSettings: [
         .define("_XOPEN_SOURCE=700"),
