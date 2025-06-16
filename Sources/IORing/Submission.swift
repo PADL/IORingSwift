@@ -170,7 +170,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
 final class SingleshotSubmission<T: Sendable>: Submission<T> {
   weak var group: SubmissionGroup<T>?
 
-  private typealias Continuation = CheckedContinuation<T, Error>
+  private typealias Continuation = UnsafeContinuation<T, Error>
   private var continuation: Continuation!
 
   init(
@@ -210,7 +210,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T> {
 
   func submit() async throws -> T {
     try await withTaskCancellationHandler(operation: {
-      try await withCheckedThrowingContinuation { continuation in
+      try await withUnsafeThrowingContinuation { continuation in
         // guaranteed to run immediately
         self.continuation = continuation
         Task {
