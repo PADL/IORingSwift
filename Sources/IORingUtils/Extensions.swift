@@ -141,7 +141,7 @@ public extension FileDescriptorRepresentable {
     }
   }
 
-  func getSize() throws -> Int64 {
+  func getSize() throws -> IORing.Offset {
     var st = stat()
 
     try Errno.throwingGlobalErrno {
@@ -149,7 +149,7 @@ public extension FileDescriptorRepresentable {
     }
 
     if st.st_mode & S_IFMT == S_IFREG {
-      return Int64(st.st_size)
+      return IORing.Offset(st.st_size)
     } else {
       throw Errno.invalidArgument
     }
