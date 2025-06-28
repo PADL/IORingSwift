@@ -35,6 +35,8 @@ public actor IORingActor {
 
 @IORingActor
 public final class IORing: CustomStringConvertible {
+  public typealias Offset = Int64 // for 64-bit offsetes on 32-bit platforms
+
   public nonisolated static let shared = try! IORing(entries: nil, flags: 0, shared: true)
 
   private nonisolated static let DefaultIORingQueueEntries = 128
@@ -286,7 +288,7 @@ public final class IORing: CustomStringConvertible {
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
     length: CUnsignedInt = 0,
-    offset: Int = 0,
+    offset: Offset = 0,
     flags: IORing.SqeFlags = IORing.SqeFlags(),
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
@@ -367,7 +369,7 @@ private extension IORing {
     fd: FileDescriptorRepresentable,
     buffer: inout [UInt8],
     count: Int,
-    offset: Int,
+    offset: Offset,
     link: Bool = false
   ) async throws -> Int {
     try await prepareAndSubmit(
@@ -387,7 +389,7 @@ private extension IORing {
     fd: FileDescriptorRepresentable,
     buffer: [UInt8],
     count: Int,
-    offset: Int,
+    offset: Offset,
     link: Bool = false
   ) async throws -> Int {
     try await prepareAndSubmit(
@@ -406,7 +408,7 @@ private extension IORing {
   func io_uring_op_read_fixed(
     fd: FileDescriptorRepresentable,
     count: Int, // number of bytes to read
-    offset: Int, // offset into the file we are reading
+    offset: Offset, // offset into the file we are reading
     bufferIndex: UInt16, // buffer selector
     bufferOffset: Int, // offset into the fixed buffers
     link: Bool = false,
@@ -434,7 +436,7 @@ private extension IORing {
   func io_uring_op_read_fixed(
     fd: FileDescriptorRepresentable,
     count: Int, // number of bytes to write
-    offset: Int, // offset into the file we are writing
+    offset: Offset, // offset into the file we are writing
     bufferIndex: UInt16, // buffer selector
     bufferOffset: Int, // offset into the fixed buffer
     link: Bool = false,
@@ -454,7 +456,7 @@ private extension IORing {
   func io_uring_op_write_fixed(
     fd: FileDescriptorRepresentable,
     count: Int,
-    offset: Int, // offset into the file we are writing
+    offset: Offset, // offset into the file we are writing
     bufferIndex: UInt16,
     bufferOffset: Int, // offset into the fixed buffer
     link: Bool = false,
@@ -482,7 +484,7 @@ private extension IORing {
   func io_uring_op_write_fixed(
     fd: FileDescriptorRepresentable,
     count: Int,
-    offset: Int, // offset into the file we are writing
+    offset: Offset, // offset into the file we are writing
     bufferIndex: UInt16,
     bufferOffset: Int, // offset into the fixed buffer
     link: Bool = false,
@@ -665,7 +667,7 @@ private extension IORing {
       .connect,
       fd: fd,
       address: &address,
-      offset: Int(address.size),
+      offset: Offset(address.size),
       flags: IORing.SqeFlags(link: link)
     ) { [address] _ in
       _ = address
@@ -684,7 +686,7 @@ public extension IORing {
   func read(
     into buffer: inout [UInt8],
     count: Int? = nil,
-    offset: Int = -1,
+    offset: Offset = -1,
     from fd: FileDescriptorRepresentable
   ) async throws -> Int {
     try await io_uring_op_read(
@@ -704,7 +706,7 @@ public extension IORing {
   func write(
     _ data: [UInt8],
     count: Int? = nil,
-    offset: Int = -1,
+    offset: Offset = -1,
     to fd: FileDescriptorRepresentable
   ) async throws -> Int {
     try await io_uring_op_write(
@@ -786,7 +788,7 @@ public extension IORing {
 
   func readFixed<U>(
     count: Int? = nil,
-    offset: Int = -1,
+    offset: Offset = -1,
     bufferIndex: UInt16,
     bufferOffset: Int = 0,
     from fd: FileDescriptorRepresentable,
@@ -816,7 +818,7 @@ public extension IORing {
   func writeFixed(
     _ data: [UInt8],
     count: Int? = nil,
-    offset: Int = -1,
+    offset: Offset = -1,
     bufferIndex: UInt16,
     bufferOffset: Int = 0,
     to fd: FileDescriptorRepresentable
@@ -852,7 +854,7 @@ public extension IORing {
     _ data: inout [UInt8],
     writeCount: Int? = nil,
     readCount: Int? = nil,
-    offset: Int = -1,
+    offset: Offset = -1,
     bufferIndex: UInt16,
     bufferOffset: Int = 0,
     fd: FileDescriptorRepresentable
@@ -911,7 +913,7 @@ public extension IORing {
 
   func copy(
     count: Int? = nil,
-    offset: Int = -1,
+    offset: Offset = -1,
     bufferIndex: UInt16,
     from fd1: FileDescriptorRepresentable,
     to fd2: FileDescriptorRepresentable

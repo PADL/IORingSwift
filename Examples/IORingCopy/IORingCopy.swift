@@ -20,7 +20,7 @@ import IORingUtils
 
 @main
 public struct IORingCopy {
-  static let BlockSize = 64
+  static let BlockSize: IORing.Offset = 64
   private let ring: IORing
 
   public static func main() async throws {
@@ -35,7 +35,7 @@ public struct IORingCopy {
 
   init() async throws {
     ring = IORing.shared
-    try await ring.registerFixedBuffers(count: 1, size: Self.BlockSize)
+    try await ring.registerFixedBuffers(count: 1, size: Int(Self.BlockSize))
   }
 
   func copy(from: String, to: String) async throws {
@@ -51,11 +51,11 @@ public struct IORingCopy {
     var nremain = size
 
     while nremain != 0 {
-      let count = nremain > Self.BlockSize ? Self.BlockSize : nremain
+      let count: IORing.Offset = nremain > Self.BlockSize ? Self.BlockSize : nremain
       let offset = size - nremain
 
       try await ring.copy(
-        count: count,
+        count: Int(count),
         offset: offset,
         bufferIndex: 0,
         from: infd,

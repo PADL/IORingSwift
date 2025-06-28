@@ -46,7 +46,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer?,
     length: CUnsignedInt,
-    offset: Int
+    offset: IORing.Offset
   ) {
     io_uring_prep_rw(
       Int32(opcode.rawValue),
@@ -117,7 +117,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
     length: CUnsignedInt = 0,
-    offset: Int = 0,
+    offset: IORing.Offset = 0,
     flags: IORing.SqeFlags = IORing.SqeFlags(),
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
@@ -179,7 +179,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T> {
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
     length: CUnsignedInt = 0,
-    offset: Int = 0,
+    offset: IORing.Offset = 0,
     flags: IORing.SqeFlags = IORing.SqeFlags(),
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,
@@ -270,7 +270,7 @@ final class BufferSubmission<U>: Submission<()> {
     count: Int,
     buffer: UnsafeMutablePointer<U>?,
     size: Int,
-    offset: Int,
+    offset: IORing.Offset,
     flags: IORing.SqeFlags = IORing.SqeFlags(),
     bufferGroup: UInt16,
     deallocate: Bool
@@ -323,7 +323,7 @@ final class BufferSubmission<U>: Submission<()> {
       count: 1,
       buffer: buffer,
       size: submission.size,
-      offset: bufferID,
+      offset: IORing.Offset(bufferID),
       bufferGroup: submission.bufferGroup,
       deallocate: false
     )
@@ -371,7 +371,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
   // state for resubmission
   private let address: UnsafeRawPointer?
   private let length: CUnsignedInt
-  private let offset: Int
+  private let offset: IORing.Offset
   private let flags: IORing.SqeFlags
   private let ioprio: UInt16
   private let moreFlags: UInt32
@@ -384,7 +384,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
     length: CUnsignedInt = 0,
-    offset: Int = 0,
+    offset: IORing.Offset = 0,
     flags: IORing.SqeFlags = IORing.SqeFlags(),
     ioprio: UInt16 = 0,
     moreFlags: UInt32 = 0,

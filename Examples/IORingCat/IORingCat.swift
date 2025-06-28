@@ -47,14 +47,15 @@ public struct IORingCat {
     let fd = try FileHandle(fileDescriptor: open(file, O_RDONLY), closeOnDealloc: true)
 
     let size = try fd.getSize()
-    var blocks = size % blockSize
+    var blocks = size % IORing.Offset(blockSize)
     if size % blocks != 0 { blocks += 1 }
     var nremain = size
 
     while nremain != 0 {
+      let blockSize = IORing.Offset(blockSize)
       let count = nremain > blockSize ? blockSize : nremain
       try await ring.readFixed(
-        count: count,
+        count: Int(count),
         offset: size - nremain,
         bufferIndex: 0,
         from: fd
