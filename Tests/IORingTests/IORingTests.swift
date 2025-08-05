@@ -3,8 +3,13 @@ import Glibc
 import struct SystemPackage.Errno
 import struct SystemPackage.FileDescriptor
 import XCTest
+import Foundation
 
 final class IORingTests: XCTestCase {
+  var tmpDir: String {
+    ProcessInfo.processInfo.environment["RUNNER_TEMP"] ?? "/var/tmp"
+  }
+
   func testIORingInitialization() async throws {
     let ring = try IORing()
     XCTAssertNotNil(ring)
@@ -39,7 +44,7 @@ final class IORingTests: XCTestCase {
 
   func testBasicFileOperations() async throws {
     let ring = try IORing()
-    let tempFile = "/tmp/ioring_test_\(getpid()).txt"
+    let tempFile = "\(tmpDir)/ioring_test_\(getpid()).txt"
     let testData = "Hello, IORing World!"
     let testBytes = Array(testData.utf8)
 
@@ -67,7 +72,7 @@ final class IORingTests: XCTestCase {
 
   func testFixedBufferOperations() async throws {
     let ring = try IORing()
-    let tempFile = "/tmp/ioring_fixed_test_\(getpid()).txt"
+    let tempFile = "\(tmpDir)/ioring_fixed_test_\(getpid()).txt"
     let testData = "Fixed buffer test data!"
     let testBytes = Array(testData.utf8)
 
@@ -114,7 +119,7 @@ final class IORingTests: XCTestCase {
   func testSubmissionGroupBasic() async throws {
     let ring = try IORing()
 
-    let tempFile = "/tmp/ioring_group_\(getpid()).txt"
+    let tempFile = "\(tmpDir)/ioring_group_\(getpid()).txt"
     let testData = Array("Test data for submission group".utf8)
 
     defer {
@@ -225,8 +230,8 @@ final class IORingTests: XCTestCase {
 
   func testCopyOperation() async throws {
     let ring = try IORing()
-    let sourceFile = "/tmp/ioring_source_\(getpid()).txt"
-    let destFile = "/tmp/ioring_dest_\(getpid()).txt"
+    let sourceFile = "\(tmpDir)/ioring_source_\(getpid()).txt"
+    let destFile = "\(tmpDir)/ioring_dest_\(getpid()).txt"
     let testData = "Data to copy between files"
     let testBytes = Array(testData.utf8)
 
