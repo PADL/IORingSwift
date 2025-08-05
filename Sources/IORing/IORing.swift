@@ -83,7 +83,7 @@ public final class IORing: CustomStringConvertible {
       bufferIndex: UInt16,
       bufferOffset: Int
     ) throws {
-      guard bufferIndex < self.count, count + bufferOffset <= size else {
+      guard Int(bufferIndex) < self.count, count + bufferOffset <= size else {
         throw Errno.outOfRange
       }
     }
@@ -824,7 +824,7 @@ public extension IORing {
     to fd: FileDescriptorRepresentable
   ) async throws -> Int {
     guard let fixedBuffers else { throw Errno.invalidArgument }
-    let count = count ?? fixedBuffers.size
+    let count = count ?? data.count
     guard count <= data.count else { throw Errno.outOfRange }
     try fixedBuffers.validate(
       count: count,
@@ -919,7 +919,7 @@ public extension IORing {
     to fd2: FileDescriptorRepresentable
   ) async throws {
     guard let fixedBuffers else { throw Errno.invalidArgument }
-    let count = count ?? fixedBuffers.count
+    let count = count ?? fixedBuffers.size
     try fixedBuffers.validate(
       count: count,
       bufferIndex: bufferIndex,
