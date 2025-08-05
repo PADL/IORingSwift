@@ -18,7 +18,7 @@ import AsyncExtensions
 import Glibc
 import IORing
 import SocketAddress
-import SystemPackage
+import struct SystemPackage.Errno
 
 private func byteToHex(_ byte: UInt8) -> String {
   String(byte, radix: 16)

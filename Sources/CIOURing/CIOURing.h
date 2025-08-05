@@ -25,4 +25,5 @@
 #include <linux/if_packet.h>
 #include <linux/netlink.h>
 
+#include <linux/io_uring.h>
 #include <liburing.h>

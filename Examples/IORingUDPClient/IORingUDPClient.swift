@@ -19,7 +19,7 @@ import Glibc
 import IORing
 import IORingUtils
 import SocketAddress
-import SystemPackage
+import struct SystemPackage.Errno
 
 @main
 public struct IORingUDPClient {

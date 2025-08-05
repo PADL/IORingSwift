@@ -17,6 +17,7 @@
 #pragma once
 
 #include <inttypes.h>
+#include <linux/io_uring.h>
 #include <liburing.h>
 
 #ifndef IORING_SETUP_COOP_TASKRUN

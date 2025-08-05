@@ -18,7 +18,7 @@ import AsyncExtensions
 import Glibc
 import IORing
 import IORingUtils
-import SystemPackage
+import struct SystemPackage.Errno
 
 @main
 public struct IORingUDPServer {
@@ -54,7 +54,9 @@ public struct IORingUDPServer {
         for try await message in channel {
           print(message)
         }
-      } catch Errno.canceled {}
+      } catch let errno as SystemPackage.Errno {
+        guard errno == .canceled else { throw errno }
+      }
     } while true
   }
 }

@@ -18,7 +18,7 @@ import AsyncExtensions
 import Glibc
 import IORing
 import IORingUtils
-import SystemPackage
+import struct SystemPackage.Errno
 
 @main
 public struct IORingTCPEcho {
@@ -98,7 +98,9 @@ public struct IORingTCPEcho {
           debugPrint("accepted client \(client)")
           Task { await readWriteEcho(client: client) }
         }
-      } catch Errno.canceled {}
+      } catch let errno as SystemPackage.Errno {
+        guard errno == .canceled else { throw errno }
+      }
     } while true
   }
 }

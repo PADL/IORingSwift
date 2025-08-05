@@ -21,7 +21,7 @@ import CLinuxSockAddr
 import Glibc
 import IORing
 import SocketAddress
-import SystemPackage
+import struct SystemPackage.Errno
 
 public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
   private let fileHandle: FileHandle!
