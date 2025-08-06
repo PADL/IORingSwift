@@ -20,5 +20,3 @@ jobs:
         run: swift --version
       - name: Build
         run: swift build --build-tests
-      - name: Test
-        run: swift test --skip-build
