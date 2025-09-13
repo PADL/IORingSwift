@@ -99,6 +99,18 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     }
   }
 
+  public func setIntegerOption(level: CInt = SOL_SOCKET, option: CInt, to value: CInt) throws {
+    guard let fileHandle else { throw Errno.badFileDescriptor }
+    var value = value
+    try Errno.throwingGlobalErrno { setsockopt(
+      fileHandle.fileDescriptor,
+      level,
+      option,
+      &value,
+      socklen_t(MemoryLayout<CInt>.size)
+    ) }
+  }
+
   public func setBooleanOption(level: CInt = SOL_SOCKET, option: CInt, to value: Bool) throws {
     guard let fileHandle else { throw Errno.badFileDescriptor }
     var value: CInt = value ? 1 : 0
@@ -139,6 +151,52 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
         option,
         UnsafeMutableRawPointer(mutating: value),
         socklen_t(MemoryLayout<T>.size)
+      )
+    }
+  }
+
+  public func getIntegerOption(level: CInt = SOL_SOCKET, option: CInt) throws -> CInt {
+    guard let fileHandle else { throw Errno.badFileDescriptor }
+    var value = CInt(0)
+    var length = socklen_t(MemoryLayout<CInt>.size)
+    try Errno.throwingGlobalErrno { getsockopt(
+      fileHandle.fileDescriptor,
+      level,
+      option,
+      &value,
+      &length
+    ) }
+    return value
+  }
+
+  public func getBooleanOption(level: CInt = SOL_SOCKET, option: CInt) throws -> Bool {
+    guard let fileHandle else { throw Errno.badFileDescriptor }
+    var value = CInt(0)
+    var length = socklen_t(MemoryLayout<CInt>.size)
+    try Errno.throwingGlobalErrno { getsockopt(
+      fileHandle.fileDescriptor,
+      level,
+      option,
+      &value,
+      &length
+    ) }
+    return value != 0
+  }
+
+  public func getOpaqueOption<T>(
+    level: CInt = SOL_SOCKET,
+    option: CInt,
+    value: UnsafePointer<T>
+  ) throws {
+    guard let fileHandle else { throw Errno.badFileDescriptor }
+    var len = socklen_t(MemoryLayout<T>.size)
+    try Errno.throwingGlobalErrno {
+      getsockopt(
+        fileHandle.fileDescriptor,
+        level,
+        option,
+        UnsafeMutableRawPointer(mutating: value),
+        &len
       )
     }
   }
