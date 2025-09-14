@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023 PADL Software Pty Ltd
+// Copyright (c) 2023-2025 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ extension Message: CustomStringConvertible {
   }
 
   public var description: String {
-    let address = (try? sockaddr(bytes: name).presentationAddress) ?? "<unknown>"
+    let address = (try? sockaddr_storage(bytes: name).presentationAddress) ?? "<unknown>"
     return "\(type(of: self))(address: \(address), buffer: \(hexDescription(buffer)), flags: \(flags))"
   }
 }
