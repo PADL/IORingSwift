@@ -17,39 +17,59 @@
 import AsyncExtensions
 import Glibc
 import IORing
+import IORingFoundation
 import IORingUtils
 import SocketAddress
 import struct SystemPackage.Errno
 
+private func usage() -> Never {
+  print("Usage: \(CommandLine.arguments[0]) [address:port|dg-path] [message]")
+  exit(1)
+}
+
 @main
-public struct IORingUDPClient {
+public struct IORingDatagramClient {
   private let socket: Socket
   private let ring: IORing
 
   public static func main() async throws {
-    guard CommandLine.arguments.count == 3,
-          let address = try? sockaddr_storage(
-            family: sa_family_t(AF_INET),
-            presentationAddress: CommandLine.arguments[1]
-          )
-    else {
-      print("Usage: \(CommandLine.arguments[0]) [address:port] [message]")
-      exit(1)
-    }
+    guard CommandLine.arguments.count == 3 else { usage() }
 
+    let family = sa_family_t(CommandLine.arguments[1].hasPrefix("/") ? AF_LOCAL : AF_INET)
+    guard let address = try? sockaddr_storage(
+      family: family,
+      presentationAddress: CommandLine.arguments[1]
+    ) else {
+      usage()
+    }
+    let client = try Self(domain: family)
     let message = CommandLine.arguments[2]
-    let client = try IORingUDPClient()
-    try await client.connect(to: address)
-    try await client.send(message: message)
+
+    do {
+      if family == sa_family_t(AF_LOCAL) {
+        try await client.bind(to: sockaddr_un.ephemeralDatagramDomainSocketName)
+      }
+      try await client.connect(to: address)
+      try await client.send(message: message)
+    } catch {
+      print("error: \(error)")
+    }
   }
 
-  init() throws {
+  init(domain: sa_family_t) throws {
     ring = IORing.shared
-    socket = try Socket(ring: ring, domain: sa_family_t(AF_INET), type: SOCK_DGRAM, protocol: 0)
+    socket = try Socket(ring: ring, domain: domain, type: SOCK_DGRAM, protocol: 0)
+  }
+
+  func bind(to address: any SocketAddress) async throws {
+    debugPrint("binding to local address \(String(describing: try? address.presentationAddress))")
+    try socket.bind(to: address)
   }
 
   func connect(to address: any SocketAddress) async throws {
-    debugPrint("connecting to address \(String(describing: try? address.presentationAddress))")
+    debugPrint(
+      "connecting to remote address \(String(describing: try? address.presentationAddress))"
+    )
     try await socket.connect(to: address)
   }
 

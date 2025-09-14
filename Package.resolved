@@ -14,8 +14,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/PADL/SocketAddress",
       "state" : {
-        "revision" : "195f4b64eb7d69894026e24131551068ee10143e",
-        "version" : "0.0.3"
+        "revision" : "0500f0e79a6d0cfe2a0bf1526b5650d5518fbbc6",
+        "version" : "0.0.5"
       }
     },
     {

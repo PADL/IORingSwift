@@ -132,14 +132,14 @@ let package = Package(
       path: "Examples/IORingTCPEcho"
     ),
     .executableTarget(
-      name: "IORingUDPClient",
-      dependencies: ["IORing", "IORingUtils"],
-      path: "Examples/IORingUDPClient"
+      name: "IORingDatagramClient",
+      dependencies: ["IORing", "IORingUtils", "IORingFoundation"],
+      path: "Examples/IORingDatagramClient"
     ),
     .executableTarget(
-      name: "IORingUDPServer",
+      name: "IORingDatagramServer",
       dependencies: ["IORing", "IORingUtils"],
-      path: "Examples/IORingUDPServer"
+      path: "Examples/IORingDatagramServer"
     ),
     .executableTarget(
       name: "IORingDeviceSpy",
