@@ -28,4 +28,18 @@ public extension Data {
   }
 }
 
+public extension sockaddr_un {
+  static var ephemeralDatagramDomainSocketName: Self {
+    get throws {
+      let temporaryDirectoryURL = FileManager.default.temporaryDirectory
+      let uniqueFilename = UUID().uuidString
+      let temporaryFileURL = temporaryDirectoryURL.appendingPathComponent(uniqueFilename)
+      return try sockaddr_un(
+        family: sa_family_t(AF_UNIX),
+        presentationAddress: temporaryFileURL.path
+      )
+    }
+  }
+}
+
 extension Foundation.FileHandle: FileDescriptorRepresentable, @unchecked Sendable {}
