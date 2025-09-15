@@ -97,40 +97,37 @@ extension sockaddr_storage {
   }
 }
 
-extension sockaddr {
-  init(bytes: [UInt8]) throws {
-    guard bytes.count >= MemoryLayout<Self>.size else {
-      throw Errno.outOfRange
-    }
-    var sa = sockaddr()
-    memcpy(&sa, bytes, MemoryLayout<Self>.size)
-    self = sa
-  }
-}
-
 extension sockaddr_storage {
   init(bytes: [UInt8]) throws {
-    let sa = try sockaddr(bytes: bytes)
+    guard bytes.count >= MemoryLayout<sockaddr>.size else {
+      throw Errno.outOfRange
+    }
+
+    let family = bytes.withUnsafeBytes { $0.loadUnaligned(as: sockaddr.self).sa_family }
     var ss = Self()
-    let bytesRequired: Int
-    switch Int32(sa.sa_family) {
+    let minimumSize: Int
+
+    switch Int32(family) {
     case AF_INET:
-      bytesRequired = MemoryLayout<sockaddr_in>.size
+      minimumSize = MemoryLayout<sockaddr_in>.size
     case AF_INET6:
-      bytesRequired = MemoryLayout<sockaddr_in6>.size
+      minimumSize = MemoryLayout<sockaddr_in6>.size
     case AF_LOCAL:
-      bytesRequired = MemoryLayout<sockaddr_un>.size
+      // For domain sockets, minimum size is offset of sun_path + space for zero-length path
+      minimumSize = MemoryLayout<sockaddr_un>.offset(of: \.sun_path)! + 1
+    #if os(Linux)
     case AF_PACKET:
-      bytesRequired = MemoryLayout<sockaddr_ll>.size
+      minimumSize = MemoryLayout<sockaddr_ll>.size
     case AF_NETLINK:
-      bytesRequired = MemoryLayout<sockaddr_nl>.size
+      minimumSize = MemoryLayout<sockaddr_nl>.size
+    #endif
     default:
       throw Errno.addressFamilyNotSupported
     }
-    guard bytes.count >= bytesRequired else {
+    guard bytes.count >= minimumSize, bytes.count <= MemoryLayout<Self>.size else {
       throw Errno.outOfRange
     }
-    memcpy(&ss, bytes, bytesRequired)
+    memcpy(&ss, bytes, bytes.count)
     self = ss
   }
 }
