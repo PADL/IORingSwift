@@ -45,8 +45,14 @@ extension Message: CustomStringConvertible {
   }
 
   public var description: String {
-    let address = (try? sockaddr_storage(bytes: name).presentationAddress) ?? "<unknown>"
+    let address = (try? address.presentationAddress) ?? "<unknown>"
     return "\(type(of: self))(address: \(address), buffer: \(hexDescription(buffer)), flags: \(flags))"
+  }
+
+  public var address: any SocketAddress {
+    get throws {
+      try sockaddr_storage(bytes: name)
+    }
   }
 }
 
