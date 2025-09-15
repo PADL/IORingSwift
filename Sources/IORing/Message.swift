@@ -29,13 +29,12 @@ Sendable {}
 // TODO: support for CMSG
 public final class Message: @unchecked Sendable {
   // FIXME: again, this is a workaround for _XOPEN_SOURCE=500 clang importer issues
-  public var name: [UInt8] {
-    withUnsafeBytes(of: address) {
-      Array($0)
+  public private(set) var name: [UInt8] {
+    didSet {
+      storage.msg_namelen = socklen_t(name.count)
     }
   }
 
-  public private(set) var address: sockaddr_storage
   public private(set) var buffer: [UInt8]
 
   public var flags: UInt32 {
@@ -54,17 +53,22 @@ public final class Message: @unchecked Sendable {
     try await body(&storage)
   }
 
-  init(address: sockaddr_storage, buffer: [UInt8] = [], flags: UInt32 = 0) {
-    self.address = address
+  public init(
+    name: [UInt8] = [],
+    buffer: [UInt8] = [],
+    flags: UInt32 = 0
+  ) {
+    self.name = name
     self.buffer = buffer
+
     storage.msg_flags = CInt(flags)
     self.buffer.withUnsafeMutableBytes {
       iov_storage.iov_base = UnsafeMutableRawPointer(mutating: $0.baseAddress)
     }
     iov_storage.iov_len = self.buffer.count
-    Swift.withUnsafeMutablePointer(to: &self.address) { pointer in
-      storage.msg_name = UnsafeMutableRawPointer(pointer)
-      storage.msg_namelen = (try? pointer.pointee.size) ?? 0
+    self.name.withUnsafeMutableBytes {
+      storage.msg_name = UnsafeMutableRawPointer(mutating: $0.baseAddress)
+      storage.msg_namelen = socklen_t($0.count)
     }
     Swift.withUnsafeMutablePointer(to: &iov_storage) { iov_storage in
       storage.msg_iov = iov_storage
@@ -72,33 +76,16 @@ public final class Message: @unchecked Sendable {
     }
   }
 
-  func copy() -> Self {
-    Self(address: address, buffer: buffer, flags: flags)
-  }
-
-  // FIXME: see note below about _XOPEN_SOURCE=500 sockaddr clang importer issues
-  public convenience init(
-    name: [UInt8]? = nil,
-    buffer: [UInt8] = [],
-    flags: UInt32 = 0
-  ) throws {
-    let ss: sockaddr_storage = if let name {
-      try sockaddr_storage(bytes: name)
-    } else {
-      sockaddr_storage()
-    }
-    self.init(address: ss, buffer: buffer, flags: flags)
-    storage.msg_namelen = socklen_t(name?.count ?? 0)
-  }
-
-  public convenience init(capacity: Int, flags: UInt32 = 0) {
-    self.init(
-      address: sockaddr_storage(),
+  public convenience init(capacity: Int, flags: UInt32 = 0) throws {
+    try self.init(
+      name: Array(repeating: 0, count: MemoryLayout<sockaddr_storage>.size),
       buffer: [UInt8](repeating: 0, count: capacity),
       flags: flags
     )
-    // special case for receiving messages
-    storage.msg_namelen = socklen_t(MemoryLayout<sockaddr_storage>.size)
+  }
+
+  func copy() -> Self {
+    Self(name: name, buffer: buffer, flags: flags)
   }
 }
 
@@ -155,13 +142,15 @@ final class MessageHolder: @unchecked Sendable {
         }
       }
 
-      var address = sockaddr_storage()
+      let name: [UInt8]
+
       if out.pointee.namelen != 0 {
-        guard let name = io_uring_recvmsg_name(out) else {
+        guard let peerName = io_uring_recvmsg_name(out) else {
           throw Errno.noMemory
         }
-        precondition(out.pointee.namelen <= MemoryLayout<sockaddr_storage>.size)
-        memcpy(&address, name, Int(out.pointee.namelen))
+        name = Array(UnsafeRawBufferPointer(start: peerName, count: Int(out.pointee.namelen)))
+      } else {
+        name = []
       }
 
       var buffer = [UInt8]()
@@ -171,7 +160,7 @@ final class MessageHolder: @unchecked Sendable {
         }
         buffer = Array(UnsafeRawBufferPointer(start: payload, count: Int(out.pointee.payloadlen)))
       }
-      return Message(address: address, buffer: buffer, flags: out.pointee.flags)
+      return try Message(name: name, buffer: buffer, flags: out.pointee.flags)
     }
   }
 

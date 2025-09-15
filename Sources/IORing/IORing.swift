@@ -747,7 +747,7 @@ public extension IORing {
   }
 
   func receiveMessage(count: Int, from fd: FileDescriptorRepresentable) async throws -> Message {
-    var message = Message(capacity: count)
+    var message = try Message(capacity: count)
     try await io_uring_op_recvmsg(fd: fd, message: &message)
     return message
   }
