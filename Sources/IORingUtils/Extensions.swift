@@ -34,14 +34,12 @@ extension Message: CustomStringConvertible {
     buffer: [UInt8],
     flags: UInt32 = 0
   ) throws {
-    let addressSize = Int(address.size)
-    let addressBuffer = [UInt8](unsafeUninitializedCapacity: Int(address.size)) { buffer,
-      initializedCount in
-      var storage = address.asStorage()
-      _ = memcpy(buffer.baseAddress!, &storage, addressSize)
-      initializedCount = addressSize
-    }
-    try self.init(name: addressBuffer, buffer: buffer, flags: flags)
+    // ensure we only copy the bytes of the specific sockaddr type, as the
+    // kernel will return EINVAL if we pass sizeof(sockaddr_storage) to a
+    // function expecting a domain socket that expects a domain socket
+    let addressSize = address.withSockAddr { Int($0.pointee.size) }
+    let addressBuffer = withUnsafeBytes(of: address.asStorage()) { Array($0.prefix(addressSize)) }
+    self.init(name: addressBuffer, buffer: buffer, flags: flags)
   }
 
   public var description: String {
