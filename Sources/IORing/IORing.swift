@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023 PADL Software Pty Ltd
+// Copyright (c) 2023-2025 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -48,6 +48,13 @@ public final class IORing: CustomStringConvertible {
   private var nextBufferGroup: UInt16 = 1
   private let entries: Int
   private let ringFd: Int32
+
+  // Batching configuration
+  private let batchSize: Int
+  private let batchTimeout: Duration
+  private var pendingSqeCount: Int = 0
+  private var lastSubmissionTime: ContinuousClock.Instant = .now
+  private var batchTimer: Task<(), Never>?
 
   let logger = Logger(label: "com.padl.IORing")
 
@@ -191,11 +198,28 @@ public final class IORing: CustomStringConvertible {
     }
   }
 
-  public convenience nonisolated init(entries: Int? = nil, flags: UInt32 = 0) throws {
-    try self.init(entries: entries, flags: flags, shared: false)
+  public convenience nonisolated init(
+    entries: Int? = nil,
+    flags: UInt32 = 0,
+    batchSize: Int = 8,
+    batchTimeout: Duration = .microseconds(100)
+  ) throws {
+    try self.init(
+      entries: entries,
+      flags: flags,
+      shared: false,
+      batchSize: batchSize,
+      batchTimeout: batchTimeout
+    )
   }
 
-  private nonisolated init(entries: Int?, flags: UInt32, shared: Bool) throws {
+  private nonisolated init(
+    entries: Int?,
+    flags: UInt32,
+    shared: Bool,
+    batchSize: Int = 1,
+    batchTimeout: Duration = .zero
+  ) throws {
     let entries = entries ?? IORing.getIORingQueueEntries()
     var ring = io_uring()
     var params = io_uring_params()
@@ -212,6 +236,8 @@ public final class IORing: CustomStringConvertible {
     self.entries = entries
     self.ring = ring
     ringFd = ring.ring_fd
+    self.batchSize = batchSize
+    self.batchTimeout = batchTimeout
 
     let error = io_uring_init_cq_handler(&cqHandle, &self.ring)
     guard error == 0 else {
@@ -243,6 +269,7 @@ public final class IORing: CustomStringConvertible {
   }
 
   deinit {
+    batchTimer?.cancel()
     io_uring_deinit_cq_handler(cqHandle, &ring)
     // FIXME: checking if we have registered buffers is an error in Swift 6.0
     // because IORing.FixedBuffer is non-sendable, is this safe to do anyway?
@@ -268,11 +295,48 @@ public final class IORing: CustomStringConvertible {
     return nextBufferGroup
   }
 
-  @discardableResult
-  func submit() throws -> Int {
+  private func _submit() throws -> Int {
     try Int(Errno.throwingErrno {
       io_uring_submit(&self.ring)
     })
+  }
+
+  @discardableResult
+  func submit() throws -> Int {
+    pendingSqeCount += 1
+
+    let timeSinceLastSubmission = ContinuousClock.now - lastSubmissionTime
+    guard pendingSqeCount >= batchSize ||
+      timeSinceLastSubmission >= batchTimeout
+    else {
+      startBatchTimerIfNeeded()
+      return 0 // Deferred submission
+    }
+
+    return try submitNow()
+  }
+
+  @discardableResult
+  func submitNow() throws -> Int {
+    let submitted = try _submit()
+    pendingSqeCount = 0
+    lastSubmissionTime = .now
+    stopBatchTimer()
+    return submitted
+  }
+
+  private func startBatchTimerIfNeeded() {
+    guard batchTimer == nil else { return }
+    batchTimer = Task { @IORingActor in
+      try? await Task.sleep(for: batchTimeout)
+      guard !Task.isCancelled, pendingSqeCount > 0 else { return }
+      try? submitNow()
+    }
+  }
+
+  private func stopBatchTimer() {
+    batchTimer?.cancel()
+    batchTimer = nil
   }
 
   func withSubmissionGroup<T: Sendable>(_ body: (

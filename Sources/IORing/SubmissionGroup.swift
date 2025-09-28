@@ -77,13 +77,13 @@ actor SubmissionGroup<T: Sendable> {
   ///
   /// - Await all submissions to be scheduled on queue
   /// - Wait for all submissions to have continuations registered
-  /// - Submit SQEs to I/O ring
+  /// - Submit SQEs to I/O ring (forcing batch submission)
   /// - Collect results from results channel
   ///
   func finish() async throws -> [T] {
     await Task(on: queue) { _ in }.value
     await allReady()
-    try await ring.submit()
+    try await ring.submitNow()
     readinessChannel.finish()
     return try await allComplete()
   }
