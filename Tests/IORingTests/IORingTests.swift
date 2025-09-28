@@ -1,5 +1,6 @@
 import Glibc
 @testable import IORing
+import IORingUtils
 import struct SystemPackage.Errno
 import struct SystemPackage.FileDescriptor
 import XCTest
@@ -175,7 +176,7 @@ final class IORingTests: XCTestCase {
     let testData = "Hello, message world!"
     let testBytes = Array(testData.utf8)
 
-    let message1 = Message(capacity: 100)
+    let message1 = try Message(capacity: 100)
     XCTAssertEqual(message1.buffer.count, 100)
     XCTAssertEqual(message1.flags, 0)
 
