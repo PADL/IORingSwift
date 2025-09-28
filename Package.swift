@@ -97,7 +97,7 @@ let package = Package(
     ),
     .testTarget(
       name: "IORingTests",
-      dependencies: ["IORing"]
+      dependencies: ["IORing", "IORingUtils"]
     ),
     .target(
       name: "IORingUtils",
