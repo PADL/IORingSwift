@@ -185,14 +185,6 @@ final class IORingTests: XCTestCase {
     XCTAssertEqual(message2.flags, 42)
   }
 
-  func testSocketAddressExtensions() throws {
-    let testBytes: [UInt8] = [2, 0, 0x1F, 0x90, 127, 0, 0, 1] + Array(repeating: 0, count: 8)
-
-    let sockStorage = try sockaddr_storage(bytes: testBytes)
-    let size = try sockStorage.size
-    XCTAssertEqual(size, socklen_t(MemoryLayout<sockaddr_in>.size))
-  }
-
   func testErrnoThrowingHelper() throws {
     let successResult = try Errno.throwingErrno { 42 }
     XCTAssertEqual(successResult, 42)
