@@ -36,7 +36,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
   private let sqe: UnsafeMutablePointer<io_uring_sqe>
   private var cancellationToken: UnsafeMutableRawPointer?
 
-  public nonisolated var description: String {
+  nonisolated var description: String {
     "(\(type(of: self)))(fd: \(fd.fileDescriptor), opcode: \(opcode), handler: \(String(describing: handler)))"
   }
 
@@ -537,13 +537,13 @@ struct AsyncCancelFlags: OptionSet {
 }
 
 extension Submission: Equatable {
-  public nonisolated static func == (lhs: Submission, rhs: Submission) -> Bool {
+  nonisolated static func == (lhs: Submission, rhs: Submission) -> Bool {
     lhs === rhs
   }
 }
 
 extension Submission: Hashable {
-  public nonisolated func hash(into hasher: inout Hasher) {
+  nonisolated func hash(into hasher: inout Hasher) {
     ObjectIdentifier(self).hash(into: &hasher)
   }
 }
