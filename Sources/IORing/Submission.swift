@@ -213,7 +213,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T> {
       try await withUnsafeThrowingContinuation { continuation in
         // guaranteed to run immediately
         self.continuation = continuation
-        Task {
+        Task { @IORingActor in
           if group != nil {
             await ready()
           } else {
