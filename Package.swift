@@ -146,6 +146,11 @@ let package = Package(
       dependencies: ["IORing", "IORingUtils"],
       path: "Examples/IORingDeviceSpy"
     ),
+    .executableTarget(
+      name: "BatchingDemo",
+      dependencies: ["IORing", "IORingUtils"],
+      path: "Examples/BatchingDemo"
+    ),
   ],
   cLanguageStandard: .c18,
   cxxLanguageStandard: .cxx20
