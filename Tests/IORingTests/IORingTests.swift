@@ -1,10 +1,10 @@
+import Foundation
 import Glibc
 @testable import IORing
 import IORingUtils
 import struct SystemPackage.Errno
 import struct SystemPackage.FileDescriptor
 import XCTest
-import Foundation
 
 final class IORingTests: XCTestCase {
   var tmpDir: String {
