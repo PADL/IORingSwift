@@ -41,7 +41,6 @@ int io_uring_cq_handler(struct io_uring *ring) {
 
   io_uring_for_each_cqe(ring, head, cqe) {
     assert(cqe != nullptr);
-    i++;
 #if PTHREAD_IO_URING
     if (cqe->user_data == ~0ULL) {
       err = -ECANCELED;
@@ -49,6 +48,7 @@ int io_uring_cq_handler(struct io_uring *ring) {
     }
 #endif
     invoke_cqe_block(cqe);
+    i++;
   }
   io_uring_cq_advance(ring, i);
 
