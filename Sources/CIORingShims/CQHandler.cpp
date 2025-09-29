@@ -27,10 +27,8 @@ static void invoke_cqe_block(struct io_uring_cqe *cqe) {
   auto block = reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
   assert(block != nullptr);
   block(cqe);
-  if ((cqe->flags & IORING_CQE_F_MORE) == 0) {
+  if ((cqe->flags & IORING_CQE_F_MORE) == 0)
     _Block_release(block);
-    cqe->user_data = 0; // assert fail on double fire
-  }
 }
 
 int io_uring_cq_handler(struct io_uring *ring) {
