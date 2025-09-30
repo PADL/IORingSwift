@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.0
 
 import Foundation
 import PackageDescription
@@ -147,6 +147,7 @@ let package = Package(
       path: "Examples/IORingDeviceSpy"
     ),
   ],
+  swiftLanguageModes: [.v5],
   cLanguageStandard: .c18,
   cxxLanguageStandard: .cxx20
 )
