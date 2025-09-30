@@ -77,7 +77,7 @@ public struct IORingDatagramClient {
     guard let messageData = message.data(using: .utf8) else {
       throw Errno.invalidArgument
     }
-    let message = try Message(buffer: [UInt8](messageData + [0]))
+    let message = Message(buffer: [UInt8](messageData + [0]))
     try await socket.sendMessage(message)
   }
 }

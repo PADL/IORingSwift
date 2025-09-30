@@ -79,8 +79,8 @@ public final class Message: @unchecked Sendable {
     }
   }
 
-  public convenience init(capacity: Int, flags: UInt32 = 0) throws {
-    try self.init(
+  public convenience init(capacity: Int, flags: UInt32 = 0) {
+    self.init(
       name: Array(repeating: 0, count: MemoryLayout<sockaddr_storage>.size),
       buffer: [UInt8](repeating: 0, count: capacity),
       flags: flags
@@ -163,7 +163,7 @@ final class MessageHolder: @unchecked Sendable {
         }
         buffer = Array(UnsafeRawBufferPointer(start: payload, count: Int(out.pointee.payloadlen)))
       }
-      return try Message(name: name, buffer: buffer, flags: out.pointee.flags)
+      return Message(name: name, buffer: buffer, flags: out.pointee.flags)
     }
   }
 

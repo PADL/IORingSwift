@@ -176,11 +176,11 @@ final class IORingTests: XCTestCase {
     let testData = "Hello, message world!"
     let testBytes = Array(testData.utf8)
 
-    let message1 = try Message(capacity: 100)
+    let message1 = Message(capacity: 100)
     XCTAssertEqual(message1.buffer.count, 100)
     XCTAssertEqual(message1.flags, 0)
 
-    let message2 = try Message(buffer: testBytes, flags: 42)
+    let message2 = Message(buffer: testBytes, flags: 42)
     XCTAssertEqual(message2.buffer, testBytes)
     XCTAssertEqual(message2.flags, 42)
   }
