@@ -100,7 +100,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
     do {
       precondition(cancellationToken != nil)
       let sqe = try ring.getSqe()
-      io_uring_prep_cancel(sqe, cancellationToken, Int32(IORING_ASYNC_CANCEL_USERDATA))
+      io_uring_prep_cancel(sqe, cancellationToken, AsyncCancelFlags.userData.rawValue)
       _ = io_uring_sqe_set_block(sqe) { cqe in
         self.onCancel(cqe: cqe.pointee)
       }
@@ -534,6 +534,8 @@ struct AsyncCancelFlags: OptionSet {
   static let fd = AsyncCancelFlags(rawValue: 1 << 1)
   static let any = AsyncCancelFlags(rawValue: 1 << 2)
   static let fdFixed = AsyncCancelFlags(rawValue: 1 << 3)
+  static let userdata = AsyncCancelFlags(rawValue: 1 << 4)
+  static let op = AsyncCancelFlags(rawValue: 1 << 5)
 }
 
 extension Submission: Equatable {
