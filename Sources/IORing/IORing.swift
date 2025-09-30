@@ -223,15 +223,37 @@ public final class IORing: CustomStringConvertible {
     }
   }
 
-  public convenience nonisolated init(entries: Int? = nil, flags: SetupFlags = []) throws {
-    try self.init(entries: entries, flags: flags, shared: false)
+  public convenience nonisolated init(
+    entries: Int? = nil,
+    flags: SetupFlags = [],
+    sqThreadCpu: UInt32 = 0,
+    sqThreadIdle: UInt32 = 0
+  ) throws {
+    try self.init(
+      entries: entries,
+      flags: flags,
+      shared: false,
+      sqThreadCpu: sqThreadCpu,
+      sqThreadIdle: sqThreadIdle
+    )
   }
 
-  public convenience nonisolated init(entries: Int? = nil, flags: UInt32) throws {
+  public convenience nonisolated init(
+    entries: Int? = nil,
+    flags: UInt32,
+    sqThreadCpu: UInt32 = 0,
+    sqThreadIdle: UInt32 = 0
+  ) throws {
     try self.init(entries: entries, flags: SetupFlags(rawValue: flags), shared: false)
   }
 
-  private nonisolated init(entries: Int?, flags: SetupFlags, shared: Bool) throws {
+  private nonisolated init(
+    entries: Int?,
+    flags: SetupFlags,
+    shared: Bool,
+    sqThreadCpu: UInt32 = 0,
+    sqThreadIdle: UInt32 = 0
+  ) throws {
     let entries = entries ?? IORing.getIORingQueueEntries()
     var ring = io_uring()
     var params = io_uring_params()
@@ -245,7 +267,8 @@ public final class IORing: CustomStringConvertible {
     }
 
     params.flags = flags.rawValue
-
+    if flags.contains(.sqAff) { params.sq_thread_cpu = sqThreadCpu }
+    if flags.contains(.sqPoll) { params.sq_thread_idle = sqThreadIdle }
     try Errno.throwingErrno {
       io_uring_queue_init_params(CUnsignedInt(entries), &ring, &params)
     }
