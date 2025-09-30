@@ -23,8 +23,9 @@ static void cqe_handler(dispatch_source_t source) {
   io_uring_cq_handler(ring);
 }
 
-int dispatch_io_uring_init_cq_handler(void **handle, struct io_uring *ring) {
-  *handle = nullptr;
+int dispatch_io_uring_init_cq_handler(uintptr_t *handle,
+                                      struct io_uring *ring) {
+  *handle = 0;
 
   // previously, we spun up a thread to wait on cqe notifications.
   // however we can use eventfd to integrate this with libdispatch
@@ -59,14 +60,15 @@ int dispatch_io_uring_init_cq_handler(void **handle, struct io_uring *ring) {
 
   dispatch_resume(source);
 
-  *handle = static_cast<void *>(source);
+  *handle = reinterpret_cast<uintptr_t>(source);
 
   return 0;
 }
 
-void dispatch_io_uring_deinit_cq_handler(void *handle, struct io_uring *ring) {
+void dispatch_io_uring_deinit_cq_handler(uintptr_t handle,
+                                         struct io_uring *ring) {
   if (handle) {
-    auto source = static_cast<dispatch_source_t>(handle);
+    auto source = reinterpret_cast<dispatch_source_t>(handle);
     dispatch_cancel(source);
     dispatch_release(source);
   }

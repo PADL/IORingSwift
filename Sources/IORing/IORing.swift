@@ -45,7 +45,7 @@ public final class IORing: CustomStringConvertible {
   private nonisolated static let DefaultIORingQueueEntries = 128
 
   private var ring: io_uring
-  private var cqHandle: UnsafeMutableRawPointer?
+  private var cqHandle: UInt = 0
 
   private var fixedBuffers: FixedBuffer?
   private var nextBufferGroup: UInt16 = 1

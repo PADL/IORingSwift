@@ -32,12 +32,12 @@ static void *cqe_thread(void *arg) {
   return nullptr;
 }
 
-int pthread_io_uring_init_cq_handler(void **handle, struct io_uring *ring) {
+int pthread_io_uring_init_cq_handler(uintptr_t *handle, struct io_uring *ring) {
   pthread_attr_t attr;
   pthread_t thread;
   int err;
 
-  *handle = nullptr;
+  *handle = 0;
 
   err = pthread_attr_init(&attr);
   if (err)
@@ -50,11 +50,12 @@ int pthread_io_uring_init_cq_handler(void **handle, struct io_uring *ring) {
   }
 
   pthread_attr_destroy(&attr);
-  *handle = reinterpret_cast<void *>(thread);
+  *handle = reinterpret_cast<uintptr_t>(thread);
   return 0;
 }
 
-void pthread_io_uring_deinit_cq_handler(void *handle, struct io_uring *ring) {
+void pthread_io_uring_deinit_cq_handler(uintptr_t handle,
+                                        struct io_uring *ring) {
   auto thread = reinterpret_cast<pthread_t>(handle);
   struct io_uring_sqe *sqe;
   void *retval;

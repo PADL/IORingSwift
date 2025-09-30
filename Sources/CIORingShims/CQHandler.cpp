@@ -58,7 +58,7 @@ int io_uring_cq_handler(struct io_uring *ring) {
   return err;
 }
 
-int io_uring_init_cq_handler(void **handle, struct io_uring *ring) {
+int io_uring_init_cq_handler(uintptr_t *handle, struct io_uring *ring) {
 #if DISPATCH_IO_URING
   return dispatch_io_uring_init_cq_handler(handle, ring);
 #elif PTHREAD_IO_URING
@@ -68,7 +68,7 @@ int io_uring_init_cq_handler(void **handle, struct io_uring *ring) {
 #endif
 }
 
-void io_uring_deinit_cq_handler(void *handle, struct io_uring *ring) {
+void io_uring_deinit_cq_handler(uintptr_t handle, struct io_uring *ring) {
 #if DISPATCH_IO_URING
   dispatch_io_uring_deinit_cq_handler(handle, ring);
 #elif PTHREAD_IO_URING

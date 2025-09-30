@@ -18,6 +18,7 @@
 
 #include <liburing.h>
 #include <cassert>
+#include <cstdint>
 
 #if __has_include(<Block.h>)
 #include <Block.h>
@@ -69,9 +70,11 @@ extern "C" {
 int io_uring_cq_handler(struct io_uring *ring);
 
 // enabled with DISPATCH_IO_URING
-void dispatch_io_uring_deinit_cq_handler(void *handle, struct io_uring *ring);
-int dispatch_io_uring_init_cq_handler(void **handle, struct io_uring *ring);
+void dispatch_io_uring_deinit_cq_handler(uintptr_t handle,
+                                         struct io_uring *ring);
+int dispatch_io_uring_init_cq_handler(uintptr_t *handle, struct io_uring *ring);
 
 // enabled with PTHREAD_IO_URING
-void pthread_io_uring_deinit_cq_handler(void *handle, struct io_uring *ring);
-int pthread_io_uring_init_cq_handler(void **handle, struct io_uring *ring);
+void pthread_io_uring_deinit_cq_handler(uintptr_t handle,
+                                        struct io_uring *ring);
+int pthread_io_uring_init_cq_handler(uintptr_t *handle, struct io_uring *ring);
