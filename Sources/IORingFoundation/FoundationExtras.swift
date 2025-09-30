@@ -42,4 +42,4 @@ public extension sockaddr_un {
   }
 }
 
-extension Foundation.FileHandle: FileDescriptorRepresentable, @unchecked Sendable {}
+extension Foundation.FileHandle: FileDescriptorRepresentable {}
