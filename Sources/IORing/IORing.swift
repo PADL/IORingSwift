@@ -27,9 +27,9 @@ import Glibc
 import Logging
 import SystemPackage
 
-// MARK: - actor
+extension io_uring: @retroactive @unchecked Sendable {}
 
-extension io_uring: @unchecked Sendable {}
+// MARK: - actor
 
 @globalActor
 public actor IORingActor {
