@@ -40,7 +40,7 @@ public actor IORingActor {
 public final class IORing: CustomStringConvertible {
   public typealias Offset = Int64 // for 64-bit offsetes on 32-bit platforms
 
-  public nonisolated static let shared = try! IORing(entries: nil, flags: 0, shared: true)
+  public nonisolated static let shared = try! IORing(entries: nil, flags: [], shared: true)
 
   private nonisolated static let DefaultIORingQueueEntries = 128
 
@@ -133,7 +133,7 @@ public final class IORing: CustomStringConvertible {
     }
   }
 
-  struct SqeFlags: OptionSet {
+  struct SqeFlags: OptionSet, Sendable {
     typealias RawValue = UInt8
 
     let rawValue: RawValue
@@ -157,6 +157,35 @@ public final class IORing: CustomStringConvertible {
     static let async = SqeFlags(rawValue: 1 << 4) // IOSQE_ASYNC_BIT
     static let bufferSelect = SqeFlags(rawValue: 1 << 5) // IOSQE_BUFFER_SELECT_BIT
     static let cqeSkipSuccess = SqeFlags(rawValue: 1 << 6) // IOSQE_CQE_SKIP_SUCCESS_BIT
+  }
+
+  public struct SetupFlags: OptionSet, Sendable {
+    public typealias RawValue = UInt32
+
+    public let rawValue: RawValue
+
+    public init(rawValue: RawValue) {
+      self.rawValue = rawValue
+    }
+
+    public static let ioPoll = SetupFlags(rawValue: 1 << 0) // IORING_SETUP_IOPOLL
+    public static let sqPoll = SetupFlags(rawValue: 1 << 1) // IORING_SETUP_SQPOLL
+    public static let sqAff = SetupFlags(rawValue: 1 << 2) // IORING_SETUP_SQ_AFF
+    public static let cqSize = SetupFlags(rawValue: 1 << 3) // IORING_SETUP_CQSIZE
+    public static let clamp = SetupFlags(rawValue: 1 << 4) // IORING_SETUP_CLAMP
+    public static let attachWq = SetupFlags(rawValue: 1 << 5) // IORING_SETUP_ATTACH_WQ
+    public static let rDisabled = SetupFlags(rawValue: 1 << 6) // IORING_SETUP_R_DISABLED
+    public static let submitAll = SetupFlags(rawValue: 1 << 7) // IORING_SETUP_SUBMIT_ALL
+    public static let coopTaskRun = SetupFlags(rawValue: 1 << 8) // IORING_SETUP_COOP_TASKRUN
+    public static let taskRunFlag = SetupFlags(rawValue: 1 << 9) // IORING_SETUP_TASKRUN_FLAG
+    public static let sqe128 = SetupFlags(rawValue: 1 << 10) // IORING_SETUP_SQE128
+    public static let cqe32 = SetupFlags(rawValue: 1 << 11) // IORING_SETUP_CQE32
+    public static let singleIssuer = SetupFlags(rawValue: 1 << 12) // IORING_SETUP_SINGLE_ISSUER
+    public static let deferTaskRun = SetupFlags(rawValue: 1 << 13) // IORING_SETUP_DEFER_TASKRUN
+    public static let noMmap = SetupFlags(rawValue: 1 << 14) // IORING_SETUP_NO_MMAP
+    public static let registeredFdOnly =
+      SetupFlags(rawValue: 1 << 15) // IORING_SETUP_REGISTERED_FD_ONLY
+    public static let noSqArray = SetupFlags(rawValue: 1 << 16) // IORING_SETUP_NO_SQARRAY
   }
 
   private struct AcceptIoPrio: OptionSet {
@@ -194,20 +223,28 @@ public final class IORing: CustomStringConvertible {
     }
   }
 
-  public convenience nonisolated init(entries: Int? = nil, flags: UInt32 = 0) throws {
+  public convenience nonisolated init(entries: Int? = nil, flags: SetupFlags = []) throws {
     try self.init(entries: entries, flags: flags, shared: false)
   }
 
-  private nonisolated init(entries: Int?, flags: UInt32, shared: Bool) throws {
+  public convenience nonisolated init(entries: Int? = nil, flags: UInt32) throws {
+    try self.init(entries: entries, flags: SetupFlags(rawValue: flags), shared: false)
+  }
+
+  private nonisolated init(entries: Int?, flags: SetupFlags, shared: Bool) throws {
     let entries = entries ?? IORing.getIORingQueueEntries()
     var ring = io_uring()
     var params = io_uring_params()
+    var flags = flags
 
-    params.flags = flags & ~IORING_SETUP_ATTACH_WQ
+    flags.remove(.attachWq)
+
     if !shared {
-      params.flags |= IORING_SETUP_ATTACH_WQ
+      flags.insert(.attachWq)
       params.wq_fd = UInt32(IORing.shared.ringFd)
     }
+
+    params.flags = flags.rawValue
 
     try Errno.throwingErrno {
       io_uring_queue_init_params(CUnsignedInt(entries), &ring, &params)
