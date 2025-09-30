@@ -26,8 +26,7 @@ internal import CIOURing
 import Glibc
 import SystemPackage
 
-extension msghdr: @unchecked
-Sendable {}
+extension msghdr: @retroactive @unchecked Sendable {}
 
 // TODO: support for CMSG
 public final class Message: @unchecked Sendable {
