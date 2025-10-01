@@ -227,7 +227,7 @@ public final class IORing: CustomStringConvertible {
     entries: Int? = nil,
     flags: SetupFlags = [],
     sqThreadCpu: UInt32 = 0,
-    sqThreadIdle: UInt32 = 0
+    sqThreadIdle: Duration = .zero
   ) throws {
     try self.init(
       entries: entries,
@@ -242,7 +242,7 @@ public final class IORing: CustomStringConvertible {
     entries: Int? = nil,
     flags: UInt32,
     sqThreadCpu: UInt32 = 0,
-    sqThreadIdle: UInt32 = 0
+    sqThreadIdle: Duration = .zero
   ) throws {
     try self.init(entries: entries, flags: SetupFlags(rawValue: flags), shared: false)
   }
@@ -252,7 +252,7 @@ public final class IORing: CustomStringConvertible {
     flags: SetupFlags,
     shared: Bool,
     sqThreadCpu: UInt32 = 0,
-    sqThreadIdle: UInt32 = 0
+    sqThreadIdle: Duration = .zero
   ) throws {
     let entries = entries ?? IORing.getIORingQueueEntries()
     var ring = io_uring()
@@ -268,7 +268,13 @@ public final class IORing: CustomStringConvertible {
 
     params.flags = flags.rawValue
     if flags.contains(.sqAff) { params.sq_thread_cpu = sqThreadCpu }
-    if flags.contains(.sqPoll) { params.sq_thread_idle = sqThreadIdle }
+    if flags.contains(.sqPoll) {
+      let sqThreadIdle = sqThreadIdle.milliseconds
+      guard sqThreadIdle >= 0, sqThreadIdle <= UInt32.max else {
+        throw Errno.invalidArgument
+      }
+      params.sq_thread_idle = UInt32(sqThreadIdle)
+    }
     try Errno.throwingErrno {
       io_uring_queue_init_params(CUnsignedInt(entries), &ring, &params)
     }
@@ -1035,5 +1041,15 @@ package extension [UInt8] {
     Self(unsafeUninitializedCapacity: count) { _, initializedCount in
       initializedCount = count
     }
+  }
+}
+
+package extension Duration {
+  var seconds: Int64 {
+    components.seconds
+  }
+
+  var milliseconds: Int64 {
+    components.seconds * 1000 + Int64(Double(components.attoseconds) * 1e-15)
   }
 }
