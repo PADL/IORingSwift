@@ -217,6 +217,10 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     try setBooleanOption(level: CInt(IPPROTO_TCP), option: TCP_NODELAY, to: true)
   }
 
+  public func setIPv6Only() throws {
+    try setBooleanOption(level: CInt(IPPROTO_IPV6), option: IPV6_V6ONLY, to: true)
+  }
+
   private func _addOrDropMembership(
     _ add: Bool,
     address: sockaddr_ll
