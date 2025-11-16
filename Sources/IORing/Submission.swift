@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023 PADL Software Pty Ltd
+// Copyright (c) 2023-2025 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -16,13 +16,12 @@
 
 import AsyncAlgorithms
 import AsyncExtensions
-package import CIORingShims
-package import CIOURing
+internal import CIORingShims
+internal import CIOURing
 import Glibc
 import SystemPackage
 
-@IORingActor
-class Submission<T: Sendable>: CustomStringConvertible {
+class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
   // reference to owner which owns ring
   let ring: IORing
   /// user-supplied callback to transform a completion queue entry to a result
@@ -90,21 +89,21 @@ class Submission<T: Sendable>: CustomStringConvertible {
   private func setBlock() {
     cancellationToken = io_uring_sqe_set_block(sqe) { cqe in
       let cqe = cqe.pointee
-      Task { @IORingActor in
-        await self.onCompletion(cqe: cqe)
-      }
+      self.onCompletion(cqe: cqe)
     }
   }
 
   func cancel() throws {
     do {
       precondition(cancellationToken != nil)
-      let sqe = try ring.getSqe()
-      io_uring_prep_cancel(sqe, cancellationToken, AsyncCancelFlags.userData.rawValue)
-      _ = io_uring_sqe_set_block(sqe) { cqe in
-        self.onCancel(cqe: cqe.pointee)
+      try ring.assumeIsolated { ring in
+        let sqe = try ring.getSqe()
+        io_uring_prep_cancel(sqe, cancellationToken, AsyncCancelFlags.userData.rawValue)
+        _ = io_uring_sqe_set_block(sqe) { cqe in
+          self.onCancel(cqe: cqe.pointee)
+        }
+        try ring.submit()
       }
-      try ring.submit()
     } catch {
       IORing.shared.logger.debug("failed to cancel submission \(self)")
       throw error
@@ -112,7 +111,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
   }
 
   init(
-    ring: IORing,
+    ring: isolated IORing,
     _ opcode: IORingOperation,
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
@@ -167,14 +166,14 @@ class Submission<T: Sendable>: CustomStringConvertible {
   }
 }
 
-final class SingleshotSubmission<T: Sendable>: Submission<T> {
+final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable {
   weak var group: SubmissionGroup<T>?
 
   private typealias Continuation = UnsafeContinuation<T, Error>
   private var continuation: Continuation!
 
   init(
-    ring: IORing,
+    ring: isolated IORing,
     _ opcode: IORingOperation,
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
@@ -208,12 +207,12 @@ final class SingleshotSubmission<T: Sendable>: Submission<T> {
     }
   }
 
-  func submit() async throws -> T {
+  private func _submit(ring: isolated IORing) async throws -> T {
     try await withTaskCancellationHandler(operation: {
       try await withUnsafeThrowingContinuation { continuation in
         // guaranteed to run immediately
         self.continuation = continuation
-        Task { @IORingActor in
+        Task {
           if group != nil {
             await ready()
           } else {
@@ -223,8 +222,12 @@ final class SingleshotSubmission<T: Sendable>: Submission<T> {
       }
     }, onCancel: {
       // if the operation supports it, will cause the operation to fail early
-      Task { @IORingActor in try await cancel() }
+      try? cancel()
     })
+  }
+
+  func submit() async throws -> T {
+    try await _submit(ring: ring)
   }
 
   override func onCompletion(cqe: io_uring_cqe) {
@@ -244,7 +247,7 @@ struct BufferCount: FileDescriptorRepresentable {
   }
 }
 
-final class BufferSubmission<U>: Submission<()> {
+final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
   nonisolated var count: Int {
     Int(fd.fileDescriptor)
   }
@@ -256,8 +259,14 @@ final class BufferSubmission<U>: Submission<()> {
 
   override func onCompletion(cqe: io_uring_cqe) {}
 
-  func submit() throws {
+  private func _submit(ring: isolated IORing) throws {
     try ring.submit()
+  }
+
+  func submit() throws {
+    try ring.assumeIsolated { ring in
+      try _submit(ring: ring)
+    }
   }
 
   nonisolated func bufferPointer(id bufferID: Int) -> UnsafeMutablePointer<U> {
@@ -266,7 +275,7 @@ final class BufferSubmission<U>: Submission<()> {
   }
 
   init(
-    ring: IORing,
+    ring: isolated IORing,
     count: Int,
     buffer: UnsafeMutablePointer<U>?,
     size: Int,
@@ -295,7 +304,7 @@ final class BufferSubmission<U>: Submission<()> {
   }
 
   convenience init(
-    ring: IORing,
+    ring: isolated IORing,
     size: Int,
     count: Int,
     flags: IORing.SqeFlags = IORing.SqeFlags()
@@ -313,13 +322,17 @@ final class BufferSubmission<U>: Submission<()> {
     )
   }
 
-  convenience init(reproviding bufferID: Int, from submission: BufferSubmission<U>) async throws {
+  convenience init(
+    ring: isolated IORing,
+    reproviding bufferID: Int,
+    from submission: BufferSubmission<U>
+  ) throws {
     guard submission.deallocate == true && bufferID < submission.count
     else { throw Errno.invalidArgument }
     let buffer = submission.bufferPointer(id: bufferID)
 
     try self.init(
-      ring: submission.ring,
+      ring: ring,
       count: 1,
       buffer: buffer,
       size: submission.size,
@@ -329,7 +342,11 @@ final class BufferSubmission<U>: Submission<()> {
     )
   }
 
-  convenience init(ring: IORing, removing count: Int, from bufferGroup: UInt16) async throws {
+  convenience init(
+    ring: isolated IORing,
+    removing count: Int,
+    from bufferGroup: UInt16
+  ) async throws {
     try self.init(
       ring: ring,
       count: count,
@@ -353,9 +370,13 @@ final class BufferSubmission<U>: Submission<()> {
     return try body(bufferPointer)
   }
 
-  func reprovideAndSubmit(id bufferID: Int) async throws {
-    let submission = try await BufferSubmission(reproviding: bufferID, from: self)
+  private func _reprovideAndSubmit(ring: isolated IORing, bufferID: Int) throws {
+    let submission = try BufferSubmission(ring: ring, reproviding: bufferID, from: self)
     try submission.submit()
+  }
+
+  func reprovideAndSubmit(id bufferID: Int) async throws {
+    try await _reprovideAndSubmit(ring: ring, bufferID: bufferID)
   }
 
   deinit {
@@ -365,7 +386,7 @@ final class BufferSubmission<U>: Submission<()> {
   }
 }
 
-final class MultishotSubmission<T: Sendable>: Submission<T> {
+final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable {
   // Shared holder ensures continuation is accessible across resubmissions
   private final class _StreamHolder: Sendable {
     let stream: AsyncThrowingStream<T, Error>
@@ -393,7 +414,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
   private let holder: _StreamHolder
 
   private init(
-    ring: IORing,
+    ring: isolated IORing,
     _ opcode: IORingOperation,
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
@@ -404,7 +425,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
     moreFlags: UInt32 = 0,
     bufferIndexOrGroup: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
-    holder: _StreamHolder = _StreamHolder(),
+    holder: _StreamHolder,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) throws {
     self.address = address
@@ -433,9 +454,9 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
     )
   }
 
-  private convenience init(_ submission: MultishotSubmission) throws {
+  private convenience init(ring: isolated IORing, _ submission: MultishotSubmission) throws {
     try self.init(
-      ring: submission.ring,
+      ring: ring,
       submission.opcode,
       fd: submission.fd,
       address: submission.address,
@@ -452,7 +473,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
   }
 
   override convenience init(
-    ring: IORing,
+    ring: isolated IORing,
     _ opcode: IORingOperation,
     fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer? = nil,
@@ -477,21 +498,28 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
       moreFlags: moreFlags,
       bufferIndexOrGroup: bufferIndexOrGroup,
       socketAddress: socketAddress,
+      holder: _StreamHolder(),
       handler: handler
     )
   }
 
-  func submit() throws -> AsyncThrowingStream<T, Error> {
+  private func _submit(ring: isolated IORing) throws -> AsyncThrowingStream<T, Error> {
     try ring.submit()
     return holder.stream
   }
 
-  private func resubmit() {
+  func submit() throws -> AsyncThrowingStream<T, Error> {
+    try ring.assumeIsolated { ring in
+      try _submit(ring: ring)
+    }
+  }
+
+  private func resubmit(ring: isolated IORing) {
     do {
       // Create new SQE with same holder (shared stream/continuation)
-      let resubmission = try MultishotSubmission(self)
+      let resubmission = try MultishotSubmission(ring: ring, self)
       IORing.shared.logger.debug("resubmitting multishot submission \(resubmission)")
-      _ = try resubmission.submit()
+      _ = try resubmission._submit(ring: ring)
     } catch {
       IORing.shared.logger.debug("resubmitting multishot submission failed: \(error)")
       holder.continuation.finish(throwing: error)
@@ -505,7 +533,9 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
       if cqe.flags & IORING_CQE_F_MORE == 0 {
         // if IORING_CQE_F_MORE is not set, we need to issue a new request
         // try to do this implictily
-        resubmit()
+        ring.assumeIsolated { ring in
+          resubmit(ring: ring)
+        }
       }
       if Task.isCancelled {
         try cancel()

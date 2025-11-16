@@ -57,7 +57,7 @@ actor SubmissionGroup<T: Sendable> {
   func enqueue(submission: SingleshotSubmission<T>) {
     submissions.append(submission)
     Task(on: queue) { _ in
-      await submission.enqueue()
+      submission.enqueue()
     }
   }
 
