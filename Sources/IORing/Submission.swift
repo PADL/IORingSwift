@@ -366,7 +366,20 @@ final class BufferSubmission<U>: Submission<()> {
 }
 
 final class MultishotSubmission<T: Sendable>: Submission<T> {
-  private let channel = AsyncThrowingChannel<T, Error>()
+  // Shared holder ensures continuation is accessible across resubmissions
+  private final class _StreamHolder: Sendable {
+    let stream: AsyncThrowingStream<T, Error>
+    let continuation: AsyncThrowingStream<T, Error>.Continuation
+
+    init() {
+      var continuation: AsyncThrowingStream<T, Error>.Continuation!
+      let stream = AsyncThrowingStream<T, Error> {
+        continuation = $0
+      }
+      self.stream = stream
+      self.continuation = continuation
+    }
+  }
 
   // state for resubmission
   private let address: UnsafeRawPointer?
@@ -377,8 +390,9 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
   private let moreFlags: UInt32
   private let bufferIndexOrGroup: UInt16
   private let socketAddress: sockaddr_storage?
+  private let holder: _StreamHolder
 
-  override init(
+  private init(
     ring: IORing,
     _ opcode: IORingOperation,
     fd: FileDescriptorRepresentable,
@@ -390,6 +404,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
     moreFlags: UInt32 = 0,
     bufferIndexOrGroup: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
+    holder: _StreamHolder = _StreamHolder(),
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) throws {
     self.address = address
@@ -400,6 +415,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
     self.moreFlags = moreFlags
     self.bufferIndexOrGroup = bufferIndexOrGroup
     self.socketAddress = socketAddress
+    self.holder = holder
 
     try super.init(
       ring: ring,
@@ -430,31 +446,62 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
       moreFlags: submission.moreFlags,
       bufferIndexOrGroup: submission.bufferIndexOrGroup,
       socketAddress: submission.socketAddress,
+      holder: submission.holder,
       handler: submission.handler
     )
   }
 
-  func submit() throws -> AsyncThrowingChannel<T, Error> {
+  override convenience init(
+    ring: IORing,
+    _ opcode: IORingOperation,
+    fd: FileDescriptorRepresentable,
+    address: UnsafeRawPointer? = nil,
+    length: CUnsignedInt = 0,
+    offset: IORing.Offset = 0,
+    flags: IORing.SqeFlags = IORing.SqeFlags(),
+    ioprio: UInt16 = 0,
+    moreFlags: UInt32 = 0,
+    bufferIndexOrGroup: UInt16 = 0,
+    socketAddress: sockaddr_storage? = nil,
+    handler: @escaping @Sendable (io_uring_cqe) throws -> T
+  ) throws {
+    try self.init(
+      ring: ring,
+      opcode,
+      fd: fd,
+      address: address,
+      length: length,
+      offset: offset,
+      flags: flags,
+      ioprio: ioprio,
+      moreFlags: moreFlags,
+      bufferIndexOrGroup: bufferIndexOrGroup,
+      socketAddress: socketAddress,
+      handler: handler
+    )
+  }
+
+  func submit() throws -> AsyncThrowingStream<T, Error> {
     try ring.submit()
-    return channel
+    return holder.stream
   }
 
   private func resubmit() {
     do {
-      // this will allocate a new SQE with the same channel, fd, opcode and handler
+      // Create new SQE with same holder (shared stream/continuation)
       let resubmission = try MultishotSubmission(self)
       IORing.shared.logger.debug("resubmitting multishot submission \(resubmission)")
       _ = try resubmission.submit()
     } catch {
       IORing.shared.logger.debug("resubmitting multishot submission failed: \(error)")
-      channel.fail(error)
+      holder.continuation.finish(throwing: error)
     }
   }
 
   override func onCompletion(cqe: io_uring_cqe) {
     do {
       let result = try throwingErrno(cqe: cqe, handler)
-      await channel.send(result)
+      holder.continuation.yield(result) // No suspension point!
       if cqe.flags & IORING_CQE_F_MORE == 0 {
         // if IORING_CQE_F_MORE is not set, we need to issue a new request
         // try to do this implictily
@@ -464,7 +511,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
         try cancel()
       }
     } catch {
-      channel.fail(error)
+      holder.continuation.finish(throwing: error)
     }
   }
 }

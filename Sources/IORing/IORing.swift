@@ -386,7 +386,7 @@ public final class IORing: CustomStringConvertible {
     moreFlags: UInt32 = 0,
     bufferIndexOrGroup: UInt16 = 0,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
-  ) throws -> AsyncThrowingChannel<T, Error> {
+  ) throws -> AsyncThrowingStream<T, Error> {
     try MultishotSubmission(
       ring: self,
       opcode,
@@ -611,7 +611,7 @@ private extension IORing {
     fd: FileDescriptorRepresentable,
     count: Int,
     link: Bool = false
-  ) throws -> AsyncThrowingChannel<[UInt8], Error> {
+  ) throws -> AsyncThrowingStream<[UInt8], Error> {
     var buffer = [UInt8]._unsafelyInitialized(count: count)
     return try prepareAndSubmitMultishot(
       .recv,
@@ -649,7 +649,7 @@ private extension IORing {
     count: Int,
     capacity: Int,
     flags: UInt32 = 0
-  ) async throws -> AsyncThrowingChannel<Message, Error> {
+  ) async throws -> AsyncThrowingStream<Message, Error> {
     // FIXME: combine message holder buffer registration with multishot registration to avoid extra system call
     let holder = try await MessageHolder(ring: self, size: count, count: capacity)
     return try await holder.withUnsafeMutablePointer { @IORingActor pointer in
@@ -664,7 +664,7 @@ private extension IORing {
         bufferIndexOrGroup: holder.bufferGroup
       ) { [holder] cqe in
         // because the default for multishots is to resubmit when IORING_CQE_F_MORE is unset,
-        // we don't need to deallocate the buffer here. FIXME: do this when channel closes.
+        // we don't need to deallocate the buffer here. FIXME: do this when stream finishes.
         // we know that handlers are always executed in an @IORingActor actor's execution context
         // so it's safe to access the holder's buffer. But we should make this more explicit
         // by making the callback take an async function.
@@ -710,7 +710,7 @@ private extension IORing {
   func io_uring_op_multishot_accept(
     fd: FileDescriptorRepresentable,
     flags: UInt32 = 0
-  ) throws -> AsyncThrowingChannel<FileDescriptorRepresentable, Error> {
+  ) throws -> AsyncThrowingStream<FileDescriptorRepresentable, Error> {
     try prepareAndSubmitMultishot(
       .accept,
       fd: fd,
