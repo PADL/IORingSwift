@@ -96,7 +96,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
     }
   }
 
-  func cancel() async throws {
+  func cancel() throws {
     do {
       precondition(cancellationToken != nil)
       let sqe = try ring.getSqe()
@@ -146,7 +146,7 @@ class Submission<T: Sendable>: CustomStringConvertible {
     setBlock()
   }
 
-  func onCompletion(cqe: io_uring_cqe) async { fatalError("must be implemented by concrete class") }
+  func onCompletion(cqe: io_uring_cqe) { fatalError("must be implemented by concrete class") }
   func onCancel(cqe: io_uring_cqe) {}
 
   func throwingErrno(
@@ -227,7 +227,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T> {
     })
   }
 
-  override func onCompletion(cqe: io_uring_cqe) async {
+  override func onCompletion(cqe: io_uring_cqe) {
     do {
       try continuation.resume(returning: throwingErrno(cqe: cqe, handler))
     } catch {
@@ -254,7 +254,7 @@ final class BufferSubmission<U>: Submission<()> {
   let buffer: UnsafeMutablePointer<U>
   let deallocate: Bool
 
-  override func onCompletion(cqe: io_uring_cqe) async {}
+  override func onCompletion(cqe: io_uring_cqe) {}
 
   func submit() throws {
     try ring.submit()
@@ -451,7 +451,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
     }
   }
 
-  override func onCompletion(cqe: io_uring_cqe) async {
+  override func onCompletion(cqe: io_uring_cqe) {
     do {
       let result = try throwingErrno(cqe: cqe, handler)
       await channel.send(result)
@@ -461,7 +461,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T> {
         resubmit()
       }
       if Task.isCancelled {
-        try await cancel()
+        try cancel()
       }
     } catch {
       channel.fail(error)
