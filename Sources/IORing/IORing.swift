@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023 PADL Software Pty Ltd
+// Copyright (c) 2023-2025 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -16,16 +16,11 @@
 
 import AsyncAlgorithms
 import AsyncExtensions
-#if swift(>=6.0)
-internal import CIORingShims
-internal import CIOURing
-#else
-@_implementationOnly import CIORingShims
-@_implementationOnly import CIOURing
-#endif
 import Glibc
 import Logging
 import SystemPackage
+package import CIORingShims
+package import CIOURing
 
 extension io_uring: @retroactive @unchecked Sendable {}
 
@@ -837,7 +832,10 @@ public extension IORing {
     try io_uring_op_multishot_accept(fd: fd).eraseToAnyAsyncSequence()
   }
 
-  func connect(_ fd: FileDescriptorRepresentable, to address: sockaddr_storage) async throws {
+  package func connect(
+    _ fd: FileDescriptorRepresentable,
+    to address: sockaddr_storage
+  ) async throws {
     try await io_uring_op_connect(fd: fd, address: address)
   }
 

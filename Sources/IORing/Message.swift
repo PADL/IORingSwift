@@ -16,13 +16,8 @@
 
 import AsyncAlgorithms
 import AsyncExtensions
-#if swift(>=6.0)
-internal import CIORingShims
-internal import CIOURing
-#else
-@_implementationOnly import CIORingShims
-@_implementationOnly import CIOURing
-#endif
+package import CIORingShims
+package import CIOURing
 import Glibc
 import SystemPackage
 

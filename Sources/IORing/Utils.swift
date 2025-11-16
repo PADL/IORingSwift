@@ -14,13 +14,8 @@
 // limitations under the License.
 //
 
-#if swift(>=6.0)
 internal import CIORingShims
 internal import CIOURing
-#else
-@_implementationOnly import CIORingShims
-@_implementationOnly import CIOURing
-#endif
 import Glibc
 import SystemPackage
 

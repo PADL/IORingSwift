@@ -49,7 +49,7 @@ extension Message: CustomStringConvertible {
 
   public var address: any SocketAddress {
     get throws {
-      try sockaddr_storage(bytes: name)
+      try AnySocketAddress(bytes: name)
     }
   }
 }

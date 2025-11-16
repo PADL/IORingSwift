@@ -36,7 +36,7 @@ public struct IORingDatagramClient {
     guard CommandLine.arguments.count == 3 else { usage() }
 
     let family = sa_family_t(CommandLine.arguments[1].hasPrefix("/") ? AF_LOCAL : AF_INET)
-    guard let address = try? sockaddr_storage(
+    guard let address = try? AnySocketAddress(
       family: family,
       presentationAddress: CommandLine.arguments[1]
     ) else {
