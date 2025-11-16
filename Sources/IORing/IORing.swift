@@ -20,19 +20,13 @@ import Glibc
 import Logging
 import SystemPackage
 package import CIORingShims
-package import CIOURing
+internal import CIOURing
 
 extension io_uring: @retroactive @unchecked Sendable {}
 
 // MARK: - actor
 
-@globalActor
-public actor IORingActor {
-  public static let shared = IORingActor()
-}
-
-@IORingActor
-public final class IORing: CustomStringConvertible {
+public actor IORing: CustomStringConvertible {
   public typealias Offset = Int64 // for 64-bit offsetes on 32-bit platforms
 
   public nonisolated static let shared = try! IORing(entries: nil, flags: [], shared: true)
@@ -218,7 +212,7 @@ public final class IORing: CustomStringConvertible {
     }
   }
 
-  public convenience nonisolated init(
+  public init(
     entries: Int? = nil,
     flags: SetupFlags = [],
     sqThreadCpu: UInt32 = 0,
@@ -233,7 +227,7 @@ public final class IORing: CustomStringConvertible {
     )
   }
 
-  public convenience nonisolated init(
+  public init(
     entries: Int? = nil,
     flags: UInt32,
     sqThreadCpu: UInt32 = 0,
@@ -242,7 +236,7 @@ public final class IORing: CustomStringConvertible {
     try self.init(entries: entries, flags: SetupFlags(rawValue: flags), shared: false)
   }
 
-  private nonisolated init(
+  private init(
     entries: Int?,
     flags: SetupFlags,
     shared: Bool,
@@ -631,7 +625,7 @@ private extension IORing {
     flags: UInt32 = 0,
     link: Bool = false
   ) async throws {
-    try await message.withUnsafeMutablePointer { @IORingActor pointer in
+    try await message.withUnsafeMutablePointer(ring: self) { pointer in
       try await prepareAndSubmit(
         .recvmsg,
         fd: fd,
@@ -652,7 +646,7 @@ private extension IORing {
   ) async throws -> AsyncThrowingStream<Message, Error> {
     // FIXME: combine message holder buffer registration with multishot registration to avoid extra system call
     let holder = try await MessageHolder(ring: self, size: count, count: capacity)
-    return try await holder.withUnsafeMutablePointer { @IORingActor pointer in
+    return try await holder.withUnsafeMutablePointer(ring: self) { pointer in
       try MultishotSubmission(
         ring: self,
         .recvmsg,
@@ -679,7 +673,7 @@ private extension IORing {
     flags: UInt32 = 0,
     link: Bool = false
   ) async throws {
-    try await message.withUnsafeMutablePointer { @IORingActor pointer in
+    try await message.withUnsafeMutablePointer(ring: self) { pointer in
       try await prepareAndSubmit(
         .sendmsg,
         fd: fd,

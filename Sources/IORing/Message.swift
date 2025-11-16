@@ -16,8 +16,8 @@
 
 import AsyncAlgorithms
 import AsyncExtensions
-package import CIORingShims
-package import CIOURing
+internal import CIORingShims
+internal import CIOURing
 import Glibc
 import SystemPackage
 
@@ -42,11 +42,9 @@ public final class Message: @unchecked Sendable {
   private var iov_storage = iovec()
 
   func withUnsafeMutablePointer<T>(
-    _ body: @Sendable (UnsafeMutablePointer<msghdr>) async throws
-      -> T
-  ) async rethrows
-    -> T
-  {
+    ring: isolated IORing,
+    _ body: (UnsafeMutablePointer<msghdr>) async throws -> T
+  ) async rethrows -> T {
     try await body(&storage)
   }
 
@@ -105,7 +103,7 @@ final class MessageHolder: @unchecked Sendable {
       self.storage.msg_name = UnsafeMutableRawPointer($0)
     }
     storage.msg_namelen = socklen_t(MemoryLayout<sockaddr_storage>.size)
-    try await bufferSubmission.submit()
+    try bufferSubmission.submit()
     storage.msg_flags = Int32(flags)
   }
 
@@ -134,7 +132,7 @@ final class MessageHolder: @unchecked Sendable {
 
       // make the buffer available for reuse once we've copied the contents
       defer {
-        Task { @IORingActor in
+        Task {
           try await bufferSubmission.reprovideAndSubmit(id: bufferID)
         }
       }
@@ -161,13 +159,10 @@ final class MessageHolder: @unchecked Sendable {
     }
   }
 
-  @IORingActor
   func withUnsafeMutablePointer<T: Sendable>(
-    _ body: @Sendable (UnsafeMutablePointer<msghdr>) async throws
-      -> T
-  ) async rethrows
-    -> T
-  {
+    ring: isolated IORing,
+    _ body: (UnsafeMutablePointer<msghdr>) async throws -> T
+  ) async rethrows -> T {
     try await body(&storage)
   }
 }

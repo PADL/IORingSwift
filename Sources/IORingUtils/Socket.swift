@@ -295,17 +295,15 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     }
   }
 
-  @IORingActor
   public func accept() async throws -> Socket {
     guard let fileHandle else { throw Errno.badFileDescriptor }
     let clientFileHandle: FileDescriptorRepresentable = try await ring.accept(from: fileHandle)
     return Socket(ring: ring, fileHandle: clientFileHandle as! FileHandle)
   }
 
-  @IORingActor
   public func accept() async throws -> AnyAsyncSequence<Socket> {
     guard let fileHandle else { throw Errno.badFileDescriptor }
-    return try ring.accept(from: fileHandle).map { Socket(
+    return try await ring.accept(from: fileHandle).map { Socket(
       ring: ring,
       fileHandle: $0 as! FileHandle
     ) }
@@ -323,20 +321,17 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     try fileHandle.setBlocking(true)
   }
 
-  @IORingActor
   public func connect(to address: any SocketAddress) async throws {
     guard let fileHandle else { throw Errno.badFileDescriptor }
     try await ring.connect(fileHandle, to: address)
   }
 
-  @IORingActor
   public func read(into buffer: inout [UInt8], count: Int) async throws -> Int {
     guard let fileHandle else { throw Errno.badFileDescriptor }
 
     return try await ring.read(into: &buffer, count: count, from: fileHandle)
   }
 
-  @IORingActor
   public func read(count: Int, awaitingAllRead: Bool) async throws -> [UInt8] {
     guard let fileHandle else { throw Errno.badFileDescriptor }
 
@@ -353,7 +348,6 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     return buffer
   }
 
-  @IORingActor
   public func readFixed(
     count: Int,
     bufferIndex: UInt16,
@@ -380,7 +374,6 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     return buffer
   }
 
-  @IORingActor
   public func write(_ buffer: [UInt8], count: Int, awaitingAllWritten: Bool) async throws -> Int {
     guard let fileHandle else { throw Errno.badFileDescriptor }
 
@@ -397,7 +390,6 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     return nwritten
   }
 
-  @IORingActor
   public func writeFixed(
     _ buffer: [UInt8],
     bufferIndex: UInt16,
@@ -418,7 +410,6 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     return nwritten
   }
 
-  @IORingActor
   public func receive(count: Int) async throws -> [UInt8] {
     guard let fileHandle else { throw Errno.badFileDescriptor }
     return try await ring.receive(
@@ -427,16 +418,14 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     )
   }
 
-  @IORingActor
-  public func receive(count: Int) throws -> AnyAsyncSequence<[UInt8]> {
+  public func receive(count: Int) async throws -> AnyAsyncSequence<[UInt8]> {
     guard let fileHandle else { throw Errno.badFileDescriptor }
-    return try ring.receive(
+    return try await ring.receive(
       count: count,
       from: fileHandle
     )
   }
 
-  @IORingActor
   public func send(_ data: [UInt8]) async throws {
     guard let fileHandle else { throw Errno.badFileDescriptor }
     try await ring.send(
@@ -445,7 +434,6 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     )
   }
 
-  @IORingActor
   public func receiveMessages(count: Int) async throws -> AnyAsyncSequence<Message> {
     guard let fileHandle else { throw Errno.badFileDescriptor }
     return try await ring.receiveMessages(
@@ -454,7 +442,6 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     )
   }
 
-  @IORingActor
   public func sendMessage(_ message: Message) async throws {
     guard let fileHandle else { throw Errno.badFileDescriptor }
     try await ring.send(
