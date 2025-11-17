@@ -201,7 +201,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
       handler: handler
     )
     if let group {
-      await group.enqueue(submission: self)
+      group.enqueue(submission: self, ring: ring)
     }
   }
 
@@ -211,7 +211,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
         // guaranteed to run immediately
         self.continuation = continuation
         if group != nil {
-          Task { await ready() }
+          ready()
         } else {
           _ = try? ring.submit()
         }

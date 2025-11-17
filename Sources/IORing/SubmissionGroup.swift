@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023 PADL Software Pty Ltd
+// Copyright (c) 2023-2025 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -19,34 +19,47 @@ import AsyncQueue
 import Glibc
 
 extension SingleshotSubmission {
-  func enqueue() {
-    guard let group else { return }
-    Task {
-      do {
-        let result = try await submit()
-        await group.resultChannel.send(result)
-      } catch {
-        group.resultChannel.fail(error)
-      }
+  func enqueue(ring: isolated IORing) async {
+    let result: Result<T, Error>
+    do {
+      result = try await .success(submit())
+    } catch {
+      result = .failure(error)
     }
+    group!.resultContinuation?.yield(result)
   }
 
-  func ready() async {
-    await group?.readinessChannel.send(())
+  func ready() {
+    group!.readinessContinuation!.yield(())
   }
 }
 
-actor SubmissionGroup<T: Sendable> {
+final class SubmissionGroup<T: Sendable>: Sendable {
   private let ring: IORing
-  private let queue = ActorQueue<SubmissionGroup>()
-  private var submissions = [SingleshotSubmission<T>]()
+  private let queue = ActorQueue<IORing>()
+  private nonisolated(unsafe) var submissions = [SingleshotSubmission<T>]()
+  private let readinessStream: AsyncStream<()>
+  private let resultStream: AsyncStream<Result<T, Error>>
 
-  fileprivate let readinessChannel = AsyncChannel<()>()
-  fileprivate let resultChannel = AsyncThrowingChannel<T, Error>()
+  fileprivate nonisolated(unsafe) var readinessContinuation: AsyncStream<()>.Continuation?
+  fileprivate nonisolated(unsafe) var resultContinuation: AsyncStream<Result<T, Error>>
+    .Continuation?
 
-  init(ring: IORing) async throws {
+  init(ring: isolated IORing) throws {
     self.ring = ring
-    queue.adoptExecutionContext(of: self)
+
+    var readinessContinuation: AsyncStream<()>.Continuation!
+    readinessStream = AsyncStream<()> {
+      readinessContinuation = $0
+    }
+    self.readinessContinuation = readinessContinuation
+
+    var resultContinuation: AsyncStream<Result<T, Error>>.Continuation!
+    resultStream = AsyncStream<Result<T, Error>> {
+      resultContinuation = $0
+    }
+    self.resultContinuation = resultContinuation
+    queue.adoptExecutionContext(of: ring)
   }
 
   ///
@@ -54,20 +67,21 @@ actor SubmissionGroup<T: Sendable> {
   /// its continuation is registered in the SQE `user_data` otherwise the group
   /// will never be submitted.
   ///
-  func enqueue(submission: SingleshotSubmission<T>) {
+  func enqueue(submission: SingleshotSubmission<T>, ring: isolated IORing) {
     submissions.append(submission)
-    Task(on: queue) { _ in
-      submission.enqueue()
+    Task(on: queue) { (ring: isolated IORing) in
+      await submission.enqueue(ring: ring)
     }
   }
 
   private func allReady() async {
-    _ = await readinessChannel.collect(max: submissions.count)
+    _ = await readinessStream.collect(max: submissions.count)
   }
 
   private func allComplete() async throws -> [T] {
-    defer { resultChannel.finish() }
-    return try await resultChannel.collect(max: submissions.count)
+    defer { resultContinuation?.finish() }
+    let results = await resultStream.collect(max: submissions.count)
+    return try results.map { try $0.get() }
   }
 
   ///
@@ -75,16 +89,14 @@ actor SubmissionGroup<T: Sendable> {
   ///
   /// Completing the submission group involves the following:
   ///
-  /// - Await all submissions to be scheduled on queue
   /// - Wait for all submissions to have continuations registered
   /// - Submit SQEs to I/O ring
   /// - Collect results from results channel
   ///
-  func finish() async throws -> [T] {
-    await Task(on: queue) { _ in }.value
+  func finish(ring: isolated IORing) async throws -> [T] {
     await allReady()
-    try await ring.submit()
-    readinessChannel.finish()
+    try ring.submit()
+    readinessContinuation?.finish()
     return try await allComplete()
   }
 }

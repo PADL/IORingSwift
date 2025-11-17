@@ -1,4 +1,5 @@
 {
+  "originHash" : "a10e43e7ec6250a565ea946f9db9f87b5391ee7668b599c6104fca6e0c6d2610",
   "pins" : [
     {
       "identity" : "asyncextensions",
@@ -73,5 +74,5 @@
       }
     }
   ],
-  "version" : 2
+  "version" : 3
 }
