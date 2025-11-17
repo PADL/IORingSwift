@@ -23,10 +23,7 @@ import IORing
 import SocketAddress
 import struct SystemPackage.Errno
 
-#if !DEBUG
-// FIXME: why is this required in release mode?
 extension sockaddr_storage: SocketAddress {}
-#endif
 
 public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
   private let fileHandle: FileHandle!
