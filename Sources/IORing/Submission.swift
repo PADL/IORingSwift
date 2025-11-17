@@ -210,12 +210,10 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
       try await withUnsafeThrowingContinuation { continuation in
         // guaranteed to run immediately
         self.continuation = continuation
-        Task {
-          if group != nil {
-            await ready()
-          } else {
-            try ring.submit()
-          }
+        if group != nil {
+          Task { await ready() }
+        } else {
+          _ = try? ring.submit()
         }
       }
     }, onCancel: {
