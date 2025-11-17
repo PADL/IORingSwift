@@ -23,6 +23,11 @@ import IORing
 import SocketAddress
 import struct SystemPackage.Errno
 
+#if !DEBUG
+// FIXME: why is this required in release mode?
+extension sockaddr_storage: SocketAddress {}
+#endif
+
 public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
   private let fileHandle: FileHandle!
   private let domain: sa_family_t
@@ -59,10 +64,10 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     Int32,
     UnsafeMutablePointer<sockaddr>,
     UnsafeMutablePointer<socklen_t>
-  ) -> CInt) throws -> sockaddr_storage {
+  ) -> CInt) throws -> any SocketAddress {
     guard let fileHandle else { throw Errno.badFileDescriptor }
     var ss = sockaddr_storage()
-    var length = ss.size
+    var length = socklen_t(MemoryLayout<sockaddr_storage>.size)
 
     _ = try withUnsafeMutablePointer(to: &ss) { pointer in
       try pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
