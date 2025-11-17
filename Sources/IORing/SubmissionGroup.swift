@@ -19,7 +19,7 @@ import AsyncQueue
 import Glibc
 
 extension SingleshotSubmission {
-  func enqueue() {
+  func enqueue(ring: isolated IORing) {
     guard let group else { return }
     Task {
       do {
@@ -31,22 +31,20 @@ extension SingleshotSubmission {
     }
   }
 
-  func ready() async {
-    await group?.readinessChannel.send(())
+  func ready() {
+    Task { await group?.readinessChannel.send(()) }
   }
 }
 
-actor SubmissionGroup<T: Sendable> {
+final class SubmissionGroup<T: Sendable>: Sendable {
   private let ring: IORing
-  private let queue = ActorQueue<SubmissionGroup>()
-  private var submissions = [SingleshotSubmission<T>]()
+  private nonisolated(unsafe) var submissions = [SingleshotSubmission<T>]()
 
   fileprivate let readinessChannel = AsyncChannel<()>()
   fileprivate let resultChannel = AsyncThrowingChannel<T, Error>()
 
-  init(ring: IORing) async throws {
+  init(ring: isolated IORing) throws {
     self.ring = ring
-    queue.adoptExecutionContext(of: self)
   }
 
   ///
@@ -54,11 +52,9 @@ actor SubmissionGroup<T: Sendable> {
   /// its continuation is registered in the SQE `user_data` otherwise the group
   /// will never be submitted.
   ///
-  func enqueue(submission: SingleshotSubmission<T>) {
+  func enqueue(submission: SingleshotSubmission<T>, ring: isolated IORing) {
     submissions.append(submission)
-    Task(on: queue) { _ in
-      submission.enqueue()
-    }
+    submission.enqueue(ring: ring)
   }
 
   private func allReady() async {
@@ -75,15 +71,13 @@ actor SubmissionGroup<T: Sendable> {
   ///
   /// Completing the submission group involves the following:
   ///
-  /// - Await all submissions to be scheduled on queue
   /// - Wait for all submissions to have continuations registered
   /// - Submit SQEs to I/O ring
   /// - Collect results from results channel
   ///
-  func finish() async throws -> [T] {
-    await Task(on: queue) { _ in }.value
+  func finish(ring: isolated IORing) async throws -> [T] {
     await allReady()
-    try await ring.submit()
+    try ring.submit()
     readinessChannel.finish()
     return try await allComplete()
   }

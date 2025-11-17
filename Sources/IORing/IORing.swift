@@ -336,9 +336,9 @@ public actor IORing: CustomStringConvertible {
   func withSubmissionGroup<T: Sendable>(_ body: (
     SubmissionGroup<T>
   ) async throws -> ()) async throws -> [T] {
-    let submissionGroup = try await SubmissionGroup<T>(ring: self)
+    let submissionGroup = try SubmissionGroup<T>(ring: self)
     try await body(submissionGroup)
-    return try await submissionGroup.finish()
+    return try await submissionGroup.finish(ring: self)
   }
 
   fileprivate func prepareAndSubmit<T: Sendable>(
