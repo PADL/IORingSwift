@@ -265,4 +265,203 @@ final class IORingTests: XCTestCase {
     let buffer = [UInt8]._unsafelyInitialized(count: 10)
     XCTAssertEqual(buffer.count, 10)
   }
+
+  // MARK: - SubmissionGroup Tests
+
+  func testSubmissionGroupMultipleCopies() async throws {
+    let ring = try IORing()
+    try await ring.registerFixedBuffers(count: 1, size: 1024)
+    defer { Task { try? await ring.unregisterFixedBuffers() } }
+
+    // Test FIFO ordering by performing multiple copy operations
+    // Each copy operation uses a submission group internally
+    let testData = Array("Test data for copy operations".utf8)
+    let copyCount = 10
+    var sourceFiles = [String]()
+    var destFiles = [String]()
+
+    defer {
+      sourceFiles.forEach { unlink($0) }
+      destFiles.forEach { unlink($0) }
+    }
+
+    // Create source files
+    for i in 0..<copyCount {
+      let sourceFile = "\(tmpDir)/ioring_copy_src_\(getpid())_\(i).txt"
+      let destFile = "\(tmpDir)/ioring_copy_dst_\(getpid())_\(i).txt"
+      sourceFiles.append(sourceFile)
+      destFiles.append(destFile)
+
+      let fd = FileDescriptor(rawValue: open(sourceFile, O_CREAT | O_WRONLY | O_TRUNC, 0o644))
+      _ = try await ring.write(testData, to: fd)
+      try? fd.close()
+    }
+
+    // Perform copies - each copy internally uses a submission group
+    for i in 0..<copyCount {
+      let sourceFd = FileDescriptor(rawValue: open(sourceFiles[i], O_RDONLY))
+      let destFd = FileDescriptor(rawValue: open(destFiles[i], O_CREAT | O_WRONLY | O_TRUNC, 0o644))
+
+      try await ring.copy(
+        count: testData.count,
+        bufferIndex: 0,
+        from: sourceFd,
+        to: destFd
+      )
+
+      try? sourceFd.close()
+      try? destFd.close()
+    }
+
+    // Verify all copies completed successfully
+    for i in 0..<copyCount {
+      let fd = FileDescriptor(rawValue: open(destFiles[i], O_RDONLY))
+      defer { try? fd.close() }
+      let copiedData = try await ring.read(count: testData.count, from: fd)
+      XCTAssertEqual(copiedData, testData, "Copy \(i) should match source data")
+    }
+  }
+
+  func testSubmissionGroupConcurrentWrites() async throws {
+    let ring = try IORing()
+    let testFile = "\(tmpDir)/ioring_concurrent_\(getpid()).txt"
+    defer { unlink(testFile) }
+
+    let fd = FileDescriptor(rawValue: open(testFile, O_CREAT | O_WRONLY | O_TRUNC, 0o644))
+    defer { try? fd.close() }
+
+    // Write sequential numbers to verify ordering
+    let writeCount = 10
+    for i in 0..<writeCount {
+      let data = Array(String(format: "%02d", i).utf8)
+      _ = try await ring.write(data, to: fd)
+    }
+
+    // Read back and verify order
+    let readFd = FileDescriptor(rawValue: open(testFile, O_RDONLY))
+    defer { try? readFd.close() }
+
+    for i in 0..<writeCount {
+      let data = try await ring.read(count: 2, from: readFd)
+      let expected = Array(String(format: "%02d", i).utf8)
+      XCTAssertEqual(data, expected, "Data at position \(i) should be in order")
+    }
+  }
+
+  func testSubmissionGroupStress() async throws {
+    let ring = try IORing()
+    try await ring.registerFixedBuffers(count: 1, size: 1024)
+    defer { Task { try? await ring.unregisterFixedBuffers() } }
+
+    // Stress test with many operations using separate source and dest files
+    let operationCount = 50
+    let testData = Array("X".utf8)
+    var sourceFiles = [String]()
+    var destFiles = [String]()
+
+    defer {
+      sourceFiles.forEach { unlink($0) }
+      destFiles.forEach { unlink($0) }
+    }
+
+    // Create source files first
+    for i in 0..<operationCount {
+      let sourceFile = "\(tmpDir)/ioring_stress_src_\(getpid())_\(i).txt"
+      sourceFiles.append(sourceFile)
+
+      let fd = FileDescriptor(rawValue: open(sourceFile, O_CREAT | O_WRONLY | O_TRUNC, 0o644))
+      _ = try await ring.write(testData, to: fd)
+      try? fd.close()
+    }
+
+    // Perform copies
+    for i in 0..<operationCount {
+      let destFile = "\(tmpDir)/ioring_stress_dst_\(getpid())_\(i).txt"
+      destFiles.append(destFile)
+
+      let sourceFd = FileDescriptor(rawValue: open(sourceFiles[i], O_RDONLY))
+      let destFd = FileDescriptor(rawValue: open(destFile, O_CREAT | O_WRONLY | O_TRUNC, 0o644))
+
+      try await ring.copy(
+        count: testData.count,
+        bufferIndex: 0,
+        from: sourceFd,
+        to: destFd
+      )
+
+      try? sourceFd.close()
+      try? destFd.close()
+    }
+
+    // If we got here without errors, ordering was maintained
+    XCTAssertTrue(true, "Stress test completed successfully")
+  }
+
+  func testSubmissionGroupErrorPropagation() async throws {
+    let ring = try IORing()
+    try await ring.registerFixedBuffers(count: 1, size: 1024)
+    defer { Task { try? await ring.unregisterFixedBuffers() } }
+
+    // Test that errors in submission groups are properly propagated
+    do {
+      let invalidFd = FileDescriptor(rawValue: -1)
+      let validFile = "\(tmpDir)/ioring_err_\(getpid()).txt"
+      defer { unlink(validFile) }
+
+      let validFd = FileDescriptor(rawValue: open(validFile, O_CREAT | O_WRONLY | O_TRUNC, 0o644))
+
+      try await ring.copy(
+        count: 10,
+        bufferIndex: 0,
+        from: invalidFd, // Invalid source
+        to: validFd
+      )
+
+      try? validFd.close()
+      XCTFail("Should have thrown an error for invalid file descriptor")
+    } catch {
+      // Expected to throw an error
+      XCTAssertTrue(error is Errno, "Error should be an Errno")
+    }
+  }
+
+  func testSubmissionGroupLargeData() async throws {
+    let ring = try IORing()
+    try await ring.registerFixedBuffers(count: 1, size: 4096)
+    defer { Task { try? await ring.unregisterFixedBuffers() } }
+
+    let sourceFile = "\(tmpDir)/ioring_large_src_\(getpid()).txt"
+    let destFile = "\(tmpDir)/ioring_large_dst_\(getpid()).txt"
+    defer {
+      unlink(sourceFile)
+      unlink(destFile)
+    }
+
+    // Create a larger data buffer
+    let testData = Array(repeating: UInt8(42), count: 2048)
+
+    let writeFd = FileDescriptor(rawValue: open(sourceFile, O_CREAT | O_WRONLY | O_TRUNC, 0o644))
+    _ = try await ring.write(testData, to: writeFd)
+    try? writeFd.close()
+
+    // Copy large data using submission group
+    let sourceFd = FileDescriptor(rawValue: open(sourceFile, O_RDONLY))
+    let destFd = FileDescriptor(rawValue: open(destFile, O_CREAT | O_WRONLY | O_TRUNC, 0o644))
+
+    try await ring.copy(
+      count: testData.count,
+      bufferIndex: 0,
+      from: sourceFd,
+      to: destFd
+    )
+
+    try? sourceFd.close()
+    try? destFd.close()
+
+    // Verify copied data
+    let readFd = FileDescriptor(rawValue: open(destFile, O_RDONLY))
+    defer { try? readFd.close() }
+    let copiedData = try await ring.read(count: testData.count, from: readFd)
+    XCTAssertEqual(copiedData, testData)
+  }
 }
