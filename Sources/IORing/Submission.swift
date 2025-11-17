@@ -93,17 +93,15 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
     }
   }
 
-  func cancel() throws {
+  func cancel(ring: isolated IORing) throws {
     do {
       precondition(cancellationToken != nil)
-      try ring.assumeIsolated { ring in
-        let sqe = try ring.getSqe()
-        io_uring_prep_cancel(sqe, cancellationToken, AsyncCancelFlags.userData.rawValue)
-        _ = io_uring_sqe_set_block(sqe) { cqe in
-          self.onCancel(cqe: cqe.pointee)
-        }
-        try ring.submit()
+      let sqe = try ring.getSqe()
+      io_uring_prep_cancel(sqe, cancellationToken, AsyncCancelFlags.userData.rawValue)
+      _ = io_uring_sqe_set_block(sqe) { cqe in
+        self.onCancel(cqe: cqe.pointee)
       }
+      try ring.submit()
     } catch {
       IORing.shared.logger.debug("failed to cancel submission \(self)")
       throw error
@@ -222,7 +220,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
       }
     }, onCancel: {
       // if the operation supports it, will cause the operation to fail early
-      try? cancel()
+      Task { try? await cancel(ring: ring) }
     })
   }
 
@@ -533,12 +531,10 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
       if cqe.flags & IORING_CQE_F_MORE == 0 {
         // if IORING_CQE_F_MORE is not set, we need to issue a new request
         // try to do this implictily
-        ring.assumeIsolated { ring in
-          resubmit(ring: ring)
-        }
+        Task { await resubmit(ring: ring) }
       }
       if Task.isCancelled {
-        try cancel()
+        Task { try await cancel(ring: ring) }
       }
     } catch {
       holder.continuation.finish(throwing: error)
