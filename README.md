@@ -18,7 +18,9 @@ Architecture
 
 IORing may be used as a singleton (`IORing.shared`), or they may be individually allocated; each `IORing` instance has a separate underlying ring.
 
-Public API provides structured concurrency wrappers around common operations such as reading and writing. Multishot APIs, such as `accept(2)`, which can return multiple completions over time return an `AsyncThrowingStream`. Internally, wrappers allocate a concrete instance of `Submission<T>`, representing an initialized Submission Queue Entry (SQE), which is then submitted to the `io_uring`. Completion handlers are handled by having `libdispatch` monitor an `eventfd(2)` representing available completions. The `user_data` in each queue entry is a block, which executes the `onCompletion(cqe:)` method of the `Submission<T>` instance in the ring's isolated context. Care must be taken to manager pointer lifetimes across the event lifecycle.
+Public API provides structured concurrency wrappers around common operations such as reading and writing. Multishot APIs, such as `accept(2)`, which can return multiple completions over time return an `AsyncThrowingStream`.
+
+Internally, wrappers allocate a concrete instance of `Submission<T>`, representing an initialized Submission Queue Entry (SQE), which is then submitted to the `io_uring`. Completion handlers are handled either by having `libdispatch` monitor an `eventfd(2)` representing available completions, or through a dedicated thread (this can be configured by setting `cqHandlerType` in `Package.swift`; the default is to use a dedicated thread). The `user_data` in each queue entry is a block, which executes the `onCompletion(cqe:)` method of the `Submission<T>` instance in the ring's isolated context. Care must be taken to manager pointer lifetimes across the event lifecycle.
 
 Examples
 --------
