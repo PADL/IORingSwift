@@ -70,7 +70,7 @@ void pthread_io_uring_deinit_cq_handler(uintptr_t handle,
   void *retval;
 
   while ((sqe = io_uring_get_sqe(ring)) == nullptr)
-    ;
+    io_uring_submit(ring);
 
   io_uring_prep_nop(sqe);
   io_uring_sqe_set_data(sqe, reinterpret_cast<void *>(~0ULL));
