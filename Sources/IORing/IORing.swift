@@ -16,11 +16,11 @@
 
 import AsyncAlgorithms
 import AsyncExtensions
+@_implementationOnly import CIORingShims
+@_implementationOnly import CIOURing
 import Glibc
 import Logging
 import SystemPackage
-@_implementationOnly import CIORingShims
-@_implementationOnly import CIOURing
 
 extension io_uring: @retroactive @unchecked Sendable {}
 
