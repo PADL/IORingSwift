@@ -16,8 +16,8 @@
 
 import AsyncAlgorithms
 import AsyncExtensions
-internal import CIORingShims
-internal import CIOURing
+@_implementationOnly import CIORingShims
+@_implementationOnly import CIOURing
 import Glibc
 import SystemPackage
 

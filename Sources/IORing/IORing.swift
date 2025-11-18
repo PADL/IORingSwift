@@ -19,8 +19,8 @@ import AsyncExtensions
 import Glibc
 import Logging
 import SystemPackage
-package import CIORingShims
-internal import CIOURing
+@_implementationOnly import CIORingShims
+@_implementationOnly import CIOURing
 
 extension io_uring: @retroactive @unchecked Sendable {}
 
