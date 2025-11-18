@@ -17,16 +17,25 @@
 #include "CQHandlerInternal.hpp"
 
 #include <pthread.h>
+#include <stdio.h>
+#include <string.h>
 
 static void *cqe_thread(void *arg) {
   auto ring = static_cast<struct io_uring *>(arg);
+
+  pthread_setname_np(pthread_self(), "IORingSwift");
 
   while (true) {
     auto err = io_uring_cq_handler(ring);
     if (err == -EINTR)
       continue;
-    else if (err)
+    else if (err) {
+      if (err != -ECANCELED) {
+        fprintf(stderr, "io_uring completion thread exiting with error: %s (%d)\n",
+                strerror(-err), err);
+      }
       break;
+    }
   }
 
   return nullptr;
