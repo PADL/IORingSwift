@@ -1,5 +1,5 @@
 {
-  "originHash" : "a10e43e7ec6250a565ea946f9db9f87b5391ee7668b599c6104fca6e0c6d2610",
+  "originHash" : "42a955c6027a172e53ea37987364d28f1185664cf3d4593074f7555474f8df67",
   "pins" : [
     {
       "identity" : "asyncextensions",
@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/PADL/SocketAddress",
       "state" : {
-        "revision" : "afbcbdb2d51952a4273b86d13d8abbee07a78341",
-        "version" : "0.1.1"
+        "revision" : "f5bf2f1daed55a3148ba3e939df32c36960b4195",
+        "version" : "0.2.0"
       }
     },
     {
@@ -51,8 +51,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-collections.git",
       "state" : {
-        "revision" : "8c0c0a8b49e080e54e5e328cc552821ff07cd341",
-        "version" : "1.2.1"
+        "revision" : "7b847a3b7008b2dc2f47ca3110d8c782fb2e5c7e",
+        "version" : "1.3.0"
       }
     },
     {
