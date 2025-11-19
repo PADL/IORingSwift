@@ -19,7 +19,7 @@ import IORing
 import IORingUtils
 
 @main
-public struct IORingDeviceSpy {
+public struct IORingDeviceSpy: Sendable {
   private let blockSize: Int
   private let ring: IORing
   private let fixed = true // compile time constant for using fixed buffers
@@ -75,7 +75,7 @@ public struct IORingDeviceSpy {
 
   func readFixed(from fd: FileDescriptorRepresentable) async throws {
     repeat {
-      try await ring.readFixed(count: blockSize, bufferIndex: 1, from: fd) {
+      try await ring.readFixed(count: blockSize, bufferIndex: 1, from: fd) { @Sendable in
         self.print([UInt8]($0))
       }
     } while !Task.isCancelled

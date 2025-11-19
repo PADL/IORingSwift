@@ -21,7 +21,7 @@ import IORingUtils
 import struct SystemPackage.Errno
 
 @main
-public struct IORingTCPEcho {
+public struct IORingTCPEcho: Sendable {
   private let socket: Socket
   private let ring: IORing
   private let bufferSize: Int

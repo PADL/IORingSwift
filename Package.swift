@@ -148,7 +148,6 @@ let package = Package(
       path: "Examples/IORingDeviceSpy"
     ),
   ],
-  swiftLanguageModes: [.v5],
   cLanguageStandard: .c18,
   cxxLanguageStandard: .cxx20
 )

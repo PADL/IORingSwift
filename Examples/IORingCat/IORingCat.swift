@@ -14,12 +14,12 @@
 // limitations under the License.
 //
 
-import Glibc
+@preconcurrency import Glibc
 import IORing
 import IORingUtils
 
 @main
-public struct IORingCat {
+public struct IORingCat: Sendable {
   private let blockSize: Int
   private let ring: IORing
 
@@ -54,15 +54,14 @@ public struct IORingCat {
     while nremain != 0 {
       let blockSize = IORing.Offset(blockSize)
       let count = nremain > blockSize ? blockSize : nremain
-      try await ring.readFixed(
+      let data = try await ring.readFixed(
         count: Int(count),
         offset: size - nremain,
         bufferIndex: 0,
         from: fd
-      ) {
-        outputToConsole(Array($0))
-        nremain -= count
-      }
+      ) { @Sendable in Array($0) }
+      outputToConsole(data)
+      nremain -= IORing.Offset(data.count)
     }
   }
 

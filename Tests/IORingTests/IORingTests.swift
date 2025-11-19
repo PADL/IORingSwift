@@ -1,5 +1,5 @@
-import Foundation
-import Glibc
+@preconcurrency import Foundation
+@preconcurrency import Glibc
 @testable import IORing
 import IORingUtils
 import struct SystemPackage.Errno
