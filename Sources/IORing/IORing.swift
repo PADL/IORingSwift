@@ -307,6 +307,7 @@ public actor IORing: CustomStringConvertible {
     io_uring_unregister_buffers(&ring)
     // FIXME: where are unhandled completion blocks deallocated?
     io_uring_queue_exit(&ring)
+    memset(&ring, 0, MemoryLayout<io_uring>.size)
   }
 
   // important note: caller MUST NOT suspend after calling getSqe() until preparation,
