@@ -281,9 +281,9 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
 
   public func bind(to address: any SocketAddress) throws {
     guard let fileHandle else { throw Errno.badFileDescriptor }
-    _ = try address.withSockAddr { sa in
+    _ = try address.withSockAddr { sa, size in
       try Errno.throwingGlobalErrno {
-        SwiftGlibc.bind(fileHandle.fileDescriptor, sa, address.size)
+        SwiftGlibc.bind(fileHandle.fileDescriptor, sa, size)
       }
     }
   }
@@ -313,9 +313,9 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
   public func connect(to address: any SocketAddress) throws {
     guard let fileHandle else { throw Errno.badFileDescriptor }
     try fileHandle.setBlocking(false)
-    _ = try address.withSockAddr { sa in
+    _ = try address.withSockAddr { sa, size in
       try Errno.throwingGlobalErrno {
-        SwiftGlibc.connect(fileHandle.fileDescriptor, sa, address.size)
+        SwiftGlibc.connect(fileHandle.fileDescriptor, sa, size)
       }
     }
     try fileHandle.setBlocking(true)

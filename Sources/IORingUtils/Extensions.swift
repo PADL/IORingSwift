@@ -37,8 +37,10 @@ extension Message: CustomStringConvertible {
     // ensure we only copy the bytes of the specific sockaddr type, as the
     // kernel will return EINVAL if we pass sizeof(sockaddr_storage) to a
     // function expecting a domain socket that expects a domain socket
-    let addressSize = address.withSockAddr { Int($0.pointee.size) }
-    let addressBuffer = withUnsafeBytes(of: address.asStorage()) { Array($0.prefix(addressSize)) }
+    let addressSize = address.withSockAddr { _, size in size }
+    let addressBuffer = withUnsafeBytes(of: address.asStorage()) {
+      Array($0.prefix(Int(addressSize)))
+    }
     self.init(name: addressBuffer, buffer: buffer, flags: flags)
   }
 

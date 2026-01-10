@@ -136,7 +136,7 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
       bufferIndexOrGroup: bufferIndexOrGroup
     )
     if let socketAddress {
-      try socketAddress.withSockAddr { socketAddress in
+      try socketAddress.withSockAddr { socketAddress, _ in
         try setSocketAddress(sqe: sqe, socketAddress: socketAddress)
       }
     }
