@@ -214,7 +214,7 @@ final class WithSockAddrTests: XCTestCase {
     }
 
     XCTAssertEqual(family, sa_family_t(AF_INET))
-    XCTAssertEqual(size, socklen_t(MemoryLayout<sockaddr_storage>.size))
+    XCTAssertEqual(size, socklen_t(MemoryLayout<sockaddr_in>.size))
   }
 
   func testWithSockAddrStorageIPv6() {
@@ -231,7 +231,7 @@ final class WithSockAddrTests: XCTestCase {
     }
 
     XCTAssertEqual(family, sa_family_t(AF_INET6))
-    XCTAssertEqual(size, socklen_t(MemoryLayout<sockaddr_storage>.size))
+    XCTAssertEqual(size, socklen_t(MemoryLayout<sockaddr_in6>.size))
   }
 
   // MARK: - Size Consistency Tests
