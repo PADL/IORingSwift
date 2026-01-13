@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023-2025 PADL Software Pty Ltd
+// Copyright (c) 2023-2026 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -37,10 +37,8 @@ extension Message: CustomStringConvertible {
     // ensure we only copy the bytes of the specific sockaddr type, as the
     // kernel will return EINVAL if we pass sizeof(sockaddr_storage) to a
     // function expecting a domain socket that expects a domain socket
-    let addressSize = address.withSockAddr { _, size in size }
-    let addressBuffer = withUnsafeBytes(of: address.asStorage()) {
-      Array($0.prefix(Int(addressSize)))
-    }
+    let addressSize = Int(address.size)
+    let addressBuffer = withUnsafeBytes(of: address.asStorage()) { Array($0.prefix(addressSize)) }
     self.init(name: addressBuffer, buffer: buffer, flags: flags)
   }
 
