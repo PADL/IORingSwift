@@ -82,7 +82,8 @@ extension sockaddr_storage {
     -> T) rethrows -> T
   {
     try withUnsafeBytes(of: self) { p in
-      try body(p.baseAddress!.assumingMemoryBound(to: sockaddr.self), socklen_t(p.count))
+      let sa = p.baseAddress!.assumingMemoryBound(to: sockaddr.self)
+      return try body(sa, sa.pointee.size)
     }
   }
 
