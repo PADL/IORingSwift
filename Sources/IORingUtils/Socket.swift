@@ -36,11 +36,10 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
 
   public var description: String {
     let fileDescriptor = fileHandle?.fileDescriptor ?? -1
-    if let localName = try? localName, let peerName = try? peerName {
-      return "\(type(of: self))(fileDescriptor: \(fileDescriptor), localName: \(localName), peerName: \(peerName))"
-    } else {
-      return "\(type(of: self))(fileDescriptor: \(fileDescriptor))"
-    }
+    let localName = try? localName ?? "<unknown>"
+    let peerName = try? peerName ?? "<unknown>"
+
+    return "\(type(of: self))(fileDescriptor: \(fileDescriptor), localName: \(localName), peerName: \(peerName))"
   }
 
   public init(
