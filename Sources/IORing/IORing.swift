@@ -656,15 +656,12 @@ private extension IORing {
         flags: SqeFlags.bufferSelect,
         ioprio: RecvSendIoPrio.multishot,
         moreFlags: flags,
-        bufferIndexOrGroup: holder.bufferGroup
-      ) { [holder] cqe in
-        // because the default for multishots is to resubmit when IORING_CQE_F_MORE is unset,
-        // we don't need to deallocate the buffer here. FIXME: do this when stream finishes.
-        // we know that handlers are always executed in an @IORingActor actor's execution context
-        // so it's safe to access the holder's buffer. But we should make this more explicit
-        // by making the callback take an async function.
-        try holder.receive(id: Int(cqe.flags >> 16), count: Int(cqe.res))
-      }
+        bufferIndexOrGroup: holder.bufferGroup,
+        handler: { [holder] cqe in
+          try holder.receive(id: Int(cqe.flags >> 16), count: Int(cqe.res))
+        },
+        onTermination: { holder.deallocate() }
+      )
     }.submit()
   }
 

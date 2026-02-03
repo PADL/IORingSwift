@@ -89,7 +89,7 @@ final class MessageHolder: @unchecked Sendable {
   private let size: Int
   private var storage = msghdr()
   private var address = sockaddr_storage()
-  private var bufferSubmission: BufferSubmission<UInt8>
+  private var bufferSubmission: BufferSubmission<UInt8>?
   let bufferGroup: UInt16
 
   init(ring: IORing, size: Int, count: Int, flags: UInt32 = 0) async throws {
@@ -97,7 +97,8 @@ final class MessageHolder: @unchecked Sendable {
       throw Errno.invalidArgument
     }
     self.size = size + MemoryLayout<io_uring_recvmsg_out>.size + MemoryLayout<sockaddr_storage>.size
-    bufferSubmission = try await BufferSubmission(ring: ring, size: size, count: count)
+    let bufferSubmission = try await BufferSubmission<UInt8>(ring: ring, size: size, count: count)
+    self.bufferSubmission = bufferSubmission
     bufferGroup = bufferSubmission.bufferGroup
     Swift.withUnsafeMutablePointer(to: &address) {
       self.storage.msg_name = UnsafeMutableRawPointer($0)
@@ -107,21 +108,10 @@ final class MessageHolder: @unchecked Sendable {
     storage.msg_flags = Int32(flags)
   }
 
-  deinit {
-    let ring = bufferSubmission.ring
-    let count = bufferSubmission.count
-    let bufferGroup = bufferGroup
-    Task {
-      try await BufferSubmission<UInt8>(
-        ring: ring,
-        removing: count,
-        from: bufferGroup
-      ).submit()
-    }
-  }
-
   func receive(id bufferID: Int, count: Int? = nil) throws -> Message {
-    try bufferSubmission.withUnsafeRawBufferPointer(id: bufferID) { pointer in
+    guard let bufferSubmission else { throw Errno.invalidArgument }
+
+    return try bufferSubmission.withUnsafeRawBufferPointer(id: bufferID) { pointer in
       guard let out = io_uring_recvmsg_validate(
         pointer.baseAddress!,
         Int32(count ?? size),
@@ -164,5 +154,25 @@ final class MessageHolder: @unchecked Sendable {
     _ body: (UnsafeMutablePointer<msghdr>) async throws -> T
   ) async rethrows -> T {
     try await body(&storage)
+  }
+
+  func deallocate() {
+    guard let bufferSubmission else { return }
+    self.bufferSubmission = nil
+
+    let ring = bufferSubmission.ring
+    let count = bufferSubmission.count
+    let bufferGroup = bufferGroup
+
+    bufferSubmission.deallocate()
+    self.bufferSubmission = nil
+
+    Task {
+      try await BufferSubmission<UInt8>(
+        ring: ring,
+        removing: count,
+        from: bufferGroup
+      ).submit()
+    }
   }
 }

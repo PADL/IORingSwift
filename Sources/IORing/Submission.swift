@@ -251,7 +251,6 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
   let size: Int
   let bufferGroup: UInt16
   let buffer: UnsafeMutablePointer<U>
-  let deallocate: Bool
 
   override func onCompletion(cqe: io_uring_cqe) {}
 
@@ -277,14 +276,12 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
     size: Int,
     offset: IORing.Offset,
     flags: IORing.SqeFlags = IORing.SqeFlags(),
-    bufferGroup: UInt16,
-    deallocate: Bool
+    bufferGroup: UInt16
   ) throws {
     guard let buffer else { throw Errno.invalidArgument }
 
     self.size = size
     self.bufferGroup = bufferGroup
-    self.deallocate = deallocate
     self.buffer = buffer
 
     try super.init(
@@ -313,8 +310,7 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
       buffer: buffer,
       size: size,
       offset: 0,
-      bufferGroup: bufferGroup,
-      deallocate: true
+      bufferGroup: bufferGroup
     )
   }
 
@@ -323,8 +319,7 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
     reproviding bufferID: Int,
     from submission: BufferSubmission<U>
   ) throws {
-    guard submission.deallocate == true && bufferID < submission.count
-    else { throw Errno.invalidArgument }
+    guard bufferID < submission.count else { throw Errno.invalidArgument }
     let buffer = submission.bufferPointer(id: bufferID)
 
     try self.init(
@@ -333,8 +328,7 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
       buffer: buffer,
       size: submission.size,
       offset: IORing.Offset(bufferID),
-      bufferGroup: submission.bufferGroup,
-      deallocate: false
+      bufferGroup: submission.bufferGroup
     )
   }
 
@@ -349,8 +343,7 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
       buffer: nil,
       size: 0,
       offset: 0,
-      bufferGroup: bufferGroup,
-      deallocate: false
+      bufferGroup: bufferGroup
     )
   }
 
@@ -375,10 +368,8 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
     try await _reprovideAndSubmit(ring: ring, bufferID: bufferID)
   }
 
-  deinit {
-    if deallocate {
-      buffer.deallocate()
-    }
+  func deallocate() {
+    buffer.deallocate()
   }
 }
 
@@ -388,13 +379,12 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
     let stream: AsyncThrowingStream<T, Error>
     let continuation: AsyncThrowingStream<T, Error>.Continuation
 
-    init() {
+    init(onTermination: (@Sendable () -> ())?) {
       var continuation: AsyncThrowingStream<T, Error>.Continuation!
-      let stream = AsyncThrowingStream<T, Error> {
-        continuation = $0
-      }
+      let stream = AsyncThrowingStream<T, Error> { continuation = $0 }
       self.stream = stream
       self.continuation = continuation
+      self.continuation.onTermination = { @Sendable [weak self] _ in onTermination?() }
     }
   }
 
@@ -468,7 +458,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
     )
   }
 
-  override convenience init(
+  convenience init(
     ring: isolated IORing,
     _ opcode: IORingOperation,
     fd: FileDescriptorRepresentable,
@@ -480,7 +470,8 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
     moreFlags: UInt32 = 0,
     bufferIndexOrGroup: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
-    handler: @escaping @Sendable (io_uring_cqe) throws -> T
+    handler: @escaping @Sendable (io_uring_cqe) throws -> T,
+    onTermination: (@Sendable () -> ())? = nil
   ) throws {
     try self.init(
       ring: ring,
@@ -494,7 +485,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
       moreFlags: moreFlags,
       bufferIndexOrGroup: bufferIndexOrGroup,
       socketAddress: socketAddress,
-      holder: _StreamHolder(),
+      holder: _StreamHolder(onTermination: onTermination),
       handler: handler
     )
   }
