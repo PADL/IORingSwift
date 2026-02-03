@@ -88,10 +88,8 @@ extension sockaddr_storage {
   }
 
   var size: socklen_t {
-    get throws {
-      try withSockAddr { _, size in
-        size
-      }
+    withSockAddr { _, size in
+      size
     }
   }
 }
