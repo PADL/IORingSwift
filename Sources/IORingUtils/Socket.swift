@@ -433,10 +433,14 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     )
   }
 
-  public func receiveMessages(count: Int) async throws -> AnyAsyncSequence<Message> {
+  public func receiveMessages(
+    count: Int,
+    capacity: Int? = nil
+  ) async throws -> AnyAsyncSequence<Message> {
     guard let fileHandle else { throw Errno.badFileDescriptor }
     return try await ring.receiveMessages(
       count: count,
+      capacity: capacity,
       from: fileHandle
     )
   }
