@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023-2025 PADL Software Pty Ltd
+// Copyright (c) 2023-2026 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -270,7 +270,7 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
     return buffer + (bufferID * size)
   }
 
-  init(
+  private init(
     ring: isolated IORing,
     count: Int,
     buffer: UnsafeMutablePointer<U>?,
