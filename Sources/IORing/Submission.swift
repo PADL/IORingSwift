@@ -384,7 +384,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
       let stream = AsyncThrowingStream<T, Error> { continuation = $0 }
       self.stream = stream
       self.continuation = continuation
-      self.continuation.onTermination = { @Sendable [weak self] _ in onTermination?() }
+      self.continuation.onTermination = { @Sendable _ in onTermination?() }
     }
   }
 
