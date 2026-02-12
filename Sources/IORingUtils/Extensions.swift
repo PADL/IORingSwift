@@ -164,8 +164,8 @@ extension Errno {
   static var lastError: Errno { Errno(rawValue: errno) }
 
   @discardableResult
-  public static func throwingGlobalErrno(_ body: @escaping () -> CInt) throws -> CInt {
-    let result = body()
+  public static func throwingGlobalErrno(_ body: @escaping () throws -> CInt) throws -> CInt {
+    let result = try body()
     if result < 0 {
       throw Errno.lastError
     }

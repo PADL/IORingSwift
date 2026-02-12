@@ -79,8 +79,8 @@ extension sockaddr {
 extension sockaddr_storage {
   // FIXME: DRY IORingUtils
   func withSockAddr<T>(_ body: (_ sa: UnsafePointer<sockaddr>, _ size: socklen_t) throws
-    -> T) rethrows -> T
-  {
+    -> T
+  ) rethrows -> T {
     try withUnsafeBytes(of: self) { p in
       let sa = p.baseAddress!.assumingMemoryBound(to: sockaddr.self)
       return try body(sa, sa.pointee.size)
