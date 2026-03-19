@@ -157,21 +157,21 @@ final class MessageHolder: @unchecked Sendable {
   }
 
   private func _deallocate(ring: isolated IORing) {
-    ring.assumeIsolated { _ in
-      bufferSubmission?.deallocate()
-      bufferSubmission = nil
-    }
+    bufferSubmission?.deallocate()
+    bufferSubmission = nil
   }
 
   func deallocate() {
+    guard let bufferSubmission else { return }
+    let ring = bufferSubmission.ring
+    let count = bufferSubmission.count
     Task {
-      guard let bufferSubmission else { return }
       try await BufferSubmission<UInt8>(
-        ring: bufferSubmission.ring,
-        removing: bufferSubmission.count,
+        ring: ring,
+        removing: count,
         from: bufferGroup
       ).submit()
-      await _deallocate(ring: bufferSubmission.ring)
+      await _deallocate(ring: ring)
     }
   }
 }
