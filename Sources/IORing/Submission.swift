@@ -303,7 +303,7 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
     flags: IORing.SqeFlags = IORing.SqeFlags()
   ) throws {
     let bufferGroup = ring.getNextBufferGroup()
-    let buffer = UnsafeMutablePointer<U>.allocate(capacity: MemoryLayout<U>.stride * size * count)
+    let buffer = UnsafeMutablePointer<U>.allocate(capacity: size * count)
     try self.init(
       ring: ring,
       count: count,
