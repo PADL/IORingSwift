@@ -518,12 +518,11 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
       let result = try throwingErrno(cqe: cqe, handler)
       holder.continuation.yield(result) // No suspension point!
       if cqe.flags & IORING_CQE_F_MORE == 0 {
-        // if IORING_CQE_F_MORE is not set, we need to issue a new request
-        // try to do this implictily
-        Task { await resubmit(ring: ring) }
-      }
-      if Task.isCancelled {
-        Task { try await cancel(ring: ring) }
+        if opcode != .accept && cqe.res == 0 {
+          holder.continuation.finish()
+        } else {
+          Task { await resubmit(ring: ring) }
+        }
       }
     } catch {
       holder.continuation.finish(throwing: error)
