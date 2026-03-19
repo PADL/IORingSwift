@@ -301,11 +301,22 @@ public actor IORing: CustomStringConvertible {
   }
 
   deinit {
+    // Cancel all inflight requests to release their _Block_copy'd closures
+    if let sqe = io_uring_get_sqe(&ring) {
+      io_uring_prep_cancel(sqe, nil, AsyncCancelFlags.any.rawValue)
+      _ = io_uring_sqe_set_block(sqe) { _ in }
+      io_uring_submit(&ring)
+      // Wait for the cancel CQE, then non-blocking drain any remaining
+      var cqe: UnsafeMutablePointer<io_uring_cqe>?
+      if io_uring_wait_cqe_nr(&ring, &cqe, 1) == 0, let c = cqe {
+        io_uring_cqe_seen(&ring, c)
+      }
+      while io_uring_wait_cqe_nr(&ring, &cqe, 0) == 0, let c = cqe {
+        io_uring_cqe_seen(&ring, c)
+      }
+    }
     io_uring_deinit_cq_handler(cqHandle, &ring)
-    // FIXME: checking if we have registered buffers is an error in Swift 6.0
-    // because IORing.FixedBuffer is non-sendable, is this safe to do anyway?
     io_uring_unregister_buffers(&ring)
-    // FIXME: where are unhandled completion blocks deallocated?
     io_uring_queue_exit(&ring)
     memset(&ring, 0, MemoryLayout<io_uring>.size)
   }
