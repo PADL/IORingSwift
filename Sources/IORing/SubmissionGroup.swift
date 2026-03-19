@@ -94,9 +94,9 @@ final class SubmissionGroup<T: Sendable>: Sendable {
   /// - Collect results from results channel
   ///
   func finish(ring: isolated IORing) async throws -> [T] {
+    defer { readinessContinuation?.finish() }
     await allReady()
     try ring.submit()
-    readinessContinuation?.finish()
     return try await allComplete()
   }
 }
