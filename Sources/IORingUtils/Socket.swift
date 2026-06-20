@@ -65,7 +65,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
       CInt(domain),
       Int32(type.rawValue),
       proto
-    ))
+    ), closeOnDealloc: true)
     self.init(ring: ring, fileHandle: fileHandle, domain: domain)
   }
 
