@@ -524,6 +524,13 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
           Task { await resubmit(ring: ring) }
         }
       }
+    } catch let error as Errno where error == .noBufferSpace {
+      // provided-buffer pool momentarily exhausted: re-arm after in-flight
+      // buffers are reprovided rather than ending the stream (drops overflow)
+      Task {
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        await resubmit(ring: ring)
+      }
     } catch {
       holder.continuation.finish(throwing: error)
     }
