@@ -18,6 +18,10 @@
 
 #include <inttypes.h>
 #include <linux/io_uring.h>
+
+#ifndef IORING_MSG_RING_FLAGS_PASS
+#define IORING_MSG_RING_FLAGS_PASS (1U << 1)
+#endif
 #include <liburing.h>
 
 #ifndef IORING_SETUP_COOP_TASKRUN
