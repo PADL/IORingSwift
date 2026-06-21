@@ -59,13 +59,13 @@ int pthread_io_uring_init_cq_handler(uintptr_t *handle, struct io_uring *ring) {
   }
 
   pthread_attr_destroy(&attr);
-  *handle = reinterpret_cast<uintptr_t>(thread);
+  *handle = (uintptr_t)thread;
   return 0;
 }
 
 void pthread_io_uring_deinit_cq_handler(uintptr_t handle,
                                         struct io_uring *ring) {
-  auto thread = reinterpret_cast<pthread_t>(handle);
+  auto thread = (pthread_t)handle; // C-style cast: see init_cq_handler above
   struct io_uring_sqe *sqe;
   void *retval;
 
