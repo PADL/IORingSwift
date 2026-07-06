@@ -23,6 +23,22 @@ import IORing
 import SocketAddress
 import struct SystemPackage.Errno
 
+// A single classic-BPF instruction (mirrors the C `struct sock_filter`), so callers can build a
+// filter program without touching the C type. See Socket.attachFilter(_:).
+public struct SocketFilter: Sendable, Equatable {
+  public var code: UInt16
+  public var jt: UInt8
+  public var jf: UInt8
+  public var k: UInt32
+
+  public init(code: UInt16, jt: UInt8, jf: UInt8, k: UInt32) {
+    self.code = code
+    self.jt = jt
+    self.jf = jf
+    self.k = k
+  }
+}
+
 public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
   private let _fileHandle: FileHandle
   private let _domain: sa_family_t
@@ -253,6 +269,26 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
         &mreq,
         socklen_t(MemoryLayout<packet_mreq>.size)
       )
+    }
+  }
+
+  // Attach a classic-BPF program (SO_ATTACH_FILTER). Used with an ETH_P_ALL raw socket to filter in
+  // the kernel, so only matching frames are queued to userspace.
+  public func attachFilter(_ program: [SocketFilter]) throws {
+    var instructions = program.map {
+      sock_filter(code: $0.code, jt: $0.jt, jf: $0.jf, k: $0.k)
+    }
+    try instructions.withUnsafeMutableBufferPointer { buffer in
+      var prog = sock_fprog(len: UInt16(buffer.count), filter: buffer.baseAddress)
+      try Errno.throwingGlobalErrno {
+        try setsockopt(
+          fileDescriptor,
+          SOL_SOCKET,
+          SO_ATTACH_FILTER,
+          &prog,
+          socklen_t(MemoryLayout<sock_fprog>.size)
+        )
+      }
     }
   }
 
