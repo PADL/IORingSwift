@@ -409,8 +409,13 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     var nwritten = 0
 
     repeat {
+      // Avoid slicing on the first pass (the common case): the ring write API
+      // writes `count` bytes from the start of the array, so pass the whole
+      // buffer (copy-on-write, no allocation) with an explicit count. Only a
+      // resumed partial write needs a fresh subrange.
+      let chunk = nwritten == 0 ? buffer : Array(buffer[nwritten..<count])
       nwritten += try await _ring.write(
-        Array(buffer[nwritten..<count]),
+        chunk,
         count: count - nwritten,
         to: fileHandle
       )
@@ -427,8 +432,11 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     var nwritten = 0
 
     repeat {
+      // See `write(_:count:awaitingAllWritten:)`: skip the subrange copy on the
+      // first pass, which is the whole buffer in the common case.
+      let chunk = nwritten == 0 ? buffer : Array(buffer[nwritten..<buffer.count])
       nwritten += try await _ring.writeFixed(
-        Array(buffer[nwritten..<buffer.count]),
+        chunk,
         bufferIndex: bufferIndex,
         to: fileHandle
       )

@@ -773,7 +773,11 @@ public extension IORing {
   func read(count: Int, from fd: FileDescriptorRepresentable) async throws -> [UInt8] {
     var buffer = [UInt8]._unsafelyInitialized(count: count)
     let nread = try await read(into: &buffer, count: count, from: fd)
-    return Array(buffer.prefix(nread))
+    // Trim in place rather than `Array(buffer.prefix(nread))`, which would
+    // allocate and copy a second buffer. `buffer` is uniquely referenced here,
+    // so removeLast() just adjusts the count.
+    if nread < count { buffer.removeLast(count - nread) }
+    return buffer
   }
 
   func write(
