@@ -40,6 +40,7 @@ struct dispatch_source_type_s {
 typedef struct dispatch_source_s *dispatch_source_t;
 typedef struct dispatch_queue_s *dispatch_queue_t;
 typedef const struct dispatch_source_type_s *dispatch_source_type_t;
+typedef struct dispatch_semaphore_s *dispatch_semaphore_t;
 
 typedef void (^dispatch_block_t)(void);
 
@@ -64,11 +65,16 @@ dispatch_source_t dispatch_source_create(dispatch_source_type_t type,
                                          uintptr_t handle,
                                          uintptr_t mask,
                                          dispatch_queue_t queue);
+
+dispatch_semaphore_t dispatch_semaphore_create(intptr_t value);
+intptr_t dispatch_semaphore_signal(dispatch_semaphore_t dsema);
+intptr_t dispatch_semaphore_wait(dispatch_semaphore_t dsema, uint64_t timeout);
 }
 
 #define dispatch_cancel dispatch_source_cancel
 #define DISPATCH_QUEUE_PRIORITY_DEFAULT 0
 #define DISPATCH_SOURCE_TYPE_READ (&_dispatch_source_type_read)
+#define DISPATCH_TIME_FOREVER (~0ull)
 
 #endif
 

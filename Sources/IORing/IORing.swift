@@ -301,6 +301,13 @@ public actor IORing: CustomStringConvertible {
   }
 
   deinit {
+    // Stop the completion-queue handler FIRST and wait for it to quiesce. This
+    // is synchronous: for the dispatch backend it blocks until the source's
+    // cancel handler has run, for the pthread backend it joins the handler
+    // thread. Afterwards no other thread touches `ring`, so the drain below and
+    // io_uring_queue_exit() cannot race a handler still in io_uring_wait_cqe().
+    io_uring_deinit_cq_handler(cqHandle, &ring)
+
     // Cancel all inflight requests to release their _Block_copy'd closures
     if let sqe = io_uring_get_sqe(&ring) {
       io_uring_prep_cancel(sqe, nil, AsyncCancelFlags.any.rawValue)
@@ -315,7 +322,6 @@ public actor IORing: CustomStringConvertible {
         io_uring_cqe_seen(&ring, c)
       }
     }
-    io_uring_deinit_cq_handler(cqHandle, &ring)
     io_uring_unregister_buffers(&ring)
     io_uring_queue_exit(&ring)
     memset(&ring, 0, MemoryLayout<io_uring>.size)

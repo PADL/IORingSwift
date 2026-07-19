@@ -18,9 +18,21 @@
 
 #include <sys/eventfd.h>
 
+namespace {
+// Context carried by the dispatch source. `cancelled` lets deinit block until the
+// source's cancel handler has run, which is the only point at which we know no
+// libdispatch thread is executing cqe_handler (touching `ring`) any longer.
+struct DispatchCQHandlerContext {
+  struct io_uring *ring;
+  int fd;
+  dispatch_semaphore_t cancelled;
+};
+} // namespace
+
 static void cqe_handler(dispatch_source_t source) {
-  auto ring = static_cast<struct io_uring *>(dispatch_get_context(source));
-  io_uring_cq_handler(ring);
+  auto ctx =
+      static_cast<DispatchCQHandlerContext *>(dispatch_get_context(source));
+  io_uring_cq_handler(ctx->ring);
 }
 
 int dispatch_io_uring_init_cq_handler(uintptr_t *handle,
@@ -47,15 +59,19 @@ int dispatch_io_uring_init_cq_handler(uintptr_t *handle,
     return -errno;
   }
 
-  dispatch_set_context(source, ring);
+  auto ctx = new DispatchCQHandlerContext{ring, fd,
+                                          dispatch_semaphore_create(0)};
+  dispatch_set_context(source, ctx);
 
   dispatch_source_set_event_handler(source, ^{
     cqe_handler(source);
   });
 
+  // The cancel handler only signals: it must not touch `ring`, because deinit
+  // submits a wake NOP concurrently. The eventfd/fd are torn down in deinit once
+  // the handler is known to be stopped.
   dispatch_source_set_cancel_handler(source, ^{
-    io_uring_unregister_eventfd(ring);
-    close(fd);
+    dispatch_semaphore_signal(ctx->cancelled);
   });
 
   dispatch_resume(source);
@@ -67,9 +83,41 @@ int dispatch_io_uring_init_cq_handler(uintptr_t *handle,
 
 void dispatch_io_uring_deinit_cq_handler(uintptr_t handle,
                                          struct io_uring *ring) {
-  if (handle) {
-    auto source = reinterpret_cast<dispatch_source_t>(handle);
-    dispatch_cancel(source);
-    dispatch_release(source);
-  }
+  if (handle == 0)
+    return;
+
+  auto source = reinterpret_cast<dispatch_source_t>(handle);
+  auto ctx =
+      static_cast<DispatchCQHandlerContext *>(dispatch_get_context(source));
+
+  // dispatch_cancel() is asynchronous: it stops future invocations but does not
+  // interrupt an in-flight cqe_handler. At teardown that handler is typically
+  // parked in io_uring_wait_cqe(), so the cancel handler (which signals
+  // `cancelled`) would never run and we would deadlock below. Mirror the pthread
+  // backend's teardown: wake the handler with a NOP so it returns, lets the
+  // cancel handler run, and stops touching `ring` before we return. We use an
+  // ordinary empty completion block so the well-tested io_uring_cq_handler() path
+  // processes it exactly like any other completion (no hot-path change).
+  dispatch_cancel(source);
+
+  struct io_uring_sqe *sqe;
+  while ((sqe = io_uring_get_sqe(ctx->ring)) == nullptr)
+    io_uring_submit(ctx->ring);
+  io_uring_prep_nop(sqe);
+  io_uring_sqe_set_block(sqe, ^(struct io_uring_cqe *){
+  });
+  io_uring_submit(ctx->ring);
+
+  // Blocks until the cancel handler has run (the dispatch analogue of
+  // pthread_join): once it returns, no libdispatch thread touches `ring`, so the
+  // caller's io_uring_queue_exit() cannot race the handler.
+  dispatch_semaphore_wait(ctx->cancelled, DISPATCH_TIME_FOREVER);
+
+  // Handler is stopped: safe to tear down the eventfd registration single-threaded.
+  io_uring_unregister_eventfd(ctx->ring);
+  close(ctx->fd);
+
+  dispatch_release(ctx->cancelled);
+  dispatch_release(source);
+  delete ctx;
 }
