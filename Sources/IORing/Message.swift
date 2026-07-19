@@ -111,20 +111,18 @@ final class MessageHolder: @unchecked Sendable {
   func receive(id bufferID: Int, count: Int? = nil) throws -> Message {
     guard let bufferSubmission else { throw Errno.invalidArgument }
 
-    return try bufferSubmission.withUnsafeRawBufferPointer(id: bufferID) { pointer in
+    // Take single ownership of the slot. The payload must be copied out before
+    // `slot` is destroyed; when it is (at the end of this scope), its `deinit`
+    // reprovides it to the ring — no `defer { Task { ... } }` bookkeeping, and no
+    // way to touch the slot after it has been handed back.
+    let slot = try bufferSubmission.borrowSlot(id: bufferID)
+    return try slot.withUnsafeRawBufferPointer { pointer in
       guard let out = io_uring_recvmsg_validate(
         pointer.baseAddress!,
         Int32(count ?? size),
         &storage
       ) else {
         throw Errno.invalidArgument
-      }
-
-      // make the buffer available for reuse once we've copied the contents
-      defer {
-        Task {
-          try await bufferSubmission.reprovideAndSubmit(id: bufferID)
-        }
       }
 
       let name: [UInt8]

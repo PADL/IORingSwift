@@ -359,6 +359,13 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
     return try body(bufferPointer)
   }
 
+  /// Take single ownership of one kernel-provided slot from this pool as a
+  /// noncopyable `ProvidedBuffer`. See `ProvidedBuffer` for the ownership contract.
+  nonisolated func borrowSlot(id bufferID: Int) throws -> ProvidedBuffer<U> {
+    guard bufferID < count else { throw Errno.invalidArgument }
+    return ProvidedBuffer(submission: self, id: bufferID)
+  }
+
   private func _reprovideAndSubmit(ring: isolated IORing, bufferID: Int) throws {
     let submission = try BufferSubmission(ring: ring, reproviding: bufferID, from: self)
     try submission.submit()
@@ -370,6 +377,45 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
 
   func deallocate() {
     buffer.deallocate()
+  }
+}
+
+/// A single kernel-provided buffer slot, borrowed from a `BufferSubmission` pool.
+///
+/// The provided-buffer lifecycle is fragile: after a multishot completion hands you a
+/// buffer ID, you must copy the payload out and then hand the slot back to the ring
+/// (`reprovide`) exactly once — never touching it again, never returning it twice.
+/// Previously this was enforced only by a `defer { Task { ... } }` convention.
+///
+/// `ProvidedBuffer` makes the contract compiler-checked:
+///   - `~Copyable`: the slot has exactly one owner, so it cannot be reprovided twice.
+///   - `borrowing withUnsafeRawBufferPointer`: payload access is scoped; the compiler
+///     stops you using the slot after ownership ends.
+///   - `deinit`: the slot is reprovided automatically when the handle goes out of
+///     scope (RAII), so a slot can never leak by a forgotten reprovide.
+struct ProvidedBuffer<U>: ~Copyable {
+  private let submission: BufferSubmission<U>
+  let id: Int
+
+  fileprivate init(submission: BufferSubmission<U>, id: Int) {
+    self.submission = submission
+    self.id = id
+  }
+
+  /// Scoped access to the slot's bytes. Only valid for the duration of `body`.
+  borrowing func withUnsafeRawBufferPointer<V>(
+    _ body: (UnsafeMutableRawBufferPointer) throws -> V
+  ) throws -> V {
+    try submission.withUnsafeRawBufferPointer(id: id, body)
+  }
+
+  deinit {
+    // Return the slot to the ring exactly once, when the borrow ends. Copy the
+    // fields out of `self` (being destroyed) into the detached task; reprovision
+    // still has to hop onto the ring actor, matching the previous behaviour.
+    let submission = submission
+    let id = id
+    Task { try? await submission.reprovideAndSubmit(id: id) }
   }
 }
 
