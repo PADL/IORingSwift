@@ -560,15 +560,16 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
   }
 
   override func onCompletion(cqe: io_uring_cqe) {
+    // end of stream: nothing was received, and no provided buffer was selected for the handler
+    if cqe.flags & IORING_CQE_F_MORE == 0, opcode != .accept, cqe.res == 0 {
+      holder.continuation.finish()
+      return
+    }
     do {
       let result = try throwingErrno(cqe: cqe, handler)
       holder.continuation.yield(result) // No suspension point!
       if cqe.flags & IORING_CQE_F_MORE == 0 {
-        if opcode != .accept && cqe.res == 0 {
-          holder.continuation.finish()
-        } else {
-          Task { await resubmit(ring: ring) }
-        }
+        Task { await resubmit(ring: ring) }
       }
     } catch let error as Errno where error == .noBufferSpace {
       // provided-buffer pool momentarily exhausted: re-arm after in-flight

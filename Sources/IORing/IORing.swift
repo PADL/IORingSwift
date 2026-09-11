@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023-2025 PADL Software Pty Ltd
+// Copyright (c) 2023-2026 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -619,22 +619,36 @@ private extension IORing {
     }
   }
 
+  /// Multishot receives take their buffers from a provided-buffer group, `capacity` buffers of
+  /// `count` bytes; each completion copies its buffer out and hands it back.
   func io_uring_op_recv_multishot(
     fd: FileDescriptorRepresentable,
     count: Int,
-    link: Bool = false
+    capacity: Int,
+    flags: UInt32 = 0
   ) throws -> AsyncThrowingStream<[UInt8], Error> {
-    var buffer = [UInt8]._unsafelyInitialized(count: count)
-    return try prepareAndSubmitMultishot(
+    let buffers = try BufferSubmission<UInt8>(ring: self, size: count, count: capacity)
+    try buffers.submit()
+    return try MultishotSubmission(
+      ring: self,
       .recv,
       fd: fd,
-      address: &buffer[0],
-      length: CUnsignedInt(count),
-      flags: IORing.SqeFlags(link: link),
-      ioprio: RecvSendIoPrio.multishot
-    ) { [buffer] _ in
-      buffer
-    }
+      flags: SqeFlags.bufferSelect,
+      ioprio: RecvSendIoPrio.multishot,
+      moreFlags: flags,
+      bufferIndexOrGroup: buffers.bufferGroup,
+      handler: { [buffers] cqe in
+        guard cqe.flags & IORING_CQE_F_BUFFER != 0 else { return [] }
+        let slot = try buffers.borrowSlot(id: Int(cqe.flags >> IORING_CQE_BUFFER_SHIFT))
+        return try slot.withUnsafeRawBufferPointer { Array($0.prefix(Int(cqe.res))) }
+      },
+      onTermination: { [buffers] in
+        Task {
+          try? await BufferSubmission<UInt8>(ring: self, removing: capacity, from: buffers.bufferGroup).submit()
+          buffers.deallocate()
+        }
+      }
+    ).submit()
   }
 
   func io_uring_op_recvmsg(
@@ -796,9 +810,11 @@ public extension IORing {
 
   func receive(
     count: Int,
+    capacity: Int? = nil,
     from fd: FileDescriptorRepresentable
   ) throws -> AnyAsyncSequence<[UInt8]> {
-    try io_uring_op_recv_multishot(fd: fd, count: count).eraseToAnyAsyncSequence()
+    try io_uring_op_recv_multishot(fd: fd, count: count, capacity: capacity ?? entries)
+      .eraseToAnyAsyncSequence()
   }
 
   func receive(count: Int, from fd: FileDescriptorRepresentable) async throws -> [UInt8] {

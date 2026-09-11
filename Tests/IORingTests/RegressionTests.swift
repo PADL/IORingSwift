@@ -51,4 +51,24 @@ final class RegressionTests: XCTestCase {
       break
     }
   }
+
+  // Multishot recv needs a provided-buffer group; without one the kernel rejects it.
+  func testMultishotReceive() async throws {
+    let ring = try IORing()
+    let (rx, tx) = try Self.makePair(SOCK_STREAM, ring: ring)
+    let chunks = (0..<8).map { Array(repeating: UInt8($0), count: 32) }
+    let sender = Task {
+      for chunk in chunks {
+        try await tx.send(chunk)
+        try await Task.sleep(for: .milliseconds(5))
+      }
+    }
+    var received = [UInt8]()
+    for try await chunk in try await rx.receive(count: 128) as AnyAsyncSequence<[UInt8]> {
+      received += chunk
+      if received.count >= chunks.count * 32 { break }
+    }
+    try await sender.value
+    XCTAssertEqual(received, chunks.flatMap { $0 })
+  }
 }

@@ -452,9 +452,11 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     )
   }
 
-  public func receive(count: Int) async throws -> AnyAsyncSequence<[UInt8]> {
+  /// Multishot; `capacity` buffers of `count` bytes are provided to the kernel.
+  public func receive(count: Int, capacity: Int? = nil) async throws -> AnyAsyncSequence<[UInt8]> {
     try await _ring.receive(
       count: count,
+      capacity: capacity,
       from: fileHandle
     )
   }
