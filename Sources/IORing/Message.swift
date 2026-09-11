@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023 PADL Software Pty Ltd
+// Copyright (c) 2023-2026 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -96,8 +96,9 @@ final class MessageHolder: @unchecked Sendable {
     if size % MemoryLayout<io_uring_recvmsg_out>.alignment != 0 {
       throw Errno.invalidArgument
     }
+    // each buffer holds the kernel's recvmsg header and the peer's address before the payload
     self.size = size + MemoryLayout<io_uring_recvmsg_out>.size + MemoryLayout<sockaddr_storage>.size
-    let bufferSubmission = try await BufferSubmission<UInt8>(ring: ring, size: size, count: count)
+    let bufferSubmission = try await BufferSubmission<UInt8>(ring: ring, size: self.size, count: count)
     self.bufferSubmission = bufferSubmission
     bufferGroup = bufferSubmission.bufferGroup
     Swift.withUnsafeMutablePointer(to: &address) {
