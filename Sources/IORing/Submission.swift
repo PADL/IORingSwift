@@ -19,6 +19,7 @@ import AsyncExtensions
 @_implementationOnly import CIORingShims
 @_implementationOnly import CIOURing
 import Glibc
+import Synchronization
 import SystemPackage
 
 class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
@@ -31,8 +32,9 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
 
   /// opcode, useful for debugging
   fileprivate let opcode: IORingOperation
-  /// assigned submission queue entry for this object
-  private let sqe: UnsafeMutablePointer<io_uring_sqe>
+  /// `SingleshotSubmission`'s handoff state (see there), kept beside `opcode` so that it fills
+  /// padding: a submission is allocated per request, and one byte more would grow every one
+  fileprivate let handoff = Atomic<UInt8>(0)
   private var cancellationToken: UnsafeMutableRawPointer?
 
   nonisolated var description: String {
@@ -86,7 +88,7 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
   /// because actors are reentrant, `setBlock()` must be called immediately after
   /// the io_uring assigned a SQE (or, at least before any suspension point)
   /// FIXME: `swift_allocObject()` here appears to be a potential performance issue
-  private func setBlock() {
+  private func setBlock(sqe: UnsafeMutablePointer<io_uring_sqe>) {
     cancellationToken = io_uring_sqe_set_block(sqe) { cqe in
       let cqe = cqe.pointee
       self.onCompletion(cqe: cqe)
@@ -122,7 +124,7 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
     socketAddress: sockaddr_storage? = nil,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) throws {
-    sqe = try ring.getSqe()
+    let sqe = try ring.getSqe()
     self.ring = ring
     self.opcode = opcode
     self.fd = fd
@@ -140,7 +142,7 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
         try setSocketAddress(sqe: sqe, socketAddress: socketAddress)
       }
     }
-    setBlock()
+    setBlock(sqe: sqe)
   }
 
   func onCompletion(cqe: io_uring_cqe) { fatalError("must be implemented by concrete class") }
@@ -168,7 +170,24 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
   weak var group: SubmissionGroup<T>?
 
   private typealias Continuation = UnsafeContinuation<T, Error>
-  private var continuation: Continuation!
+
+  /// How the continuation and the completion meet. A request submitted by `submit()` itself is
+  /// `direct`: its continuation is registered and its SQE submitted in one go, so the completion
+  /// finds the continuation waiting, and needs nothing more than a load to see that. A linked
+  /// request's SQE is prepared when its group is built but its continuation is registered in a
+  /// later actor job, and any submit in between flushes the SQE, so the completion can come
+  /// first: each side stores its half, then swaps its state into `handoff`, and the side that
+  /// finds the other's state already there resumes the continuation. The swap is an atomic
+  /// read-modify-write on a line the other thread just wrote, a cross-core stall, which is why
+  /// only linked requests pay for it.
+  private enum Handoff: UInt8 {
+    case direct, idle, waiting, completed
+  }
+
+  private var continuation: Continuation?
+  /// the completion, when it came first; all a single-shot completion is judged by
+  private var completionResult: Int32 = 0
+  private var completionFlags: UInt32 = 0
 
   init(
     ring: isolated IORing,
@@ -201,6 +220,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
       handler: handler
     )
     if let group {
+      handoff.store(Handoff.idle.rawValue, ordering: .relaxed)
       group.enqueue(submission: self, ring: ring)
     }
   }
@@ -211,6 +231,15 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
         // guaranteed to run immediately
         self.continuation = continuation
         if group != nil {
+          if handoff.exchange(Handoff.waiting.rawValue, ordering: .acquiringAndReleasing)
+            == Handoff.completed.rawValue
+          {
+            var cqe = io_uring_cqe()
+            cqe.res = completionResult
+            cqe.flags = completionFlags
+            resume(continuation, with: cqe)
+          }
+          // a group counts every member ready before it submits, this one included
           ready()
         } else {
           _ = try? ring.submit()
@@ -227,6 +256,20 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
   }
 
   override func onCompletion(cqe: io_uring_cqe) {
+    if handoff.load(ordering: .acquiring) == Handoff.direct.rawValue {
+      resume(continuation!, with: cqe)
+      return
+    }
+    completionResult = cqe.res
+    completionFlags = cqe.flags
+    if handoff.exchange(Handoff.completed.rawValue, ordering: .acquiringAndReleasing)
+      == Handoff.waiting.rawValue
+    {
+      resume(continuation!, with: cqe)
+    }
+  }
+
+  private func resume(_ continuation: Continuation, with cqe: io_uring_cqe) {
     do {
       try continuation.resume(returning: throwingErrno(cqe: cqe, handler))
     } catch {

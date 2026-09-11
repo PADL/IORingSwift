@@ -71,4 +71,33 @@ final class RegressionTests: XCTestCase {
     try await sender.value
     XCTAssertEqual(received, chunks.flatMap { $0 })
   }
+
+  // A linked pair's SQEs were prepared in one actor job and their continuations registered in
+  // later ones, so another task's submit in between flushed them before anyone was waiting.
+  func testLinkedSubmissionsUnderConcurrentSubmits() async throws {
+    let ring = try IORing()
+    try await ring.registerFixedBuffers(count: 1, size: 4096)
+    let path = "\(tmpDir)/ioring_linked_\(getpid())"
+    defer { unlink(path) }
+    let fd = FileDescriptor(rawValue: open(path, O_CREAT | O_RDWR | O_TRUNC, 0o644))
+    defer { try? fd.close() }
+    let (a, b) = try Self.makePair(SOCK_STREAM, ring: ring)
+
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      // unrelated submissions, as many as possible, while the linked pairs are being built
+      group.addTask {
+        for _ in 0..<2000 {
+          try await a.send([1])
+          _ = try await b.receive(count: 1) as [UInt8]
+        }
+      }
+      group.addTask {
+        var data = [UInt8](repeating: 0x42, count: 64)
+        for _ in 0..<200 {
+          try await ring.writeReadFixed(&data, writeCount: 64, readCount: 64, offset: 0, bufferIndex: 0, fd: fd)
+        }
+      }
+      try await group.waitForAll()
+    }
+  }
 }
