@@ -82,6 +82,9 @@ intptr_t dispatch_semaphore_wait(dispatch_semaphore_t dsema, uint64_t timeout);
 
 int io_uring_cq_handler(struct io_uring *ring);
 
+// invokes the blocks of the completions already posted, without waiting
+unsigned io_uring_cq_reap(struct io_uring *ring);
+
 // enabled with DISPATCH_IO_URING
 void dispatch_io_uring_deinit_cq_handler(uintptr_t handle,
                                          struct io_uring *ring);

@@ -45,6 +45,38 @@ int io_uring_init_cq_handler(uintptr_t *_Nonnull, struct io_uring *_Nonnull);
 /// De-enroll `io_uring` from block processing
 void io_uring_deinit_cq_handler(uintptr_t, struct io_uring *_Nonnull);
 
+/// A pool of persistent threads that run jobs and reap completions
+typedef struct ioring_pool *ioring_pool_t;
+
+/// Runs one job on a pool thread
+typedef void (*ioring_job_runner)(void *_Nullable context, void *_Nonnull job);
+
+/// The CPUs this process may run on
+unsigned ioring_pool_default_threads(void);
+
+/// Starts `threads` threads; NULL with errno set on failure
+ioring_pool_t _Nullable ioring_pool_create(unsigned threads,
+                                           ioring_job_runner _Nonnull run,
+                                           void *_Nullable context);
+
+/// Sets the context passed to the job runner
+void ioring_pool_set_context(ioring_pool_t _Nonnull pool, void *_Nullable context);
+
+/// Runs `job` on a pool thread
+void ioring_pool_enqueue(ioring_pool_t _Nonnull pool, void *_Nonnull job);
+
+/// Runs `job` once `nanoseconds` have passed on `clock` (CLOCK_MONOTONIC or CLOCK_BOOTTIME)
+void ioring_pool_enqueue_after(ioring_pool_t _Nonnull pool, clockid_t clock,
+                               uint64_t nanoseconds, void *_Nonnull job);
+
+/// Reaps `ring`'s completions on pool threads, instead of `io_uring_init_cq_handler`
+int ioring_pool_add_ring(ioring_pool_t _Nonnull pool,
+                         struct io_uring *_Nonnull ring,
+                         uintptr_t *_Nonnull handle);
+
+/// Stops reaping the ring; returns once no pool thread touches it
+void ioring_pool_remove_ring(ioring_pool_t _Nonnull pool, uintptr_t handle);
+
 #ifdef __cplusplus
 }
 #endif

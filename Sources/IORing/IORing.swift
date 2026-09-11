@@ -35,6 +35,7 @@ public actor IORing: CustomStringConvertible {
 
   private var ring: io_uring
   private var cqHandle: UInt = 0
+  private nonisolated(unsafe) var cqPool: ioring_pool_t? // reaps instead of the CQ handler
 
   private var fixedBuffers: FixedBuffer?
   private var nextBufferGroup: UInt16 = 1
@@ -271,7 +272,17 @@ public actor IORing: CustomStringConvertible {
     self.ring = ring
     ringFd = ring.ring_fd
 
-    let error = io_uring_init_cq_handler(&cqHandle, &self.ring)
+    let error: Int32
+    #if os(Linux) && compiler(>=6.3)
+    if IORingExecutor.install(), let executor = IORingExecutor.installed {
+      cqPool = executor.pool
+      error = ioring_pool_add_ring(executor.pool, &self.ring, &cqHandle)
+    } else {
+      error = io_uring_init_cq_handler(&cqHandle, &self.ring)
+    }
+    #else
+    error = io_uring_init_cq_handler(&cqHandle, &self.ring)
+    #endif
     guard error == 0 else {
       io_uring_queue_exit(&ring)
       throw Errno(rawValue: -error)
@@ -306,7 +317,11 @@ public actor IORing: CustomStringConvertible {
     // cancel handler has run, for the pthread backend it joins the handler
     // thread. Afterwards no other thread touches `ring`, so the drain below and
     // io_uring_queue_exit() cannot race a handler still in io_uring_wait_cqe().
-    io_uring_deinit_cq_handler(cqHandle, &ring)
+    if let cqPool {
+      ioring_pool_remove_ring(cqPool, cqHandle)
+    } else {
+      io_uring_deinit_cq_handler(cqHandle, &ring)
+    }
 
     // Cancel all inflight requests to release their _Block_copy'd closures
     if let sqe = io_uring_get_sqe(&ring) {
@@ -825,6 +840,14 @@ public extension IORing {
 
   func send(_ data: [UInt8], to fd: FileDescriptorRepresentable) async throws {
     try await io_uring_op_send(fd: fd, buffer: data)
+  }
+
+  /// Cancels every request on `fd`, each of which completes with `Errno.canceled`.
+  func cancelRequests(on fd: FileDescriptorRepresentable) async throws {
+    try await io_uring_op_cancel(
+      fd: fd,
+      flags: UInt32(AsyncCancelFlags.fd.rawValue | AsyncCancelFlags.all.rawValue)
+    )
   }
 
   /// `address` is an encoded `sockaddr_storage`; see `connect(_:to:)`.

@@ -58,6 +58,19 @@ int io_uring_cq_handler(struct io_uring *ring) {
   return err;
 }
 
+unsigned io_uring_cq_reap(struct io_uring *ring) {
+  struct io_uring_cqe *cqe;
+  unsigned head, i = 0;
+
+  io_uring_for_each_cqe(ring, head, cqe) {
+    invoke_cqe_block(cqe);
+    i++;
+  }
+  io_uring_cq_advance(ring, i);
+
+  return i;
+}
+
 int io_uring_init_cq_handler(uintptr_t *handle, struct io_uring *ring) {
 #if DISPATCH_IO_URING
   return dispatch_io_uring_init_cq_handler(handle, ring);
