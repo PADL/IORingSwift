@@ -22,31 +22,42 @@ import Glibc
 import Synchronization
 import SystemPackage
 
+/// A submission is allocated per request, and `SingleshotSubmission` is 120 bytes: the largest
+/// object glibc serves from a fastbin. A byte more and, once the seven-entry tcache is full,
+/// every free consolidates and every malloc searches the unsorted bin, which costs a few percent
+/// of a round trip under load. Fields are laid out in declaration order, so keep the small ones
+/// together in the padding the `Int32`s leave, and check the size when adding one.
 class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
   // reference to owner which owns ring
   let ring: IORing
   /// user-supplied callback to transform a completion queue entry to a result
   fileprivate let handler: @Sendable (io_uring_cqe) throws -> T
-  /// file descriptor, stored so that it is not closed before the completion handler is run
-  fileprivate let fd: FileDescriptorRepresentable
-
+  /// the file descriptor the request is on
+  fileprivate let fileDescriptor: CInt
   /// opcode, useful for debugging
   fileprivate let opcode: IORingOperation
-  /// `SingleshotSubmission`'s handoff state (see there), kept beside `opcode` so that it fills
-  /// padding: a submission is allocated per request, and one byte more would grow every one
+  /// `SingleshotSubmission`'s handoff state (see there)
   fileprivate let handoff = Atomic<UInt8>(0)
+  /// whether `retained` is the `SocketAddressStorage` of a send to an address
+  private let hasSocketAddress: Bool
+  /// what must outlive the request: the descriptor's owner, if it has one, so that it is not
+  /// closed before the completion handler runs; for a send to an address, the copy of that
+  /// address the kernel reads from the SQE at submission, which holds the owner in turn
+  fileprivate let retained: AnyObject?
   private var cancellationToken: UnsafeMutableRawPointer?
-  /// the address a send goes to, which the kernel reads from the SQE at submission
-  fileprivate let socketAddress: SocketAddressStorage?
 
   nonisolated var description: String {
-    "(\(type(of: self)))(fd: \(fd.fileDescriptor), opcode: \(opcode), handler: \(String(describing: handler)))"
+    "(\(type(of: self)))(fd: \(fileDescriptor), opcode: \(opcode), handler: \(String(describing: handler)))"
+  }
+
+  /// The address a send goes to, if any.
+  fileprivate var socketAddress: sockaddr_storage? {
+    hasSocketAddress ? unsafeDowncast(retained!, to: SocketAddressStorage.self).pointer.pointee : nil
   }
 
   private func prepare(
     _ opcode: IORingOperation,
     sqe: UnsafeMutablePointer<io_uring_sqe>,
-    fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer?,
     length: CUnsignedInt,
     offset: IORing.Offset
@@ -54,7 +65,7 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
     io_uring_prep_rw(
       Int32(opcode.rawValue),
       sqe,
-      fd.fileDescriptor,
+      fileDescriptor,
       address,
       length,
       offset == -1 ? UInt64(bitPattern: -1) : UInt64(offset)
@@ -129,10 +140,16 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
     let sqe = try ring.getSqe()
     self.ring = ring
     self.opcode = opcode
-    self.fd = fd
+    fileDescriptor = fd.fileDescriptor
     self.handler = handler
-    self.socketAddress = socketAddress.map { SocketAddressStorage($0) }
-    prepare(opcode, sqe: sqe, fd: fd, address: address, length: length, offset: offset)
+    if let socketAddress {
+      hasSocketAddress = true
+      retained = SocketAddressStorage(socketAddress, owner: fd.fileDescriptorOwner)
+    } else {
+      hasSocketAddress = false
+      retained = fd.fileDescriptorOwner
+    }
+    prepare(opcode, sqe: sqe, address: address, length: length, offset: offset)
     setFlags(
       sqe: sqe,
       flags: flags.rawValue,
@@ -140,9 +157,10 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
       moreFlags: moreFlags,
       bufferIndexOrGroup: bufferIndexOrGroup
     )
-    if let socketAddress = self.socketAddress {
+    if hasSocketAddress {
       // a copy that outlives this call: the kernel reads it at submission, not preparation
-      try UnsafeRawPointer(socketAddress.pointer).withMemoryRebound(to: sockaddr.self, capacity: 1) {
+      let storage = unsafeDowncast(retained!, to: SocketAddressStorage.self)
+      try UnsafeRawPointer(storage.pointer).withMemoryRebound(to: sockaddr.self, capacity: 1) {
         try setSocketAddress(sqe: sqe, socketAddress: $0)
       }
     }
@@ -161,7 +179,7 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
       if error != .brokenPipe {
         IORing.shared.logger
           .debug(
-            "\(type(of: self)) completion fileDescriptor: \(fd) opcode: \(opcode) error: \(Errno(rawValue: -cqe.res))"
+            "\(type(of: self)) completion fileDescriptor: \(fileDescriptor) opcode: \(opcode) error: \(Errno(rawValue: -cqe.res))"
           )
       }
       throw error
@@ -292,7 +310,7 @@ struct BufferCount: FileDescriptorRepresentable {
 
 final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
   nonisolated var count: Int {
-    Int(fd.fileDescriptor)
+    Int(fileDescriptor)
   }
 
   let size: Int
@@ -489,6 +507,8 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
   private let ioprio: UInt16
   private let moreFlags: UInt32
   private let bufferIndexOrGroup: UInt16
+  /// as given, for the request made again after each completion
+  private let fd: FileDescriptorRepresentable
   private let holder: _StreamHolder
 
   private init(
@@ -513,6 +533,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
     self.ioprio = ioprio
     self.moreFlags = moreFlags
     self.bufferIndexOrGroup = bufferIndexOrGroup
+    self.fd = fd
     self.holder = holder
 
     try super.init(
@@ -543,7 +564,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
       ioprio: submission.ioprio,
       moreFlags: submission.moreFlags,
       bufferIndexOrGroup: submission.bufferIndexOrGroup,
-      socketAddress: submission.socketAddress?.pointer.pointee,
+      socketAddress: submission.socketAddress,
       holder: submission.holder,
       handler: submission.handler
     )
@@ -682,13 +703,16 @@ enum IORingOperation: UInt32 {
 }
 
 /// A socket address for a send's SQE, alive as long as the submission: the kernel reads it at
-/// submission, after the address given to the send has gone.
+/// submission, after the address given to the send has gone. Holds the file descriptor's owner
+/// too, since a submission keeps one object.
 final class SocketAddressStorage: @unchecked Sendable {
   let pointer: UnsafeMutablePointer<sockaddr_storage>
+  let owner: AnyObject?
 
-  init(_ address: sockaddr_storage) {
+  init(_ address: sockaddr_storage, owner: AnyObject?) {
     pointer = .allocate(capacity: 1)
     pointer.initialize(to: address)
+    self.owner = owner
   }
 
   deinit {

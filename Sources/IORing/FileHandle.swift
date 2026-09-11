@@ -21,6 +21,19 @@ import SystemPackage
 /// descriptors are not closed whilst there are outstanding completions
 public protocol FileDescriptorRepresentable: Sendable {
   var fileDescriptor: CInt { get }
+
+  /// The object whose lifetime keeps the descriptor open, if one does: a request holds it until
+  /// it completes. A class conformer is its own owner; a value type such as `FileDescriptor` has
+  /// none. Chosen at conformance, so a request pays no runtime cast to find out.
+  var fileDescriptorOwner: AnyObject? { get }
+}
+
+public extension FileDescriptorRepresentable {
+  var fileDescriptorOwner: AnyObject? { nil }
+}
+
+public extension FileDescriptorRepresentable where Self: AnyObject {
+  var fileDescriptorOwner: AnyObject? { self }
 }
 
 /// Include our own FileHandle for accept() so we do not need to import Foundation
