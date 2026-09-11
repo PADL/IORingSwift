@@ -36,6 +36,8 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
   /// padding: a submission is allocated per request, and one byte more would grow every one
   fileprivate let handoff = Atomic<UInt8>(0)
   private var cancellationToken: UnsafeMutableRawPointer?
+  /// the address a send goes to, which the kernel reads from the SQE at submission
+  fileprivate let socketAddress: SocketAddressStorage?
 
   nonisolated var description: String {
     "(\(type(of: self)))(fd: \(fd.fileDescriptor), opcode: \(opcode), handler: \(String(describing: handler)))"
@@ -129,6 +131,7 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
     self.opcode = opcode
     self.fd = fd
     self.handler = handler
+    self.socketAddress = socketAddress.map { SocketAddressStorage($0) }
     prepare(opcode, sqe: sqe, fd: fd, address: address, length: length, offset: offset)
     setFlags(
       sqe: sqe,
@@ -137,9 +140,10 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
       moreFlags: moreFlags,
       bufferIndexOrGroup: bufferIndexOrGroup
     )
-    if let socketAddress {
-      try socketAddress.withSockAddr { socketAddress, _ in
-        try setSocketAddress(sqe: sqe, socketAddress: socketAddress)
+    if let socketAddress = self.socketAddress {
+      // a copy that outlives this call: the kernel reads it at submission, not preparation
+      try UnsafeRawPointer(socketAddress.pointer).withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        try setSocketAddress(sqe: sqe, socketAddress: $0)
       }
     }
     setBlock(sqe: sqe)
@@ -485,7 +489,6 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
   private let ioprio: UInt16
   private let moreFlags: UInt32
   private let bufferIndexOrGroup: UInt16
-  private let socketAddress: sockaddr_storage?
   private let holder: _StreamHolder
 
   private init(
@@ -510,7 +513,6 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
     self.ioprio = ioprio
     self.moreFlags = moreFlags
     self.bufferIndexOrGroup = bufferIndexOrGroup
-    self.socketAddress = socketAddress
     self.holder = holder
 
     try super.init(
@@ -541,7 +543,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
       ioprio: submission.ioprio,
       moreFlags: submission.moreFlags,
       bufferIndexOrGroup: submission.bufferIndexOrGroup,
-      socketAddress: submission.socketAddress,
+      socketAddress: submission.socketAddress?.pointer.pointee,
       holder: submission.holder,
       handler: submission.handler
     )
@@ -677,6 +679,21 @@ enum IORingOperation: UInt32 {
   case uring_cmd
   case send_zc
   case sendmsg_zc
+}
+
+/// A socket address for a send's SQE, alive as long as the submission: the kernel reads it at
+/// submission, after the address given to the send has gone.
+final class SocketAddressStorage: @unchecked Sendable {
+  let pointer: UnsafeMutablePointer<sockaddr_storage>
+
+  init(_ address: sockaddr_storage) {
+    pointer = .allocate(capacity: 1)
+    pointer.initialize(to: address)
+  }
+
+  deinit {
+    pointer.deallocate()
+  }
 }
 
 struct AsyncCancelFlags: OptionSet {

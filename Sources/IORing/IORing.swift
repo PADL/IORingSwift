@@ -827,6 +827,11 @@ public extension IORing {
     try await io_uring_op_send(fd: fd, buffer: data)
   }
 
+  /// `address` is an encoded `sockaddr_storage`; see `connect(_:to:)`.
+  func send(_ data: [UInt8], to address: [UInt8], from fd: FileDescriptorRepresentable) async throws {
+    try await io_uring_op_send(fd: fd, buffer: data, to: sockaddr_storage(bytes: address))
+  }
+
   func receiveMessages(
     count: Int,
     capacity: Int? = nil,

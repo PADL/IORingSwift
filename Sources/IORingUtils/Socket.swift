@@ -468,6 +468,13 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     )
   }
 
+  public func send(_ data: [UInt8], to address: any SocketAddress) async throws {
+    let bytes = address.withSockAddr { sa, size in
+      Array(UnsafeRawBufferPointer(start: sa, count: Int(size)))
+    }
+    try await _ring.send(data, to: bytes, from: fileHandle)
+  }
+
   public func receiveMessages(
     count: Int,
     capacity: Int? = nil

@@ -100,4 +100,24 @@ final class RegressionTests: XCTestCase {
       try await group.waitForAll()
     }
   }
+
+  // The SQE was given a pointer to the socket address that was only valid inside a closure.
+  func testSendToAddress() async throws {
+    let ring = try IORing()
+    let path = "\(tmpDir)/ioring_sendto_\(getpid())"
+    unlink(path)
+    defer { unlink(path) }
+    let rx = try Socket(ring: ring, domain: sa_family_t(AF_LOCAL), type: SOCK_DGRAM)
+    try rx.bind(path: path)
+    let tx = try Socket(ring: ring, domain: sa_family_t(AF_LOCAL), type: SOCK_DGRAM)
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_LOCAL)
+    withUnsafeMutableBytes(of: &address.sun_path) { bytes in
+      _ = path.utf8CString.withUnsafeBytes { memcpy(bytes.baseAddress!, $0.baseAddress!, $0.count) }
+    }
+    let payload = Array("addressed".utf8)
+    try await tx.send(payload, to: address)
+    let received = try await rx.receive(count: 64) as [UInt8]
+    XCTAssertEqual(received.prefix(payload.count).map { $0 }, payload)
+  }
 }
