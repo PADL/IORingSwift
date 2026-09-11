@@ -29,68 +29,7 @@ extern "C" void *_Block_copy(const void *);
 extern "C" void _Block_release(const void *);
 #endif
 
-#if __has_include(<dispatch/dispatch.h>)
-#include <dispatch/dispatch.h>
-#else
-// on Linux dispatch/dispatch.h is only available with unsafe Swift flags,
-// which preclude the use of this package as a versioned dependency
-struct dispatch_source_type_s {
-} __attribute__((aligned(sizeof(uintptr_t))));
-
-typedef struct dispatch_source_s *dispatch_source_t;
-typedef struct dispatch_queue_s *dispatch_queue_t;
-typedef const struct dispatch_source_type_s *dispatch_source_type_t;
-typedef struct dispatch_semaphore_s *dispatch_semaphore_t;
-
-typedef void (^dispatch_block_t)(void);
-
-extern "C" {
-extern const struct dispatch_source_type_s _dispatch_source_type_read;
-
-void dispatch_release(void *object);
-void dispatch_resume(void *object);
-
-void *dispatch_get_context(void *object);
-void dispatch_set_context(void *object, void *context);
-
-void dispatch_source_cancel(void *object);
-void dispatch_source_set_event_handler(dispatch_source_t source,
-                                       dispatch_block_t handler);
-void dispatch_source_set_cancel_handler(dispatch_source_t source,
-                                        dispatch_block_t handler);
-
-dispatch_queue_t dispatch_get_global_queue(intptr_t identifier,
-                                           uintptr_t flags);
-dispatch_source_t dispatch_source_create(dispatch_source_type_t type,
-                                         uintptr_t handle,
-                                         uintptr_t mask,
-                                         dispatch_queue_t queue);
-
-dispatch_semaphore_t dispatch_semaphore_create(intptr_t value);
-intptr_t dispatch_semaphore_signal(dispatch_semaphore_t dsema);
-intptr_t dispatch_semaphore_wait(dispatch_semaphore_t dsema, uint64_t timeout);
-}
-
-#define dispatch_cancel dispatch_source_cancel
-#define DISPATCH_QUEUE_PRIORITY_DEFAULT 0
-#define DISPATCH_SOURCE_TYPE_READ (&_dispatch_source_type_read)
-#define DISPATCH_TIME_FOREVER (~0ull)
-
-#endif
-
 #include "CIORingShims.h"
-
-int io_uring_cq_handler(struct io_uring *ring);
 
 // invokes the blocks of the completions already posted, without waiting
 unsigned io_uring_cq_reap(struct io_uring *ring);
-
-// enabled with DISPATCH_IO_URING
-void dispatch_io_uring_deinit_cq_handler(uintptr_t handle,
-                                         struct io_uring *ring);
-int dispatch_io_uring_init_cq_handler(uintptr_t *handle, struct io_uring *ring);
-
-// enabled with PTHREAD_IO_URING
-void pthread_io_uring_deinit_cq_handler(uintptr_t handle,
-                                        struct io_uring *ring);
-int pthread_io_uring_init_cq_handler(uintptr_t *handle, struct io_uring *ring);

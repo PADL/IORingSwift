@@ -23,7 +23,7 @@ import struct SystemPackage.Errno
 import XCTest
 
 // The executor is installed when the first ring is created, so every test in the package runs
-// on it unless SWIFT_IORING_EXECUTOR=dispatch; these check what it does beyond running jobs.
+// on it; these check what it does beyond running jobs.
 final class ExecutorTests: XCTestCase {
   private static let threadName = "IORingExecutor"
 
@@ -38,13 +38,7 @@ final class ExecutorTests: XCTestCase {
   }
 
   private var threads: Int {
-    get throws {
-      _ = IORing.shared
-      guard let executor = IORingExecutor.installed else {
-        throw XCTSkip("the executor is not installed")
-      }
-      return executor.threads
-    }
+    get throws { try IORingExecutor.install().threads }
   }
 
   private static func makePair(ring: IORing) throws -> (Socket, Socket) {

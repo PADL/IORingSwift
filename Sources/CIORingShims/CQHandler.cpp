@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023 PADL Software Pty Ltd
+// Copyright (c) 2023-2026 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -31,33 +31,6 @@ static void invoke_cqe_block(struct io_uring_cqe *cqe) {
     _Block_release(block);
 }
 
-int io_uring_cq_handler(struct io_uring *ring) {
-  struct io_uring_cqe *cqe;
-  unsigned head, i = 0;
-
-  auto err = io_uring_wait_cqe(ring, &cqe);
-  if (err)
-    return err;
-
-  io_uring_for_each_cqe(ring, head, cqe) {
-    assert(cqe != nullptr);
-#if PTHREAD_IO_URING
-    if (cqe->user_data == ~0ULL) {
-      err = -ECANCELED;
-      break;
-    }
-#endif
-    invoke_cqe_block(cqe);
-    i++;
-  }
-  io_uring_cq_advance(ring, i);
-
-  if (err == -EAGAIN)
-    err = 0;
-
-  return err;
-}
-
 unsigned io_uring_cq_reap(struct io_uring *ring) {
   struct io_uring_cqe *cqe;
   unsigned head, i = 0;
@@ -69,24 +42,4 @@ unsigned io_uring_cq_reap(struct io_uring *ring) {
   io_uring_cq_advance(ring, i);
 
   return i;
-}
-
-int io_uring_init_cq_handler(uintptr_t *handle, struct io_uring *ring) {
-#if DISPATCH_IO_URING
-  return dispatch_io_uring_init_cq_handler(handle, ring);
-#elif PTHREAD_IO_URING
-  return pthread_io_uring_init_cq_handler(handle, ring);
-#else
-#error implement io_uring_init_cq_handler() for your platform
-#endif
-}
-
-void io_uring_deinit_cq_handler(uintptr_t handle, struct io_uring *ring) {
-#if DISPATCH_IO_URING
-  dispatch_io_uring_deinit_cq_handler(handle, ring);
-#elif PTHREAD_IO_URING
-  pthread_io_uring_deinit_cq_handler(handle, ring);
-#else
-#error implement io_uring_deinit_cq_handler() for your platform
-#endif
 }

@@ -34,8 +34,8 @@ public actor IORing: CustomStringConvertible {
   private nonisolated static let DefaultIORingQueueEntries = 128
 
   private var ring: io_uring
-  private var cqHandle: UInt = 0
-  private nonisolated(unsafe) var cqPool: ioring_pool_t? // reaps instead of the CQ handler
+  private let executor: IORingExecutor // reaps the ring's completions
+  private var reaper: UInt = 0 // the ring's registration with it
 
   private var fixedBuffers: FixedBuffer?
   private var nextBufferGroup: UInt16 = 1
@@ -272,17 +272,13 @@ public actor IORing: CustomStringConvertible {
     self.ring = ring
     ringFd = ring.ring_fd
 
-    let error: Int32
-    #if os(Linux) && compiler(>=6.3)
-    if IORingExecutor.install(), let executor = IORingExecutor.installed {
-      cqPool = executor.pool
-      error = ioring_pool_add_ring(executor.pool, &self.ring, &cqHandle)
-    } else {
-      error = io_uring_init_cq_handler(&cqHandle, &self.ring)
+    do {
+      executor = try IORingExecutor.install()
+    } catch {
+      io_uring_queue_exit(&ring)
+      throw error
     }
-    #else
-    error = io_uring_init_cq_handler(&cqHandle, &self.ring)
-    #endif
+    let error = ioring_pool_add_ring(executor.pool, &self.ring, &reaper)
     guard error == 0 else {
       io_uring_queue_exit(&ring)
       throw Errno(rawValue: -error)
@@ -312,16 +308,9 @@ public actor IORing: CustomStringConvertible {
   }
 
   deinit {
-    // Stop the completion-queue handler FIRST and wait for it to quiesce. This
-    // is synchronous: for the dispatch backend it blocks until the source's
-    // cancel handler has run, for the pthread backend it joins the handler
-    // thread. Afterwards no other thread touches `ring`, so the drain below and
-    // io_uring_queue_exit() cannot race a handler still in io_uring_wait_cqe().
-    if let cqPool {
-      ioring_pool_remove_ring(cqPool, cqHandle)
-    } else {
-      io_uring_deinit_cq_handler(cqHandle, &ring)
-    }
+    // Stop reaping FIRST: this returns once no executor thread touches `ring`, so
+    // the drain below and io_uring_queue_exit() cannot race a reap in progress.
+    ioring_pool_remove_ring(executor.pool, reaper)
 
     // Cancel all inflight requests to release their _Block_copy'd closures
     if let sqe = io_uring_get_sqe(&ring) {

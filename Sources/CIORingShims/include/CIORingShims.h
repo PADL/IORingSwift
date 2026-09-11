@@ -39,12 +39,6 @@ typedef void (^io_uring_cqe_block)(struct io_uring_cqe *_Nonnull);
 void *_Nonnull io_uring_sqe_set_block(struct io_uring_sqe *_Nonnull sqe,
                                       _Nonnull io_uring_cqe_block block);
 
-/// Enrol a `io_uring` for `io_uring_cqe_block` processing
-int io_uring_init_cq_handler(uintptr_t *_Nonnull, struct io_uring *_Nonnull);
-
-/// De-enroll `io_uring` from block processing
-void io_uring_deinit_cq_handler(uintptr_t, struct io_uring *_Nonnull);
-
 /// A pool of persistent threads that run jobs and reap completions
 typedef struct ioring_pool *ioring_pool_t;
 

@@ -1,4 +1,4 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.3
 
 import Foundation
 import PackageDescription
@@ -21,13 +21,6 @@ func tryGuessSwiftLibRoot() -> String {
 }
 
 let SwiftLibRoot = EnvSysRoot != nil ? "\(EnvSysRoot!)/usr/lib/swift" : tryGuessSwiftLibRoot()
-
-enum CQHandlerType: String {
-  case dispatch = "DISPATCH_IO_URING"
-  case pthread = "PTHREAD_IO_URING"
-}
-
-let cqHandlerType: CQHandlerType = .dispatch
 
 let package = Package(
   name: "IORingSwift",
@@ -67,12 +60,10 @@ let package = Package(
       cSettings: [
         .define("_XOPEN_SOURCE=700"),
         .define("_DEFAULT_SOURCE"),
-        .define("\(cqHandlerType.rawValue)=1"),
       ],
       cxxSettings: [
         .define("_XOPEN_SOURCE=700"),
         .define("_DEFAULT_SOURCE"),
-        .define("\(cqHandlerType.rawValue)=1"),
       ]
     ),
     .target(

@@ -14,34 +14,33 @@
 // limitations under the License.
 //
 
-#if os(Linux) && compiler(>=6.3)
-
 @_spi(ExperimentalCustomExecutors) @_spi(ExperimentalScheduling) import _Concurrency
 @_implementationOnly import CIORingShims
 import Glibc
-import Logging
 import SystemPackage
 
 /// The global executor `IORing` installs: as many threads as the process has CPUs, none of
-/// which ever exits, that run tasks and reap the completions of every ring created after it.
+/// which ever exits, that run tasks and reap the completions of every ring.
 ///
 /// The kernel cancels an io_uring request when the thread that submitted it exits, and the
 /// default executor's threads exit after five idle seconds. On these threads a request waits
 /// as long as it needs to; and the thread that reaps a completion runs the task waiting on
 /// it, without another thread in between.
 ///
-/// Installed when the first ring is created, or earlier by `IORing.installExecutor()`; the
-/// environment variable `SWIFT_IORING_EXECUTOR=dispatch` keeps the default executor instead,
-/// and `SWIFT_IORING_EXECUTOR_THREADS` sets the thread count. Job priorities are not observed.
+/// Installed when the first ring is created, or earlier by `IORing.installExecutor()`;
+/// `SWIFT_IORING_EXECUTOR_THREADS` in the environment sets the thread count. Job priorities
+/// are not observed.
 final class IORingExecutor: TaskExecutor, SchedulingExecutor, @unchecked Sendable {
-  /// The installed executor, if any; set once
-  nonisolated(unsafe) private(set) static var installed: IORingExecutor?
+  /// The installed executor, if installing it succeeded
+  static var installed: IORingExecutor? { try? _install.result.get() }
 
-  /// Installs the executor, unless one is installed or the environment declines it.
+  /// Installs the executor, once; throws what stopped it, every time.
   @discardableResult
-  static func install(threads: Int? = nil) -> Bool {
-    _install.threads = threads
-    return _install.installed
+  static func install(threads: Int? = nil) throws -> IORingExecutor {
+    if let threads {
+      _install.threads = threads
+    }
+    return try _install.result.get()
   }
 
   let pool: ioring_pool_t
@@ -58,19 +57,15 @@ final class IORingExecutor: TaskExecutor, SchedulingExecutor, @unchecked Sendabl
   }
 
   private struct Factory: ExecutorFactory {
+    nonisolated(unsafe) static var executor: IORingExecutor!
     static let mainExecutor: any MainExecutor = MainActor.executor
-    static let defaultExecutor: any TaskExecutor = IORingExecutor.installed!
+    static let defaultExecutor: any TaskExecutor = executor
   }
 
   private enum _install {
     nonisolated(unsafe) static var threads: Int?
 
-    static let installed: Bool = {
-      if let choice = getenv("SWIFT_IORING_EXECUTOR").map({ String(cString: $0) }),
-         choice == "dispatch"
-      {
-        return false
-      }
+    static let result: Result<IORingExecutor, Errno> = {
       var count = threads ?? 0
       if count <= 0, let value = getenv("SWIFT_IORING_EXECUTOR_THREADS") {
         count = Int(String(cString: value)) ?? 0
@@ -81,15 +76,14 @@ final class IORingExecutor: TaskExecutor, SchedulingExecutor, @unchecked Sendabl
       // reading it creates the platform executors, so that they are replaced, not preempted
       let previous = Task.defaultExecutor
       guard let pool = ioring_pool_create(UInt32(count), runJob, nil) else {
-        Logger(label: "com.padl.IORing").error("could not start the executor: \(Errno(rawValue: errno))")
-        return false
+        return .failure(Errno(rawValue: errno))
       }
       let executor = IORingExecutor(pool: pool, threads: count, previous: previous)
       // handed to the pool unretained; the executor lives for the process
       ioring_pool_set_context(pool, Unmanaged.passUnretained(executor).toOpaque())
-      IORingExecutor.installed = executor
+      Factory.executor = executor
       _createExecutors(factory: Factory.self)
-      return true
+      return .success(executor)
     }()
   }
 
@@ -133,13 +127,9 @@ private let runJob: ioring_job_runner = { context, job in
 
 public extension IORing {
   /// Installs the global executor whose threads never exit, on which every ring's requests
-  /// are submitted and completions reaped. Called when the first ring is created; call it
-  /// earlier, before tasks start, to have everything run there. Returns whether it is
-  /// installed: `SWIFT_IORING_EXECUTOR=dispatch` in the environment declines it.
-  @discardableResult
-  nonisolated static func installExecutor(threads: Int? = nil) -> Bool {
-    IORingExecutor.install(threads: threads)
+  /// are submitted and completions reaped. Creating the first ring does this; call it
+  /// earlier, before tasks start, to have everything run there.
+  nonisolated static func installExecutor(threads: Int? = nil) throws {
+    try IORingExecutor.install(threads: threads)
   }
 }
-
-#endif
