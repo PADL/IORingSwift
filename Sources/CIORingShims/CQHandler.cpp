@@ -23,23 +23,26 @@ void *io_uring_sqe_set_block(struct io_uring_sqe *sqe,
   return cancellationToken;
 }
 
-static void invoke_cqe_block(struct io_uring_cqe *cqe) {
-  auto block = reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
-  assert(block != nullptr);
-  block(cqe);
-  if ((cqe->flags & IORING_CQE_F_MORE) == 0)
-    _Block_release(block);
-}
-
-unsigned io_uring_cq_reap(struct io_uring *ring) {
+unsigned io_uring_cq_reap(struct io_uring *ring,
+                          std::vector<io_uring_cqe_block> &finished) {
   struct io_uring_cqe *cqe;
-  unsigned head, i = 0;
+  unsigned head, total = 0;
 
-  io_uring_for_each_cqe(ring, head, cqe) {
-    invoke_cqe_block(cqe);
-    i++;
-  }
-  io_uring_cq_advance(ring, i);
+  do {
+    unsigned count = 0;
+    io_uring_for_each_cqe(ring, head, cqe) {
+      auto block = reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
+      assert(block != nullptr);
+      block(cqe);
+      if ((cqe->flags & IORING_CQE_F_MORE) == 0)
+        finished.push_back(block);
+      count++;
+    }
+    io_uring_cq_advance(ring, count);
+    total += count;
+    // completions that overflowed the CQ are posted only when asked for, and
+    // do not signal the eventfd
+  } while (io_uring_cq_has_overflow(ring) && io_uring_get_events(ring) == 0);
 
-  return i;
+  return total;
 }

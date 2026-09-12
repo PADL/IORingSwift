@@ -28,7 +28,7 @@ import SystemPackage
 /// of a round trip under load. Fields are laid out in declaration order, so keep the small ones
 /// together in the padding the `Int32`s leave, and check the size when adding one.
 class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
-  // reference to owner which owns ring
+  /// reference to owner which owns ring
   let ring: IORing
   /// user-supplied callback to transform a completion queue entry to a result
   fileprivate let handler: @Sendable (io_uring_cqe) throws -> T
@@ -44,7 +44,7 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
   /// closed before the completion handler runs; for a send to an address, the copy of that
   /// address the kernel reads from the SQE at submission, which holds the owner in turn
   fileprivate let retained: AnyObject?
-  private var cancellationToken: UnsafeMutableRawPointer?
+  private(set) var cancellationToken: UnsafeMutableRawPointer?
 
   nonisolated var description: String {
     "(\(type(of: self)))(fd: \(fileDescriptor), opcode: \(opcode), handler: \(String(describing: handler)))"
@@ -52,7 +52,8 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
 
   /// The address a send goes to, if any.
   fileprivate var socketAddress: sockaddr_storage? {
-    hasSocketAddress ? unsafeDowncast(retained!, to: SocketAddressStorage.self).pointer.pointee : nil
+    hasSocketAddress ? unsafeDowncast(retained!, to: SocketAddressStorage.self).pointer
+      .pointee : nil
   }
 
   private func prepare(
@@ -167,7 +168,10 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
     setBlock(sqe: sqe)
   }
 
-  func onCompletion(cqe: io_uring_cqe) { fatalError("must be implemented by concrete class") }
+  func onCompletion(cqe: io_uring_cqe) {
+    fatalError("must be implemented by concrete class")
+  }
+
   func onCancel(cqe: io_uring_cqe) {}
 
   func throwingErrno(
@@ -480,22 +484,40 @@ struct ProvidedBuffer<U>: ~Copyable {
     // still has to hop onto the ring actor, matching the previous behaviour.
     let submission = submission
     let id = id
-    Task(executorPreference: submission.ring.executor) { try? await submission.reprovideAndSubmit(id: id) }
+    Task(executorPreference: submission.ring.executor) {
+      try? await submission.reprovideAndSubmit(id: id)
+    }
   }
 }
 
 final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable {
-  // Shared holder ensures continuation is accessible across resubmissions
-  private final class _StreamHolder: Sendable {
+  /// Shared holder ensures continuation is accessible across resubmissions. When the stream
+  /// ends, by the consumer leaving it or by the ring finishing it, the request still armed
+  /// is cancelled before `onTermination` runs, which is where its buffers are released.
+  private final class _StreamHolder: @unchecked Sendable {
     let stream: AsyncThrowingStream<T, Error>
     let continuation: AsyncThrowingStream<T, Error>.Continuation
+    // ring-isolated: the request currently armed, and whether the stream has ended
+    nonisolated(unsafe) weak var current: MultishotSubmission?
+    nonisolated(unsafe) var terminated = false
 
-    init(onTermination: (@Sendable () -> ())?) {
+    init(ring: IORing, onTermination: (@Sendable () -> ())?) {
       var continuation: AsyncThrowingStream<T, Error>.Continuation!
       let stream = AsyncThrowingStream<T, Error> { continuation = $0 }
       self.stream = stream
       self.continuation = continuation
-      self.continuation.onTermination = { @Sendable _ in onTermination?() }
+      self.continuation.onTermination = { @Sendable _ in
+        Task(executorPreference: ring.executor) {
+          await self.end(ring: ring)
+          onTermination?()
+        }
+      }
+    }
+
+    func end(ring: isolated IORing) async {
+      terminated = true
+      guard let current, let token = current.cancellationToken else { return }
+      try? await ring.cancel(userData: token) // gone already, if it says so
     }
   }
 
@@ -597,13 +619,14 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
       moreFlags: moreFlags,
       bufferIndexOrGroup: bufferIndexOrGroup,
       socketAddress: socketAddress,
-      holder: _StreamHolder(onTermination: onTermination),
+      holder: _StreamHolder(ring: ring, onTermination: onTermination),
       handler: handler
     )
   }
 
   private func _submit(ring: isolated IORing) throws -> AsyncThrowingStream<T, Error> {
     try ring.submit()
+    holder.current = self
     return holder.stream
   }
 
@@ -614,6 +637,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
   }
 
   private func resubmit(ring: isolated IORing) {
+    guard !holder.terminated else { return }
     do {
       // Create new SQE with same holder (shared stream/continuation)
       let resubmission = try MultishotSubmission(ring: ring, self)
@@ -724,10 +748,6 @@ struct AsyncCancelFlags: OptionSet {
   typealias RawValue = CInt
 
   let rawValue: RawValue
-
-  init(rawValue: RawValue) {
-    self.rawValue = rawValue
-  }
 
   static let all = AsyncCancelFlags(rawValue: 1 << 0)
   static let fd = AsyncCancelFlags(rawValue: 1 << 1)

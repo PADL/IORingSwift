@@ -31,5 +31,11 @@ extern "C" void _Block_release(const void *);
 
 #include "CIORingShims.h"
 
-// invokes the blocks of the completions already posted, without waiting
-unsigned io_uring_cq_reap(struct io_uring *ring);
+#include <vector>
+
+// Invokes the blocks of the completions already posted, without waiting, and
+// flushes any the kernel had to hold back. A block whose request is finished is
+// appended to `finished` for the caller to release: releasing it may free the
+// last owner of the ring, and must wait until the ring is no longer being read.
+unsigned io_uring_cq_reap(struct io_uring *ring,
+                          std::vector<io_uring_cqe_block> &finished);

@@ -123,7 +123,7 @@ public actor IORing: CustomStringConvertible {
     }
   }
 
-  struct SqeFlags: OptionSet, Sendable {
+  struct SqeFlags: OptionSet {
     typealias RawValue = UInt8
 
     let rawValue: RawValue
@@ -280,8 +280,7 @@ public actor IORing: CustomStringConvertible {
     }
     let error = ioring_pool_add_ring(executor.pool, &self.ring, &reaper)
     guard error == 0 else {
-      io_uring_queue_exit(&ring)
-      throw Errno(rawValue: -error)
+      throw Errno(rawValue: -error) // deinit tears the ring down; removing it is a no-op
     }
   }
 
@@ -331,9 +330,9 @@ public actor IORing: CustomStringConvertible {
     memset(&ring, 0, MemoryLayout<io_uring>.size)
   }
 
-  // important note: caller MUST NOT suspend after calling getSqe() until preparation,
-  // ideally not until submission particularly if linked requests are involved (this
-  // may be impossible)
+  /// important note: caller MUST NOT suspend after calling getSqe() until preparation,
+  /// ideally not until submission particularly if linked requests are involved (this
+  /// may be impossible)
   func getSqe() throws -> UnsafeMutablePointer<io_uring_sqe> {
     let sqe = io_uring_get_sqe(&ring)
     guard let sqe else {
@@ -354,7 +353,10 @@ public actor IORing: CustomStringConvertible {
   @discardableResult
   func submit() throws -> Int {
     try Int(Errno.throwingErrno {
-      self.executor.isCurrentThread ? io_uring_submit(&self.ring) : ioring_pool_submit(self.executor.pool, &self.ring)
+      self.executor.isCurrentThread ? io_uring_submit(&self.ring) : ioring_pool_submit(
+        self.executor.pool,
+        &self.ring
+      )
     })
   }
 
@@ -651,7 +653,11 @@ private extension IORing {
       },
       onTermination: { [buffers] in
         Task(executorPreference: self.executor) {
-          try? await BufferSubmission<UInt8>(ring: self, removing: capacity, from: buffers.bufferGroup).submit()
+          try? await BufferSubmission<UInt8>(
+            ring: self,
+            removing: capacity,
+            from: buffers.bufferGroup
+          ).submit()
           buffers.deallocate()
         }
       }
@@ -820,7 +826,7 @@ public extension IORing {
     capacity: Int? = nil,
     from fd: FileDescriptorRepresentable
   ) throws -> AnyAsyncSequence<[UInt8]> {
-    try io_uring_op_recv_multishot(fd: fd, count: count, capacity: capacity ?? entries)
+    try io_uring_op_recv_multishot(fd: fd, count: count, capacity: capacity ?? 16)
       .eraseToAnyAsyncSequence()
   }
 
@@ -834,6 +840,17 @@ public extension IORing {
     try await io_uring_op_send(fd: fd, buffer: data)
   }
 
+  /// Cancels the request whose completion block is `token`; returns once the kernel has
+  /// answered, with `Errno.noSuchFileOrDirectory` if it had already completed.
+  func cancel(userData token: UnsafeMutableRawPointer) async throws {
+    try await prepareAndSubmit(
+      .async_cancel,
+      fd: FileDescriptor(rawValue: -1),
+      address: UnsafeRawPointer(token),
+      moreFlags: UInt32(bitPattern: AsyncCancelFlags.userData.rawValue)
+    ) { _ in }
+  }
+
   /// Cancels every request on `fd`, each of which completes with `Errno.canceled`.
   func cancelRequests(on fd: FileDescriptorRepresentable) async throws {
     try await io_uring_op_cancel(
@@ -843,7 +860,11 @@ public extension IORing {
   }
 
   /// `address` is an encoded `sockaddr_storage`; see `connect(_:to:)`.
-  func send(_ data: [UInt8], to address: [UInt8], from fd: FileDescriptorRepresentable) async throws {
+  func send(
+    _ data: [UInt8],
+    to address: [UInt8],
+    from fd: FileDescriptorRepresentable
+  ) async throws {
     try await io_uring_op_send(fd: fd, buffer: data, to: sockaddr_storage(bytes: address))
   }
 

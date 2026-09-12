@@ -58,6 +58,7 @@ struct Worker {
   std::atomic<uint32_t> unparked{0}; // futex word, set by whoever unparks us
   Worker *nextIdle = nullptr;        // under pool->mutex
   bool reaping = false;              // handling epoll events, on this thread only
+  std::vector<io_uring_cqe_block> finished; // blocks a reap has released to us
 };
 
 // A registered ring. Entries are reused, never freed: an epoll_wait that
@@ -94,9 +95,9 @@ struct TimerQueue {
 constexpr uint64_t kWakeSource = ~0ULL;
 constexpr uint64_t kTimerSource = ~1ULL; // minus the queue index
 constexpr int kMaxEvents = 64;
-// An idle worker wakes this often to take over the epoll if no worker is blocked
-// in it: the driver may be running a job that, against the rules, blocks its
-// thread, and nobody else would reap completions.
+// One idle worker at a time wakes this often to take over the epoll if no
+// worker is blocked in it: the driver may be running a job that, against the
+// rules, blocks its thread, and nobody else would reap completions.
 constexpr struct timespec kIdleParkTimeout = {0, 250000000};
 
 thread_local Worker *tlsWorker __attribute__((tls_model("initial-exec"))) = nullptr;
@@ -128,6 +129,7 @@ struct ioring_pool {
   std::deque<void *> jobs;
   std::deque<SubmitRequest *> submits; // served before jobs: their callers are blocked
   Worker *idle = nullptr;    // stack of workers parked on their futex
+  Worker *timedWaiter = nullptr; // the idle worker whose park has the timeout
   bool driverParked = false; // a worker is blocked in epoll_wait
   int epollFd = -1;
   int wakeFd = -1;
@@ -241,11 +243,19 @@ void reapRing(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
 
   // a completion posted after the drain signals again, so nothing is missed
   drain(entry->eventFd);
-  io_uring_cq_reap(entry->ring);
+  Worker *self = tlsWorker;
+  io_uring_cq_reap(entry->ring, self->finished);
 
   lock.lock();
   entry->busy = false;
   pool->ringIdle.notify_all();
+  // Releasing a finished block may free the last owner of its ring, whose
+  // teardown removes the ring from the pool and so must find it no longer busy.
+  lock.unlock();
+  for (auto block : self->finished)
+    _Block_release(block);
+  self->finished.clear();
+  lock.lock();
 }
 
 // lock held
@@ -265,11 +275,16 @@ void handleEvents(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
 void park(ioring_pool *pool, std::unique_lock<std::mutex> &lock, Worker *worker) {
   worker->nextIdle = pool->idle;
   pool->idle = worker;
+  bool timed = pool->timedWaiter == nullptr;
+  if (timed)
+    pool->timedWaiter = worker;
   lock.unlock();
   if (worker->unparked.load(std::memory_order_acquire) == 0)
-    syscall(SYS_futex, &worker->unparked, FUTEX_WAIT_PRIVATE, 0, &kIdleParkTimeout,
-            nullptr, 0);
+    syscall(SYS_futex, &worker->unparked, FUTEX_WAIT_PRIVATE, 0,
+            timed ? &kIdleParkTimeout : nullptr, nullptr, 0);
   lock.lock();
+  if (timed)
+    pool->timedWaiter = nullptr;
   if (worker->unparked.exchange(0, std::memory_order_acquire) != 0)
     return; // popped from the stack by whoever woke us
   // timed out: leave the stack ourselves
@@ -435,8 +450,7 @@ int ioring_pool_add_ring(ioring_pool_t pool, struct io_uring *ring,
   int fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
   if (fd < 0)
     return -errno;
-  if (io_uring_register_eventfd(ring, fd) != 0) {
-    int error = -errno;
+  if (int error = io_uring_register_eventfd(ring, fd)) { // -errno, errno untouched
     close(fd);
     return error;
   }

@@ -39,8 +39,8 @@ final class RegressionTests: XCTestCase {
     )
   }
 
-  // MessageHolder registered its provided buffers at the payload size, not the padded size
-  // it computed for them, so a small `count` failed with EFAULT.
+  /// MessageHolder registered its provided buffers at the payload size, not the padded size
+  /// it computed for them, so a small `count` failed with EFAULT.
   func testSmallMessageBuffersReceive() async throws {
     let ring = try IORing()
     let (rx, tx) = try Self.makePair(SOCK_DGRAM, ring: ring)
@@ -52,7 +52,7 @@ final class RegressionTests: XCTestCase {
     }
   }
 
-  // Multishot recv needs a provided-buffer group; without one the kernel rejects it.
+  /// Multishot recv needs a provided-buffer group; without one the kernel rejects it.
   func testMultishotReceive() async throws {
     let ring = try IORing()
     let (rx, tx) = try Self.makePair(SOCK_STREAM, ring: ring)
@@ -72,8 +72,29 @@ final class RegressionTests: XCTestCase {
     XCTAssertEqual(received, chunks.flatMap { $0 })
   }
 
-  // A linked pair's SQEs were prepared in one actor job and their continuations registered in
-  // later ones, so another task's submit in between flushed them before anyone was waiting.
+  /// Leaving a multishot receive cancelled nothing: the request stayed armed on a
+  /// provided-buffer group that had just been freed, and re-armed itself on ENOBUFS.
+  func testLeavingMultishotReceiveCancelsIt() async throws {
+    let ring = try IORing()
+    let (rx, tx) = try Self.makePair(SOCK_STREAM, ring: ring)
+    let sender = Task {
+      for i in 0..<2000 {
+        try await tx.send(Array(repeating: UInt8(truncatingIfNeeded: i), count: 32))
+      }
+    }
+    for try await _ in try await rx.receive(count: 128, capacity: 2) as AnyAsyncSequence<[UInt8]> {
+      break
+    }
+    try await sender.value
+    // whatever the receive left behind, the socket is still usable and nothing has crashed
+    try await Task.sleep(for: .milliseconds(50))
+    try await tx.send([1])
+    let last = try await rx.receive(count: 1) as [UInt8]
+    XCTAssertEqual(last.count, 1)
+  }
+
+  /// A linked pair's SQEs were prepared in one actor job and their continuations registered in
+  /// later ones, so another task's submit in between flushed them before anyone was waiting.
   func testLinkedSubmissionsUnderConcurrentSubmits() async throws {
     let ring = try IORing()
     try await ring.registerFixedBuffers(count: 1, size: 4096)
@@ -94,14 +115,21 @@ final class RegressionTests: XCTestCase {
       group.addTask {
         var data = [UInt8](repeating: 0x42, count: 64)
         for _ in 0..<200 {
-          try await ring.writeReadFixed(&data, writeCount: 64, readCount: 64, offset: 0, bufferIndex: 0, fd: fd)
+          try await ring.writeReadFixed(
+            &data,
+            writeCount: 64,
+            readCount: 64,
+            offset: 0,
+            bufferIndex: 0,
+            fd: fd
+          )
         }
       }
       try await group.waitForAll()
     }
   }
 
-  // The SQE was given a pointer to the socket address that was only valid inside a closure.
+  /// The SQE was given a pointer to the socket address that was only valid inside a closure.
   func testSendToAddress() async throws {
     let ring = try IORing()
     let path = "\(tmpDir)/ioring_sendto_\(getpid())"
