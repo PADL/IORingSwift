@@ -364,13 +364,23 @@ public actor IORing: CustomStringConvertible {
         retrySubmitLater()
       }
       return submitted
-    } catch {
+    } catch let error as Errno where Self.transientSubmitErrors.contains(error) {
       // the SQEs stay flushed for the next submit to carry, and the task awaiting
       // them may be the ring's only one: make sure there is a next submit
       retrySubmitLater()
       throw error
+    } catch {
+      // nothing this ring submits will enter again, and its pending requests stay so
+      logger.error("submit failed with \(error), cannot retry")
+      throw error
     }
   }
+
+  /// what an enter fails with while the ring is sound: memory or a request short, the
+  /// completion queue overflowed, a signal
+  private static let transientSubmitErrors: Set<Errno> = [
+    .resourceTemporarilyUnavailable, .noMemory, .resourceBusy, .interrupted,
+  ]
 
   /// A submit that failed, or left SQEs behind, is pending rather than failed: nothing that
   /// awaits its requests unwinds, and they are carried by a retry, one at a time per ring.
