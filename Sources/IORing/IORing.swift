@@ -22,8 +22,6 @@ import Glibc
 import Logging
 import SystemPackage
 
-extension io_uring: @retroactive @unchecked Sendable {}
-
 // MARK: - actor
 
 public actor IORing: CustomStringConvertible {
@@ -33,7 +31,8 @@ public actor IORing: CustomStringConvertible {
 
   private nonisolated static let DefaultIORingQueueEntries = 128
 
-  private var ring: io_uring
+  /// its own allocation: the executor's pool keeps the pointer for as long as it reaps the ring
+  private nonisolated(unsafe) let ring: UnsafeMutablePointer<io_uring>
   let executor: IORingExecutor // reaps the ring's completions
   private var reaper: UInt = 0 // the ring's registration with it
 
@@ -268,20 +267,22 @@ public actor IORing: CustomStringConvertible {
       }
       params.sq_thread_idle = UInt32(sqThreadIdle)
     }
-    try Errno.throwingErrno {
-      io_uring_queue_init_params(CUnsignedInt(entries), &ring, &params)
+    executor = try IORingExecutor.install()
+    let ring = UnsafeMutablePointer<io_uring>.allocate(capacity: 1)
+    ring.initialize(to: io_uring())
+    do {
+      try Errno.throwingErrno {
+        io_uring_queue_init_params(CUnsignedInt(entries), ring, &params)
+      }
+    } catch {
+      ring.deallocate()
+      throw error
     }
     self.entries = entries
     self.ring = ring
-    ringFd = ring.ring_fd
+    ringFd = ring.pointee.ring_fd
 
-    do {
-      executor = try IORingExecutor.install()
-    } catch {
-      io_uring_queue_exit(&ring)
-      throw error
-    }
-    let error = ioring_pool_add_ring(executor.pool, &self.ring, &reaper)
+    let error = ioring_pool_add_ring(executor.pool, ring, &reaper)
     guard error == 0 else {
       throw Errno(rawValue: -error) // deinit tears the ring down; removing it is a no-op
     }
@@ -300,13 +301,13 @@ public actor IORing: CustomStringConvertible {
     fixedBuffers = FixedBuffer(count: count, size: size)
 
     try Errno.throwingErrno {
-      io_uring_register_buffers(&self.ring, self.fixedBuffers!.iov, UInt32(count))
+      io_uring_register_buffers(self.ring, self.fixedBuffers!.iov, UInt32(count))
     }
   }
 
   public func unregisterFixedBuffers() throws {
     guard fixedBuffers != nil else { throw Errno.invalidArgument }
-    try Errno.throwingErrno { io_uring_unregister_buffers(&self.ring) }
+    try Errno.throwingErrno { io_uring_unregister_buffers(self.ring) }
   }
 
   deinit {
@@ -315,17 +316,17 @@ public actor IORing: CustomStringConvertible {
     ioring_pool_remove_ring(executor.pool, reaper)
 
     // Cancel whatever is in flight and release the blocks its completions carry
-    io_uring_cancel_and_drain(&ring)
-    io_uring_unregister_buffers(&ring)
-    io_uring_queue_exit(&ring)
-    memset(&ring, 0, MemoryLayout<io_uring>.size)
+    io_uring_cancel_and_drain(ring)
+    io_uring_unregister_buffers(ring)
+    io_uring_queue_exit(ring)
+    ring.deallocate()
   }
 
   /// important note: caller MUST NOT suspend after calling getSqe() until preparation,
   /// ideally not until submission particularly if linked requests are involved (this
   /// may be impossible)
   func getSqe() throws -> UnsafeMutablePointer<io_uring_sqe> {
-    let sqe = io_uring_get_sqe(&ring)
+    let sqe = io_uring_get_sqe(ring)
     guard let sqe else {
       throw Errno.resourceTemporarilyUnavailable
     }
@@ -344,9 +345,9 @@ public actor IORing: CustomStringConvertible {
   @discardableResult
   func submit() throws -> Int {
     try Int(Errno.throwingErrno {
-      self.executor.isCurrentThread ? io_uring_submit(&self.ring) : ioring_pool_submit(
+      self.executor.isCurrentThread ? io_uring_submit(self.ring) : ioring_pool_submit(
         self.executor.pool,
-        &self.ring
+        self.ring
       )
     })
   }
