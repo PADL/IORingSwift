@@ -170,6 +170,32 @@ final class ExecutorTests: XCTestCase {
     XCTAssertThrowsError(try IORing(flags: .deferTaskRun))
   }
 
+  /// with every thread running jobs that yield and come straight back, so that the queue never
+  /// empties, completions and timers are still served between them
+  func testBacklogDoesNotStarveCompletions() async throws {
+    let (a, b) = try Self.makePair(ring: IORing.shared)
+    let deadline = ContinuousClock.now + .seconds(3)
+    let yielders = try (0..<(threads * 4)).map { _ in
+      try Task(executorPreference: IORing.taskExecutor) {
+        while !Task.isCancelled, ContinuousClock.now < deadline {
+          await Task.yield()
+        }
+      }
+    }
+    let start = ContinuousClock.now
+    try await a.send([1])
+    _ = try await b.receive(count: 1) as [UInt8]
+    let sleeper = try Task(executorPreference: IORing.taskExecutor) {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    try await sleeper.value
+    XCTAssertLessThan(ContinuousClock.now - start, .seconds(1))
+    for yielder in yielders {
+      yielder.cancel()
+      await yielder.value
+    }
+  }
+
   /// a job that blocks its thread, as jobs must not, neither stalls a task it started nor,
   /// for long, the completions of tasks doing I/O
   func testBlockedJobDoesNotStallTheRest() async throws {

@@ -27,8 +27,10 @@
 // itself: a completion and the task waiting on it stay on one thread, and so
 // does the peer of a request that completed with it, whose reply is usually the
 // next thing the first task waits on. Jobs beyond those, and jobs enqueued from
-// a running job, wake a parked worker. Each ring's eventfd is edge-triggered,
-// and a ring is reaped by one worker at a time.
+// a running job, wake a parked worker. A worker that keeps finding jobs looks
+// in on the epoll without blocking every few of them, so that a backlog which
+// never empties cannot starve completions and timers. Each ring's eventfd is
+// edge-triggered, and a ring is reaped by one worker at a time.
 
 #include "CQHandlerInternal.hpp"
 
@@ -166,6 +168,8 @@ void wakeDriver(ioring_pool *pool) {
 
 // Jobs a reaper keeps for itself rather than waking a worker for
 constexpr size_t kReaperJobs = 2;
+// Jobs a worker runs between looks at the epoll while no driver is in it
+constexpr size_t kJobsPerPoll = 16;
 
 // With the lock held, drops it and wakes a worker for what was just queued.
 void wakeAndUnlock(ioring_pool *pool, std::unique_lock<std::mutex> &lock) {
@@ -301,6 +305,7 @@ void *workerMain(void *argument) {
   auto worker = static_cast<Worker *>(argument);
   auto pool = worker->pool;
   struct epoll_event events[kMaxEvents];
+  size_t ran = 0; // jobs, for the poll every kJobsPerPoll
 
   pthread_setname_np(pthread_self(), "IORingExecutor");
   tlsWorker = worker;
@@ -323,6 +328,16 @@ void *workerMain(void *argument) {
       lock.unlock();
       pool->run(pool->context, job);
       lock.lock();
+      // with every worker running jobs nobody is in the epoll, and a backlog
+      // that never empties would starve completions and timers: look in on it
+      if (!pool->driverParked && ++ran % kJobsPerPoll == 0) {
+        lock.unlock();
+        int count = epoll_wait(pool->epollFd, events, kMaxEvents, 0);
+        lock.lock();
+        worker->reaping = true;
+        handleEvents(pool, lock, events, count);
+        worker->reaping = false;
+      }
       continue;
     }
     if (!pool->driverParked) {
