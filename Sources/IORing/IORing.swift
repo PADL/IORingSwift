@@ -248,7 +248,8 @@ public actor IORing: CustomStringConvertible {
     var flags = flags
 
     flags.remove(.attachWq)
-    // the pool submits from whichever of its threads is current, never from one issuer
+    // the pool submits from whichever of its threads is current, and the actor registers
+    // from whichever runs it: neither is one issuer, with or without SQPOLL
     guard flags.isDisjoint(with: [.singleIssuer, .deferTaskRun]) else {
       throw Errno.invalidArgument
     }
