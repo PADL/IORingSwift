@@ -22,8 +22,6 @@ import Glibc
 import Logging
 import SystemPackage
 
-extension io_uring: @retroactive @unchecked Sendable {}
-
 // MARK: - actor
 
 public actor IORing: CustomStringConvertible {
@@ -33,12 +31,18 @@ public actor IORing: CustomStringConvertible {
 
   private nonisolated static let DefaultIORingQueueEntries = 128
 
-  private var ring: io_uring
+  /// its own allocation: the executor's pool keeps the pointer for as long as it reaps the ring
+  private nonisolated(unsafe) let ring: UnsafeMutablePointer<io_uring>
   let executor: IORingExecutor // reaps the ring's completions
   private var reaper: UInt = 0 // the ring's registration with it
 
   private var fixedBuffers: FixedBuffer?
   private var nextBufferGroup: UInt16 = 1
+  private var retryPending = false // a submit is scheduled to carry what one left behind
+  private var dead: Errno? // what the last enter failed with, for good; see `submit()`
+  #if DEBUG
+  private var injectedSubmitErrors = [Errno]()
+  #endif
   private let entries: Int
   private let ringFd: Int32
 
@@ -245,11 +249,15 @@ public actor IORing: CustomStringConvertible {
     sqThreadIdle: Duration = .zero
   ) throws {
     let entries = entries ?? IORing.getIORingQueueEntries()
-    var ring = io_uring()
     var params = io_uring_params()
     var flags = flags
 
     flags.remove(.attachWq)
+    // the pool submits and the actor registers from whichever thread is current, so there
+    // is no single issuer, with or without SQPOLL; and nothing here enables a disabled ring
+    guard flags.isDisjoint(with: [.singleIssuer, .deferTaskRun, .rDisabled]) else {
+      throw Errno.invalidArgument
+    }
 
     if !shared {
       flags.insert(.attachWq)
@@ -265,20 +273,22 @@ public actor IORing: CustomStringConvertible {
       }
       params.sq_thread_idle = UInt32(sqThreadIdle)
     }
-    try Errno.throwingErrno {
-      io_uring_queue_init_params(CUnsignedInt(entries), &ring, &params)
+    executor = try IORingExecutor.install()
+    let ring = UnsafeMutablePointer<io_uring>.allocate(capacity: 1)
+    ring.initialize(to: io_uring())
+    do {
+      try Errno.throwingErrno {
+        io_uring_queue_init_params(CUnsignedInt(entries), ring, &params)
+      }
+    } catch {
+      ring.deallocate()
+      throw error
     }
     self.entries = entries
     self.ring = ring
-    ringFd = ring.ring_fd
+    ringFd = ring.pointee.ring_fd
 
-    do {
-      executor = try IORingExecutor.install()
-    } catch {
-      io_uring_queue_exit(&ring)
-      throw error
-    }
-    let error = ioring_pool_add_ring(executor.pool, &self.ring, &reaper)
+    let error = ioring_pool_add_ring(executor.pool, ring, &reaper)
     guard error == 0 else {
       throw Errno(rawValue: -error) // deinit tears the ring down; removing it is a no-op
     }
@@ -297,13 +307,13 @@ public actor IORing: CustomStringConvertible {
     fixedBuffers = FixedBuffer(count: count, size: size)
 
     try Errno.throwingErrno {
-      io_uring_register_buffers(&self.ring, self.fixedBuffers!.iov, UInt32(count))
+      io_uring_register_buffers(self.ring, self.fixedBuffers!.iov, UInt32(count))
     }
   }
 
   public func unregisterFixedBuffers() throws {
     guard fixedBuffers != nil else { throw Errno.invalidArgument }
-    try Errno.throwingErrno { io_uring_unregister_buffers(&self.ring) }
+    try Errno.throwingErrno { io_uring_unregister_buffers(self.ring) }
   }
 
   deinit {
@@ -312,17 +322,18 @@ public actor IORing: CustomStringConvertible {
     ioring_pool_remove_ring(executor.pool, reaper)
 
     // Cancel whatever is in flight and release the blocks its completions carry
-    io_uring_cancel_and_drain(&ring)
-    io_uring_unregister_buffers(&ring)
-    io_uring_queue_exit(&ring)
-    memset(&ring, 0, MemoryLayout<io_uring>.size)
+    io_uring_cancel_and_drain(ring)
+    io_uring_unregister_buffers(ring)
+    io_uring_queue_exit(ring)
+    ring.deallocate()
   }
 
   /// important note: caller MUST NOT suspend after calling getSqe() until preparation,
   /// ideally not until submission particularly if linked requests are involved (this
   /// may be impossible)
   func getSqe() throws -> UnsafeMutablePointer<io_uring_sqe> {
-    let sqe = io_uring_get_sqe(&ring)
+    if let dead { throw dead }
+    let sqe = io_uring_get_sqe(ring)
     guard let sqe else {
       throw Errno.resourceTemporarilyUnavailable
     }
@@ -335,18 +346,77 @@ public actor IORing: CustomStringConvertible {
     return nextBufferGroup
   }
 
+  /// Takes back from the kernel what is left of a group's buffers, which it does as it is
+  /// asked, in the caller's isolation; the group may be gone already, all its buffers out.
+  func removeBuffers(_ count: Int, from bufferGroup: UInt16) async {
+    try? await BufferSubmission<UInt8>(ring: self, removing: count, from: bufferGroup).submit()
+  }
+
   /// The kernel binds a request to the thread that calls `io_uring_enter`, and cancels it
   /// if that thread exits; from a thread outside the executor, one of its threads makes
   /// the call.
   @discardableResult
   func submit() throws -> Int {
-    try Int(Errno.throwingErrno {
-      self.executor.isCurrentThread ? io_uring_submit(&self.ring) : ioring_pool_submit(
-        self.executor.pool,
-        &self.ring
-      )
-    })
+    if let dead { throw dead }
+    do {
+      #if DEBUG
+      if !injectedSubmitErrors.isEmpty { throw injectedSubmitErrors.removeFirst() }
+      #endif
+      let submitted = try Int(Errno.throwingErrno {
+        self.executor.isCurrentThread ? io_uring_submit(self.ring) : ioring_pool_submit(
+          self.executor.pool,
+          self.ring
+        )
+      })
+      // the enter can consume a prefix and leave the rest, when a request allocation fails
+      if io_uring_sq_ready(ring) > 0, ring.pointee.flags & UInt32(IORING_SETUP_SQPOLL) == 0 {
+        retrySubmitLater()
+      }
+      return submitted
+    } catch let error as Errno {
+      if Self.transientSubmitErrors.contains(error) {
+        // the SQEs stay flushed for the next submit to carry, and the task awaiting
+        // them may be the ring's only one: make sure there is a next submit
+        retrySubmitLater()
+      } else {
+        // nothing this ring submits will enter again: the requests it holds, which the
+        // kernel never took, fail here with the error, and anything asked of it after
+        logger.error("submit failed with \(error), cannot retry")
+        dead = error
+        io_uring_sq_fail(ring, error.rawValue)
+      }
+      throw error
+    }
   }
+
+  /// what an enter fails with while the ring is sound: memory or a request short, the
+  /// completion queue overflowed, a signal
+  private static let transientSubmitErrors: Set<Errno> = [
+    .resourceTemporarilyUnavailable, .noMemory, .resourceBusy, .interrupted,
+  ]
+
+  /// A submit that failed, or left SQEs behind, is pending rather than failed: nothing that
+  /// awaits its requests unwinds, and they are carried by a retry, one at a time per ring.
+  private func retrySubmitLater() {
+    guard !retryPending else { return }
+    retryPending = true
+    Task(executorPreference: executor) {
+      try? await Task.sleep(for: .milliseconds(10))
+      await self.retrySubmit()
+    }
+  }
+
+  private func retrySubmit() {
+    retryPending = false
+    _ = try? submit()
+  }
+
+  #if DEBUG
+  /// For tests: the next submits throw these, in order, instead of entering the kernel.
+  func injectSubmitErrors(_ errors: [Errno]) {
+    injectedSubmitErrors = errors
+  }
+  #endif
 
   func withSubmissionGroup<T: Sendable>(_ body: (
     SubmissionGroup<T>
@@ -625,7 +695,7 @@ private extension IORing {
     flags: UInt32 = 0
   ) throws -> AsyncThrowingStream<[UInt8], Error> {
     let buffers = try BufferSubmission<UInt8>(ring: self, size: count, count: capacity)
-    try buffers.submit()
+    buffers.submit()
     return try MultishotSubmission(
       ring: self,
       .recv,
@@ -641,11 +711,7 @@ private extension IORing {
       },
       onTermination: { [buffers] in
         Task(executorPreference: self.executor) {
-          try? await BufferSubmission<UInt8>(
-            ring: self,
-            removing: capacity,
-            from: buffers.bufferGroup
-          ).submit()
+          await self.removeBuffers(capacity, from: buffers.bufferGroup)
           buffers.deallocate()
         }
       }
@@ -829,13 +895,13 @@ public extension IORing {
   }
 
   /// Cancels the request whose completion block is `token`; returns once the kernel has
-  /// answered, with `Errno.noSuchFileOrDirectory` if it had already completed.
+  /// answered, with `Errno.noSuchFileOrDirectory` if it had already completed. Matched by
+  /// user data alone, with no flag to say so: every kernel takes that, not every one the flag.
   func cancel(userData token: UnsafeMutableRawPointer) async throws {
     try await prepareAndSubmit(
       .async_cancel,
       fd: FileDescriptor(rawValue: -1),
-      address: UnsafeRawPointer(token),
-      moreFlags: UInt32(bitPattern: AsyncCancelFlags.userData.rawValue)
+      address: UnsafeRawPointer(token)
     ) { _ in }
   }
 

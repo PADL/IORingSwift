@@ -109,7 +109,7 @@ final class MessageHolder: @unchecked Sendable {
       self.storage.msg_name = UnsafeMutableRawPointer($0)
     }
     storage.msg_namelen = socklen_t(MemoryLayout<sockaddr_storage>.size)
-    try bufferSubmission.submit()
+    bufferSubmission.submit()
     storage.msg_flags = Int32(flags)
   }
 
@@ -169,12 +169,7 @@ final class MessageHolder: @unchecked Sendable {
     let ring = bufferSubmission.ring
     let count = bufferSubmission.count
     Task(executorPreference: ring.executor) {
-      // the group may be gone already, its buffers all handed out; the storage goes either way
-      try? await BufferSubmission<UInt8>(
-        ring: ring,
-        removing: count,
-        from: self.bufferGroup
-      ).submit()
+      await ring.removeBuffers(count, from: self.bufferGroup)
       await self._deallocate(ring: ring)
     }
   }

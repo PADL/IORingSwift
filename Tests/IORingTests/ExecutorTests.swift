@@ -20,6 +20,7 @@
 import class IORing.FileHandle
 import IORingUtils
 import struct SystemPackage.Errno
+import Synchronization
 import XCTest
 
 /// The executor is installed when the first ring is created: with SWIFT_IORING_EXECUTOR=global
@@ -41,8 +42,36 @@ final class ExecutorTests: XCTestCase {
     }
   }
 
+  private final class Counter: Sendable {
+    let value = Atomic<Int>(0)
+  }
+
   private var threads: Int {
     get throws { try IORingExecutor.install().threads }
+  }
+
+  /// a round trip and a sleep on the pool, which must be served while `busy` tasks keep every
+  /// thread occupied
+  private func assertCompletionsAndTimersServed<Failure>(
+    while busy: [Task<(), Failure>],
+    started: Counter
+  ) async throws {
+    let (a, b) = try Self.makePair(ring: IORing.shared)
+    while started.value.load(ordering: .relaxed) < busy.count {
+      await Task.yield()
+    }
+    let start = ContinuousClock.now
+    try await a.send([1])
+    _ = try await b.receive(count: 1) as [UInt8]
+    let sleeper = try Task(executorPreference: IORing.taskExecutor) {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    try await sleeper.value
+    XCTAssertLessThan(ContinuousClock.now - start, .seconds(1))
+    for task in busy {
+      task.cancel()
+      _ = await task.result
+    }
   }
 
   private var policy: IORing.ExecutorPolicy {
@@ -160,6 +189,37 @@ final class ExecutorTests: XCTestCase {
     if global {
       XCTAssertEqual(result.value, ExecutorTests.threadName)
     }
+  }
+
+  /// requests are submitted from whichever pool thread is current, which is never one issuer
+  func testSingleIssuerIsRejected() throws {
+    XCTAssertThrowsError(try IORing(flags: .singleIssuer)) {
+      XCTAssertEqual($0 as? Errno, .invalidArgument)
+    }
+    // the kernel requires the one for the other; the combination is rejected here, not there
+    XCTAssertThrowsError(try IORing(flags: [.singleIssuer, .deferTaskRun])) {
+      XCTAssertEqual($0 as? Errno, .invalidArgument)
+    }
+    // a ring created disabled has nothing here to enable it
+    XCTAssertThrowsError(try IORing(flags: .rDisabled)) {
+      XCTAssertEqual($0 as? Errno, .invalidArgument)
+    }
+  }
+
+  /// with every thread running jobs that yield and come straight back, so that the queue never
+  /// empties, completions and timers are still served between them
+  func testBacklogDoesNotStarveCompletions() async throws {
+    let started = Counter()
+    let yielders = try (0..<(threads * 4)).map { _ in
+      try Task(executorPreference: IORing.taskExecutor) {
+        started.value.add(1, ordering: .relaxed)
+        let deadline = ContinuousClock.now + .seconds(3) // from its start, not the test's
+        while !Task.isCancelled, ContinuousClock.now < deadline {
+          await Task.yield()
+        }
+      }
+    }
+    try await assertCompletionsAndTimersServed(while: yielders, started: started)
   }
 
   /// a job that blocks its thread, as jobs must not, neither stalls a task it started nor,

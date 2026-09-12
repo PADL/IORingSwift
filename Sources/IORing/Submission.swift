@@ -113,7 +113,7 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
     do {
       precondition(cancellationToken != nil)
       let sqe = try ring.getSqe()
-      io_uring_prep_cancel(sqe, cancellationToken, AsyncCancelFlags.userData.rawValue)
+      io_uring_prep_cancel(sqe, cancellationToken, 0) // by user data; see `IORing.cancel`
       _ = io_uring_sqe_set_block(sqe) { cqe in
         self.onCancel(cqe: cqe.pointee)
       }
@@ -256,7 +256,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
       try await withUnsafeThrowingContinuation { continuation in
         // guaranteed to run immediately
         self.continuation = continuation
-        if group != nil {
+        if handoff.load(ordering: .relaxed) != Handoff.direct.rawValue {
           if handoff.exchange(Handoff.waiting.rawValue, ordering: .acquiringAndReleasing)
             == Handoff.completed.rawValue
           {
@@ -265,9 +265,13 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
             cqe.flags = completionFlags
             resume(continuation, with: cqe)
           }
-          // a group counts every member ready before it submits, this one included
+          // a group counts every member ready before it submits, this one included;
+          // a group gone before that, its caller having thrown, submits nothing
           ready()
+          if group == nil { _ = try? ring.submit() }
         } else {
+          // a failed enter leaves the flushed SQE for the next submit to carry, so its
+          // completion is still coming; failing the continuation now would resume it twice
           _ = try? ring.submit()
         }
       }
@@ -319,23 +323,26 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
 
   let size: Int
   let bufferGroup: UInt16
-  let buffer: UnsafeMutablePointer<U>
+  /// none for the request removing a group's buffers
+  let buffer: UnsafeMutablePointer<U>?
 
   override func onCompletion(cqe: io_uring_cqe) {}
 
-  private func _submit(ring: isolated IORing) throws {
-    try ring.submit()
+  /// a failed submit leaves the SQE flushed and a retry pending, so the buffers are provided
+  /// either way, before whatever follows them in the queue
+  private func _submit(ring: isolated IORing) {
+    _ = try? ring.submit()
   }
 
-  func submit() throws {
-    try ring.assumeIsolated { ring in
-      try _submit(ring: ring)
+  func submit() {
+    ring.assumeIsolated { ring in
+      _submit(ring: ring)
     }
   }
 
   nonisolated func bufferPointer(id bufferID: Int) -> UnsafeMutablePointer<U> {
     precondition(bufferID < count)
-    return buffer + (bufferID * size)
+    return buffer! + (bufferID * size)
   }
 
   private init(
@@ -347,15 +354,13 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
     flags: IORing.SqeFlags = IORing.SqeFlags(),
     bufferGroup: UInt16
   ) throws {
-    guard let buffer else { throw Errno.invalidArgument }
-
     self.size = size
     self.bufferGroup = bufferGroup
     self.buffer = buffer
 
     try super.init(
       ring: ring,
-      .provide_buffers,
+      buffer == nil ? .remove_buffers : .provide_buffers,
       fd: BufferCount(count: count),
       address: buffer,
       length: UInt32(size),
@@ -437,7 +442,7 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
 
   private func _reprovideAndSubmit(ring: isolated IORing, bufferID: Int) throws {
     let submission = try BufferSubmission(ring: ring, reproviding: bufferID, from: self)
-    try submission.submit()
+    submission.submit()
   }
 
   func reprovideAndSubmit(id bufferID: Int) async throws {
@@ -445,7 +450,7 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
   }
 
   func deallocate() {
-    buffer.deallocate()
+    buffer?.deallocate()
   }
 }
 
@@ -524,7 +529,18 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
     func end(ring: isolated IORing) async {
       terminated = true
       guard let current, let token = current.cancellationToken else { return }
-      try? await ring.cancel(userData: token) // gone already, if it says so
+      // the cancel needs an SQE, which a full queue denies for a moment; the buffers
+      // must not go before it is in, while the request can still be armed
+      while true {
+        do {
+          try await ring.cancel(userData: token)
+          return
+        } catch let error as Errno where error == .resourceTemporarilyUnavailable {
+          try? await Task.sleep(for: .milliseconds(10))
+        } catch {
+          return // gone already, if it says so
+        }
+      }
     }
   }
 
@@ -631,29 +647,33 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
     )
   }
 
-  private func _submit(ring: isolated IORing) throws {
-    try ring.submit()
+  /// A failed submit leaves the SQE flushed and a retry pending, so the request is armed
+  /// either way; `current` first, so that ending the stream meanwhile cancels this request.
+  private func _submit(ring: isolated IORing) {
     holder.current = self
+    _ = try? ring.submit()
   }
 
-  func submit() throws -> AsyncThrowingStream<T, Error> {
-    try ring.assumeIsolated { ring in
-      try _submit(ring: ring)
+  func submit() -> AsyncThrowingStream<T, Error> {
+    ring.assumeIsolated { ring in
+      _submit(ring: ring)
     }
     return holder.takeStream()
   }
 
   private func resubmit(ring: isolated IORing) {
     guard !holder.terminated else { return }
+    let resubmission: MultishotSubmission
     do {
       // Create new SQE with same holder (shared stream/continuation)
-      let resubmission = try MultishotSubmission(ring: ring, self)
-      IORing.shared.logger.debug("resubmitting multishot submission \(resubmission)")
-      try resubmission._submit(ring: ring)
+      resubmission = try MultishotSubmission(ring: ring, self)
     } catch {
       IORing.shared.logger.debug("resubmitting multishot submission failed: \(error)")
       holder.continuation.finish(throwing: error)
+      return
     }
+    IORing.shared.logger.debug("resubmitting multishot submission \(resubmission)")
+    resubmission._submit(ring: ring)
   }
 
   override func onCompletion(cqe: io_uring_cqe) {

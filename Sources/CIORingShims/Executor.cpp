@@ -27,8 +27,10 @@
 // itself: a completion and the task waiting on it stay on one thread, and so
 // does the peer of a request that completed with it, whose reply is usually the
 // next thing the first task waits on. Jobs beyond those, and jobs enqueued from
-// a running job, wake a parked worker. Each ring's eventfd is edge-triggered,
-// and a ring is reaped by one worker at a time.
+// a running job, wake a parked worker. A worker that keeps finding jobs looks
+// in on the epoll without blocking every few of them, so that a backlog which
+// never empties cannot starve completions and timers. Each ring's eventfd is
+// edge-triggered, and a ring is reaped by one worker at a time.
 
 #include "CQHandlerInternal.hpp"
 
@@ -166,6 +168,10 @@ void wakeDriver(ioring_pool *pool) {
 
 // Jobs a reaper keeps for itself rather than waking a worker for
 constexpr size_t kReaperJobs = 2;
+// Jobs a worker runs between looks at the epoll while no driver is in it
+constexpr size_t kJobsPerPoll = 16;
+// Submits a worker serves in a row while jobs wait, before it runs one
+constexpr size_t kSubmitStreak = 8;
 
 // With the lock held, drops it and wakes a worker for what was just queued.
 void wakeAndUnlock(ioring_pool *pool, std::unique_lock<std::mutex> &lock) {
@@ -211,10 +217,10 @@ void armTimer(TimerQueue &queue) {
   queue.armed = deadline;
 }
 
-// lock held
+// lock held. The timerfd is not drained: the settime that re-arms or disarms
+// it below resets its count, and the next expiry is a new edge either way.
 void expireTimers(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
                   TimerQueue &queue) {
-  drain(queue.fd);
   uint64_t now = nanoseconds(queue.clock);
   while (!queue.heap.empty() && queue.heap.front().deadline <= now) {
     std::pop_heap(queue.heap.begin(), queue.heap.end(), timerLater);
@@ -301,31 +307,35 @@ void *workerMain(void *argument) {
   auto worker = static_cast<Worker *>(argument);
   auto pool = worker->pool;
   struct epoll_event events[kMaxEvents];
+  size_t ran = 0;    // submits and jobs, for the poll every kJobsPerPoll
+  size_t streak = 0; // submits served since the last job
 
   pthread_setname_np(pthread_self(), "IORingExecutor");
   tlsWorker = worker;
 
   std::unique_lock<std::mutex> lock(pool->mutex);
   for (;;) {
-    if (!pool->submits.empty()) {
+    // submits first, their callers being blocked, but not to the exclusion of jobs
+    if (!pool->submits.empty() && (pool->jobs.empty() || streak < kSubmitStreak)) {
       SubmitRequest *request = pool->submits.front();
       pool->submits.pop_front();
       lock.unlock();
       request->result = io_uring_submit(request->ring);
-      request->done.store(1, std::memory_order_release);
-      syscall(SYS_futex, &request->done, FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0);
+      // the caller returns, and frees the request, as soon as it sees `done`;
+      // the wake needs only the address, which the kernel does not read
+      std::atomic<uint32_t> *done = &request->done;
+      done->store(1, std::memory_order_release);
+      syscall(SYS_futex, done, FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0);
       lock.lock();
-      continue;
-    }
-    if (!pool->jobs.empty()) {
+      streak++;
+    } else if (!pool->jobs.empty()) {
       void *job = pool->jobs.front();
       pool->jobs.pop_front();
       lock.unlock();
       pool->run(pool->context, job);
       lock.lock();
-      continue;
-    }
-    if (!pool->driverParked) {
+      streak = 0;
+    } else if (!pool->driverParked) {
       pool->driverParked = true;
       lock.unlock();
       int count = epoll_wait(pool->epollFd, events, kMaxEvents, -1);
@@ -335,8 +345,20 @@ void *workerMain(void *argument) {
       handleEvents(pool, lock, events, count);
       worker->reaping = false;
       continue;
+    } else {
+      park(pool, lock, worker);
+      continue;
     }
-    park(pool, lock, worker);
+    // with every worker busy nobody is in the epoll, and a backlog that never
+    // empties would starve completions and timers: look in on it now and then
+    if (!pool->driverParked && ++ran % kJobsPerPoll == 0) {
+      lock.unlock();
+      int count = epoll_wait(pool->epollFd, events, kMaxEvents, 0);
+      lock.lock();
+      worker->reaping = true;
+      handleEvents(pool, lock, events, count);
+      worker->reaping = false;
+    }
   }
 }
 
