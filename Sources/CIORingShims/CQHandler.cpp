@@ -51,6 +51,28 @@ void io_uring_cancel_and_drain(struct io_uring *ring) {
   }
 }
 
+// For a ring whose enter has failed for good and is not tried again: the SQEs
+// it holds were never taken by the kernel, so their blocks are owed a completion,
+// given here with `error`, after which the queue is empty.
+void io_uring_sq_fail(struct io_uring *ring, int error) {
+  struct io_uring_sq *sq = &ring->sq;
+  unsigned head = *sq->khead;
+  unsigned shift = (ring->flags & IORING_SETUP_SQE128) ? 1 : 0;
+  for (unsigned i = head; i != sq->sqe_tail; i++) {
+    struct io_uring_sqe *sqe = &sq->sqes[(i & sq->ring_mask) << shift];
+    auto block = reinterpret_cast<io_uring_cqe_block>(uintptr_t(sqe->user_data));
+    if (block == nullptr)
+      continue;
+    struct io_uring_cqe cqe = {};
+    cqe.user_data = sqe->user_data;
+    cqe.res = -error;
+    block(&cqe);
+    _Block_release(block);
+  }
+  sq->sqe_head = sq->sqe_tail = head;
+  io_uring_smp_store_release(sq->ktail, head);
+}
+
 unsigned io_uring_cq_reap(struct io_uring *ring,
                           std::vector<io_uring_cqe_block> &finished) {
   struct io_uring_cqe *cqe;

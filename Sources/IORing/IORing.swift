@@ -39,6 +39,7 @@ public actor IORing: CustomStringConvertible {
   private var fixedBuffers: FixedBuffer?
   private var nextBufferGroup: UInt16 = 1
   private var retryPending = false // a submit is scheduled to carry what one left behind
+  private var dead: Errno? // what the last enter failed with, for good; see `submit()`
   #if DEBUG
   private var injectedSubmitErrors = [Errno]()
   #endif
@@ -331,6 +332,7 @@ public actor IORing: CustomStringConvertible {
   /// ideally not until submission particularly if linked requests are involved (this
   /// may be impossible)
   func getSqe() throws -> UnsafeMutablePointer<io_uring_sqe> {
+    if let dead { throw dead }
     let sqe = io_uring_get_sqe(ring)
     guard let sqe else {
       throw Errno.resourceTemporarilyUnavailable
@@ -371,14 +373,18 @@ public actor IORing: CustomStringConvertible {
         retrySubmitLater()
       }
       return submitted
-    } catch let error as Errno where Self.transientSubmitErrors.contains(error) {
-      // the SQEs stay flushed for the next submit to carry, and the task awaiting
-      // them may be the ring's only one: make sure there is a next submit
-      retrySubmitLater()
-      throw error
-    } catch {
-      // nothing this ring submits will enter again, and its pending requests stay so
-      logger.error("submit failed with \(error), cannot retry")
+    } catch let error as Errno {
+      if Self.transientSubmitErrors.contains(error) {
+        // the SQEs stay flushed for the next submit to carry, and the task awaiting
+        // them may be the ring's only one: make sure there is a next submit
+        retrySubmitLater()
+      } else {
+        // nothing this ring submits will enter again: the requests it holds, which the
+        // kernel never took, fail here with the error, and anything asked of it after
+        logger.error("submit failed with \(error), cannot retry")
+        dead = error
+        io_uring_sq_fail(ring, error.rawValue)
+      }
       throw error
     }
   }

@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023 PADL Software Pty Ltd
+// Copyright (c) 2023-2026 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -42,6 +42,10 @@ void *_Nonnull io_uring_sqe_set_block(struct io_uring_sqe *_Nonnull sqe,
 /// Cancels every request on a ring being torn down and drains their completions,
 /// releasing their blocks without invoking them
 void io_uring_cancel_and_drain(struct io_uring *_Nonnull ring);
+
+/// Completes every request a ring still holds unsubmitted with `-error`, releasing
+/// their blocks, for a ring whose enter has failed for good
+void io_uring_sq_fail(struct io_uring *_Nonnull ring, int error);
 
 /// A pool of persistent threads that run jobs and reap completions
 typedef struct ioring_pool *ioring_pool_t;
