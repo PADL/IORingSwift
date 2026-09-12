@@ -23,6 +23,34 @@ void *io_uring_sqe_set_block(struct io_uring_sqe *sqe,
   return cancellationToken;
 }
 
+static void release_cqe_block(struct io_uring_cqe *cqe) {
+  auto block = reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
+  if (block != nullptr)
+    _Block_release(block);
+}
+
+// For a ring nothing can await any longer, as every submission holds its ring:
+// the blocks are owed a release, not a call. The cancel itself carries no block.
+void io_uring_cancel_and_drain(struct io_uring *ring) {
+  struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
+  if (sqe == nullptr)
+    return;
+  io_uring_prep_cancel(sqe, nullptr, IORING_ASYNC_CANCEL_ANY);
+  io_uring_sqe_set_data(sqe, nullptr);
+  io_uring_submit(ring);
+
+  struct io_uring_cqe *cqe;
+  // the cancel's own completion, then whatever it cancelled
+  if (io_uring_wait_cqe_nr(ring, &cqe, 1) == 0) {
+    release_cqe_block(cqe);
+    io_uring_cqe_seen(ring, cqe);
+  }
+  while (io_uring_wait_cqe_nr(ring, &cqe, 0) == 0) {
+    release_cqe_block(cqe);
+    io_uring_cqe_seen(ring, cqe);
+  }
+}
+
 unsigned io_uring_cq_reap(struct io_uring *ring,
                           std::vector<io_uring_cqe_block> &finished) {
   struct io_uring_cqe *cqe;

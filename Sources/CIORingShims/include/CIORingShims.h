@@ -39,6 +39,10 @@ typedef void (^io_uring_cqe_block)(struct io_uring_cqe *_Nonnull);
 void *_Nonnull io_uring_sqe_set_block(struct io_uring_sqe *_Nonnull sqe,
                                       _Nonnull io_uring_cqe_block block);
 
+/// Cancels every request on a ring being torn down and drains their completions,
+/// releasing their blocks without invoking them
+void io_uring_cancel_and_drain(struct io_uring *_Nonnull ring);
+
 /// A pool of persistent threads that run jobs and reap completions
 typedef struct ioring_pool *ioring_pool_t;
 

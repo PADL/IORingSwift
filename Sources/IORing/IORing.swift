@@ -311,20 +311,8 @@ public actor IORing: CustomStringConvertible {
     // the drain below and io_uring_queue_exit() cannot race a reap in progress.
     ioring_pool_remove_ring(executor.pool, reaper)
 
-    // Cancel all inflight requests to release their _Block_copy'd closures
-    if let sqe = io_uring_get_sqe(&ring) {
-      io_uring_prep_cancel(sqe, nil, AsyncCancelFlags.any.rawValue)
-      _ = io_uring_sqe_set_block(sqe) { _ in }
-      io_uring_submit(&ring)
-      // Wait for the cancel CQE, then non-blocking drain any remaining
-      var cqe: UnsafeMutablePointer<io_uring_cqe>?
-      if io_uring_wait_cqe_nr(&ring, &cqe, 1) == 0, let c = cqe {
-        io_uring_cqe_seen(&ring, c)
-      }
-      while io_uring_wait_cqe_nr(&ring, &cqe, 0) == 0, let c = cqe {
-        io_uring_cqe_seen(&ring, c)
-      }
-    }
+    // Cancel whatever is in flight and release the blocks its completions carry
+    io_uring_cancel_and_drain(&ring)
     io_uring_unregister_buffers(&ring)
     io_uring_queue_exit(&ring)
     memset(&ring, 0, MemoryLayout<io_uring>.size)
