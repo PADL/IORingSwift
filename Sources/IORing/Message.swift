@@ -169,7 +169,8 @@ final class MessageHolder: @unchecked Sendable {
     let ring = bufferSubmission.ring
     let count = bufferSubmission.count
     Task(executorPreference: ring.executor) {
-      try await BufferSubmission<UInt8>(
+      // the group may be gone already, its buffers all handed out; the storage goes either way
+      try? await BufferSubmission<UInt8>(
         ring: ring,
         removing: count,
         from: self.bufferGroup
