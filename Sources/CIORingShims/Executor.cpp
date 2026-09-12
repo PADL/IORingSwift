@@ -317,8 +317,11 @@ void *workerMain(void *argument) {
       pool->submits.pop_front();
       lock.unlock();
       request->result = io_uring_submit(request->ring);
-      request->done.store(1, std::memory_order_release);
-      syscall(SYS_futex, &request->done, FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0);
+      // the caller returns, and frees the request, as soon as it sees `done`;
+      // the wake needs only the address, which the kernel does not read
+      std::atomic<uint32_t> *done = &request->done;
+      done->store(1, std::memory_order_release);
+      syscall(SYS_futex, done, FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0);
       lock.lock();
       continue;
     }
