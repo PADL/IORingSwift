@@ -18,6 +18,8 @@ import AsyncAlgorithms
 import AsyncQueue
 import Glibc
 
+/// The group is gone if its caller's task was cancelled while members were in flight: each
+/// member completes on its own, the request and its buffers being the ring's, not the group's.
 extension SingleshotSubmission {
   func enqueue(ring: isolated IORing) async {
     let result: Result<T, Error>
@@ -26,11 +28,11 @@ extension SingleshotSubmission {
     } catch {
       result = .failure(error)
     }
-    group!.resultContinuation?.yield(result)
+    group?.resultContinuation?.yield(result)
   }
 
   func ready() {
-    group!.readinessContinuation!.yield(())
+    group?.readinessContinuation?.yield(())
   }
 }
 
@@ -99,7 +101,10 @@ final class SubmissionGroup<T: Sendable>: Sendable {
     // a failed submit leaves the SQEs flushed and a retry pending: the completions are
     // still coming, and the members deliver them through this group, which must wait
     _ = try? ring.submit()
-    return try await allComplete()
+    let results = try await allComplete()
+    // the streams end with the caller's task, short of the members still in flight
+    if results.count < submissions.count { try Task.checkCancellation() }
+    return results
   }
 }
 
