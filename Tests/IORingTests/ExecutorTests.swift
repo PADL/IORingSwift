@@ -23,7 +23,9 @@ import struct SystemPackage.Errno
 import XCTest
 
 // The executor is installed when the first ring is created, so every test in the package runs
-// on it; these check what it does beyond running jobs.
+// on it, or with SWIFT_IORING_EXECUTOR=preference beside it, where every request from an
+// unannotated task takes the fallback through the pool; these check what it does beyond
+// running jobs.
 final class ExecutorTests: XCTestCase {
   private static let threadName = "IORingExecutor"
 
@@ -41,6 +43,10 @@ final class ExecutorTests: XCTestCase {
     get throws { try IORingExecutor.install().threads }
   }
 
+  private var policy: IORing.ExecutorPolicy {
+    get throws { try IORingExecutor.install().policy }
+  }
+
   private static func makePair(ring: IORing) throws -> (Socket, Socket) {
     var fds = [Int32](repeating: -1, count: 2)
     guard socketpair(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0, &fds) == 0 else {
@@ -53,15 +59,32 @@ final class ExecutorTests: XCTestCase {
   }
 
   func testTasksRunOnItsThreads() async throws {
-    _ = try threads
+    let global = try policy == .global
     let detached = Task.detached { ExecutorTests.currentThreadName() }
     let name = await detached.value
-    XCTAssertEqual(name, ExecutorTests.threadName)
+    XCTAssertEqual(name == ExecutorTests.threadName, global)
+    let preferred = Task(executorPreference: try IORing.taskExecutor) { ExecutorTests.currentThreadName() }
+    let preferredName = await preferred.value
+    XCTAssertEqual(preferredName, ExecutorTests.threadName)
     // a completion resumes its task on the thread that reaped it
     let (a, b) = try Self.makePair(ring: IORing.shared)
     try await a.send([1])
     _ = try await b.receive(count: 1) as [UInt8]
-    XCTAssertEqual(ExecutorTests.currentThreadName(), ExecutorTests.threadName)
+    XCTAssertEqual(ExecutorTests.currentThreadName() == ExecutorTests.threadName, global)
+  }
+
+  // a task that prefers the executor does its I/O without leaving it
+  func testPreferredTaskStaysOnItsThreads() async throws {
+    let (a, b) = try Self.makePair(ring: IORing.shared)
+    let task = Task(executorPreference: try IORing.taskExecutor) {
+      let before = ExecutorTests.currentThreadName()
+      try await a.send([1])
+      _ = try await b.receive(count: 1) as [UInt8]
+      return (before, ExecutorTests.currentThreadName())
+    }
+    let (before, after) = try await task.value
+    XCTAssertEqual(before, ExecutorTests.threadName)
+    XCTAssertEqual(after, ExecutorTests.threadName)
   }
 
   func testSleepOnEachClock() async throws {
@@ -112,7 +135,7 @@ final class ExecutorTests: XCTestCase {
 
   // a task started from a thread the pool knows nothing about
   func testTaskFromForeignThread() async throws {
-    _ = try threads
+    let global = try policy == .global
     let done = DispatchSemaphore(value: 0)
     let result = Box("")
     let thread = Thread {
@@ -123,7 +146,7 @@ final class ExecutorTests: XCTestCase {
     }
     thread.start()
     XCTAssertEqual(done.wait(timeout: .now() + 5), .success)
-    XCTAssertEqual(result.value, ExecutorTests.threadName)
+    XCTAssertEqual(result.value == ExecutorTests.threadName, global)
   }
 
   // a job that blocks its thread, as jobs must not, neither stalls a task it started nor,
@@ -133,7 +156,7 @@ final class ExecutorTests: XCTestCase {
     let ring = IORing.shared
     let (a, b) = try Self.makePair(ring: ring)
     let released = DispatchSemaphore(value: 0)
-    let blocker = Task.detached {
+    let blocker = Task(executorPreference: try IORing.taskExecutor) {
       let child = Task { released.signal() }
       // the child runs on another thread while this one is stuck
       XCTAssertEqual(released.wait(timeout: .now() + 5), .success)

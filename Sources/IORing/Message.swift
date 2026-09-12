@@ -164,13 +164,13 @@ final class MessageHolder: @unchecked Sendable {
     guard let bufferSubmission else { return }
     let ring = bufferSubmission.ring
     let count = bufferSubmission.count
-    Task {
+    Task(executorPreference: ring.executor) {
       try await BufferSubmission<UInt8>(
         ring: ring,
         removing: count,
-        from: bufferGroup
+        from: self.bufferGroup
       ).submit()
-      await _deallocate(ring: ring)
+      await self._deallocate(ring: ring)
     }
   }
 }

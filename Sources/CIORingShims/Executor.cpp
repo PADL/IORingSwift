@@ -71,6 +71,13 @@ struct RingEntry {
   bool busy = false;   // a worker is reaping it; under pool->mutex
 };
 
+// An io_uring_submit a thread outside the pool waits on a worker to make
+struct SubmitRequest {
+  struct io_uring *ring;
+  int result = 0;
+  std::atomic<uint32_t> done{0}; // futex word
+};
+
 struct Timer {
   uint64_t deadline; // nanoseconds on the queue's clock
   uint64_t sequence; // orders jobs with equal deadlines
@@ -119,6 +126,7 @@ struct ioring_pool {
   std::mutex mutex;
   std::condition_variable ringIdle; // a RingEntry's `busy` was cleared
   std::deque<void *> jobs;
+  std::deque<SubmitRequest *> submits; // served before jobs: their callers are blocked
   Worker *idle = nullptr;    // stack of workers parked on their futex
   bool driverParked = false; // a worker is blocked in epoll_wait
   int epollFd = -1;
@@ -157,17 +165,8 @@ void wakeDriver(ioring_pool *pool) {
 // Jobs a reaper keeps for itself rather than waking a worker for
 constexpr size_t kReaperJobs = 2;
 
-// Adds a job with the lock held, drops the lock, and does whatever waking the
-// job needs.
-void enqueueAndUnlock(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
-                      void *job) {
-  pool->jobs.push_back(job);
-  Worker *self = tlsWorker;
-  if (self != nullptr && self->pool == pool && self->reaping &&
-      pool->jobs.size() <= kReaperJobs) {
-    lock.unlock();
-    return;
-  }
+// With the lock held, drops it and wakes a worker for what was just queued.
+void wakeAndUnlock(ioring_pool *pool, std::unique_lock<std::mutex> &lock) {
   if (Worker *worker = pool->idle) {
     pool->idle = worker->nextIdle;
     worker->nextIdle = nullptr;
@@ -181,8 +180,22 @@ void enqueueAndUnlock(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
     wakeDriver(pool);
     return;
   }
-  // every worker is busy; one will find the job when it looks for the next
+  // every worker is busy; one will find it when it looks for the next
   lock.unlock();
+}
+
+// Adds a job with the lock held, drops the lock, and does whatever waking the
+// job needs.
+void enqueueAndUnlock(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
+                      void *job) {
+  pool->jobs.push_back(job);
+  Worker *self = tlsWorker;
+  if (self != nullptr && self->pool == pool && self->reaping &&
+      pool->jobs.size() <= kReaperJobs) {
+    lock.unlock();
+    return;
+  }
+  wakeAndUnlock(pool, lock);
 }
 
 void armTimer(TimerQueue &queue) {
@@ -279,6 +292,16 @@ void *workerMain(void *argument) {
 
   std::unique_lock<std::mutex> lock(pool->mutex);
   for (;;) {
+    if (!pool->submits.empty()) {
+      SubmitRequest *request = pool->submits.front();
+      pool->submits.pop_front();
+      lock.unlock();
+      request->result = io_uring_submit(request->ring);
+      request->done.store(1, std::memory_order_release);
+      syscall(SYS_futex, &request->done, FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0);
+      lock.lock();
+      continue;
+    }
     if (!pool->jobs.empty()) {
       void *job = pool->jobs.front();
       pool->jobs.pop_front();
@@ -372,6 +395,21 @@ ioring_pool_t ioring_pool_create(unsigned threads, ioring_job_runner run,
 void ioring_pool_set_context(ioring_pool_t pool, void *context) {
   std::unique_lock<std::mutex> lock(pool->mutex);
   pool->context = context;
+}
+
+bool ioring_pool_is_worker(ioring_pool_t pool) {
+  return tlsWorker != nullptr && tlsWorker->pool == pool;
+}
+
+int ioring_pool_submit(ioring_pool_t pool, struct io_uring *ring) {
+  assert(!ioring_pool_is_worker(pool)); // a worker submits itself
+  SubmitRequest request{ring};
+  std::unique_lock<std::mutex> lock(pool->mutex);
+  pool->submits.push_back(&request);
+  wakeAndUnlock(pool, lock);
+  while (request.done.load(std::memory_order_acquire) == 0)
+    syscall(SYS_futex, &request.done, FUTEX_WAIT_PRIVATE, 0, nullptr, nullptr, 0);
+  return request.result;
 }
 
 void ioring_pool_enqueue(ioring_pool_t pool, void *job) {
