@@ -44,7 +44,7 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
   /// closed before the completion handler runs; for a send to an address, the copy of that
   /// address the kernel reads from the SQE at submission, which holds the owner in turn
   fileprivate let retained: AnyObject?
-  private(set) var cancellationToken: UnsafeMutableRawPointer?
+  fileprivate(set) var cancellationToken: UnsafeMutableRawPointer?
 
   nonisolated var description: String {
     "(\(type(of: self)))(fd: \(fileDescriptor), opcode: \(opcode), handler: \(String(describing: handler)))"
@@ -110,10 +110,11 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
   }
 
   func cancel(ring: isolated IORing) throws {
+    // none once the request completed: its block is freed, and the address may be another's
+    guard let token = cancellationToken else { return }
     do {
-      precondition(cancellationToken != nil)
       let sqe = try ring.getSqe()
-      io_uring_prep_cancel(sqe, cancellationToken, 0) // by user data; see `IORing.cancel`
+      io_uring_prep_cancel(sqe, token, 0) // by user data; see `IORing.cancel`
       _ = io_uring_sqe_set_block(sqe) { cqe in
         self.onCancel(cqe: cqe.pointee)
       }
@@ -214,6 +215,8 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
   /// the completion, when it came first; all a single-shot completion is judged by
   private var completionResult: Int32 = 0
   private var completionFlags: UInt32 = 0
+  /// the linked timeout's timespec, which the kernel reads when the pair is submitted
+  private var timeout: UnsafeMutablePointer<__kernel_timespec>?
 
   init(
     ring: isolated IORing,
@@ -228,9 +231,16 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
     bufferIndex: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
     group: SubmissionGroup<T>? = nil,
+    timeout: Duration? = nil,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) async throws {
     self.group = group
+    if let timeout {
+      guard timeout >= .zero else { throw Errno.invalidArgument }
+      // two SQEs with no suspension between: once the request's is prepared and linked
+      // to whatever follows, the timeout's must not fail
+      guard ring.sqSpaceLeft >= 2 else { throw Errno.resourceTemporarilyUnavailable }
+    }
     try super.init(
       ring: ring,
       opcode,
@@ -238,17 +248,33 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
       address: address,
       length: length,
       offset: offset,
-      flags: flags,
+      flags: timeout == nil ? flags : flags.union(.ioLink),
       ioprio: ioprio,
       moreFlags: moreFlags,
       bufferIndexOrGroup: bufferIndex,
       socketAddress: socketAddress,
       handler: handler
     )
+    if let timeout {
+      // allocated once the object is whole, so that deinit alone owns it whatever throws
+      let timespec = UnsafeMutablePointer<__kernel_timespec>.allocate(capacity: 1)
+      timespec.initialize(to: timeout.kernelTimespec)
+      self.timeout = timespec
+      // the timeout follows its request, taking over any link the request had onward;
+      // nothing awaits its own completion, so it carries no block
+      let sqe = try ring.getSqe()
+      io_uring_prep_link_timeout(sqe, timespec, 0)
+      io_uring_sqe_set_flags(sqe, UInt32(flags.intersection([.ioLink, .ioHardLink]).rawValue))
+      io_uring_sqe_set_data(sqe, nil)
+    }
     if let group {
       handoff.store(Handoff.idle.rawValue, ordering: .relaxed)
       group.enqueue(submission: self, ring: ring)
     }
+  }
+
+  deinit {
+    timeout?.deallocate()
   }
 
   private func _submit(ring: isolated IORing) async throws -> T {
@@ -282,10 +308,16 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
   }
 
   func submit() async throws -> T {
-    try await _submit(ring: ring)
+    do {
+      return try await _submit(ring: ring)
+    } catch let error as Errno where error == .canceled && timeout != nil && !Task.isCancelled {
+      // the linked timeout, or whatever else cancelled a timed request; see `IORing.read`
+      throw Errno.timedOut
+    }
   }
 
   override func onCompletion(cqe: io_uring_cqe) {
+    cancellationToken = nil // a cancel from here on would find the address, not the request
     if handoff.load(ordering: .acquiring) == Handoff.direct.rawValue {
       resume(continuation!, with: cqe)
       return

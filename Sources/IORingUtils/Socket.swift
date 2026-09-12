@@ -341,6 +341,17 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     return Socket(ring: _ring, fileHandle: clientFileHandle as! FileHandle)
   }
 
+  /// `timeout`, here and below, is a linked timeout the kernel keeps: the request is cancelled
+  /// when it passes and throws `Errno.timedOut`; see `IORing` for what it cannot promise. No
+  /// default here: `accept()` has a multishot twin, which an unlabelled call must not fall to.
+  public func accept(timeout: Duration) async throws -> Socket {
+    let clientFileHandle: FileDescriptorRepresentable = try await _ring.accept(
+      from: fileHandle,
+      timeout: timeout
+    )
+    return Socket(ring: _ring, fileHandle: clientFileHandle as! FileHandle)
+  }
+
   public func accept() async throws -> AnyAsyncSequence<Socket> {
     try await _ring.accept(from: fileHandle).map { Socket(
       ring: _ring,
@@ -359,19 +370,28 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     try fileHandle.setBlocking(true)
   }
 
-  public func connect(to address: any SocketAddress) async throws {
-    try await _ring.connect(fileHandle, to: address)
+  public func connect(to address: any SocketAddress, timeout: Duration? = nil) async throws {
+    try await _ring.connect(fileHandle, to: address, timeout: timeout)
   }
 
-  public func read(into buffer: inout [UInt8], count: Int) async throws -> Int {
-    try await _ring.read(into: &buffer, count: count, from: fileHandle)
+  public func read(
+    into buffer: inout [UInt8],
+    count: Int,
+    timeout: Duration? = nil
+  ) async throws -> Int {
+    try await _ring.read(into: &buffer, count: count, from: fileHandle, timeout: timeout)
   }
 
-  public func read(count: Int, awaitingAllRead: Bool) async throws -> [UInt8] {
+  /// `timeout` bounds each read of the loop, not the whole: an idle bound, not a deadline
+  public func read(
+    count: Int,
+    awaitingAllRead: Bool,
+    timeout: Duration? = nil
+  ) async throws -> [UInt8] {
     var buffer = [UInt8]()
 
     repeat {
-      let _buffer = try await _ring.read(count: count, from: fileHandle)
+      let _buffer = try await _ring.read(count: count, from: fileHandle, timeout: timeout)
       if _buffer.count == 0 {
         break // EOF
       }
@@ -405,7 +425,13 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     return buffer
   }
 
-  public func write(_ buffer: [UInt8], count: Int, awaitingAllWritten: Bool) async throws -> Int {
+  /// `timeout` bounds each write of the loop, not the whole: an idle bound, not a deadline
+  public func write(
+    _ buffer: [UInt8],
+    count: Int,
+    awaitingAllWritten: Bool,
+    timeout: Duration? = nil
+  ) async throws -> Int {
     var nwritten = 0
 
     repeat {
@@ -417,7 +443,8 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
       nwritten += try await _ring.write(
         chunk,
         count: count - nwritten,
-        to: fileHandle
+        to: fileHandle,
+        timeout: timeout
       )
     } while awaitingAllWritten && nwritten < count
 
@@ -445,10 +472,11 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     return nwritten
   }
 
-  public func receive(count: Int) async throws -> [UInt8] {
+  public func receive(count: Int, timeout: Duration? = nil) async throws -> [UInt8] {
     try await _ring.receive(
       count: count,
-      from: fileHandle
+      from: fileHandle,
+      timeout: timeout
     )
   }
 
@@ -461,18 +489,23 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     )
   }
 
-  public func send(_ data: [UInt8]) async throws {
+  public func send(_ data: [UInt8], timeout: Duration? = nil) async throws {
     try await _ring.send(
       data,
-      to: fileHandle
+      to: fileHandle,
+      timeout: timeout
     )
   }
 
-  public func send(_ data: [UInt8], to address: any SocketAddress) async throws {
+  public func send(
+    _ data: [UInt8],
+    to address: any SocketAddress,
+    timeout: Duration? = nil
+  ) async throws {
     let bytes = address.withSockAddr { sa, size in
       Array(UnsafeRawBufferPointer(start: sa, count: Int(size)))
     }
-    try await _ring.send(data, to: bytes, from: fileHandle)
+    try await _ring.send(data, to: bytes, from: fileHandle, timeout: timeout)
   }
 
   public func receiveMessages(
