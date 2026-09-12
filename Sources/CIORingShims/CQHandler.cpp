@@ -82,10 +82,12 @@ unsigned io_uring_cq_reap(struct io_uring *ring,
     unsigned count = 0;
     io_uring_for_each_cqe(ring, head, cqe) {
       auto block = reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
-      assert(block != nullptr);
-      block(cqe);
-      if ((cqe->flags & IORING_CQE_F_MORE) == 0)
-        finished.push_back(block);
+      // a linked timeout carries none: nothing awaits its completion
+      if (block != nullptr) {
+        block(cqe);
+        if ((cqe->flags & IORING_CQE_F_MORE) == 0)
+          finished.push_back(block);
+      }
       count++;
     }
     io_uring_cq_advance(ring, count);

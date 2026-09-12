@@ -109,12 +109,16 @@ extension UnsafeMutablePointer {
 }
 
 extension IORing {
-  func connect(_ fd: FileDescriptorRepresentable, to address: any SocketAddress) async throws {
+  func connect(
+    _ fd: FileDescriptorRepresentable,
+    to address: any SocketAddress,
+    timeout: Duration? = nil
+  ) async throws {
     var addressBuffer = [UInt8]()
     withUnsafeBytes(of: address.asStorage()) {
       addressBuffer = [UInt8]($0)
     }
-    try await connect(fd, to: addressBuffer)
+    try await connect(fd, to: addressBuffer, timeout: timeout)
   }
 }
 

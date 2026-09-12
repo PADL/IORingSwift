@@ -341,6 +341,11 @@ public actor IORing: CustomStringConvertible {
     return sqe
   }
 
+  /// SQEs that can be taken before a submit is needed
+  var sqSpaceLeft: Int {
+    Int(io_uring_sq_space_left(ring))
+  }
+
   func getNextBufferGroup() -> UInt16 {
     defer { nextBufferGroup += 1 }
     return nextBufferGroup
@@ -437,6 +442,7 @@ public actor IORing: CustomStringConvertible {
     moreFlags: UInt32 = 0,
     bufferIndex: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
+    timeout: Duration? = nil,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) async throws -> T {
     try await SingleshotSubmission(
@@ -451,6 +457,7 @@ public actor IORing: CustomStringConvertible {
       moreFlags: moreFlags,
       bufferIndex: bufferIndex,
       socketAddress: socketAddress,
+      timeout: timeout,
       handler: handler
     ).submit()
   }
@@ -513,7 +520,8 @@ private extension IORing {
     buffer: inout [UInt8],
     count: Int,
     offset: Offset,
-    link: Bool = false
+    link: Bool = false,
+    timeout: Duration? = nil
   ) async throws -> Int {
     try await prepareAndSubmit(
       .read,
@@ -521,7 +529,8 @@ private extension IORing {
       address: buffer,
       length: CUnsignedInt(count),
       offset: offset,
-      flags: IORing.SqeFlags(link: link)
+      flags: IORing.SqeFlags(link: link),
+      timeout: timeout
     ) { [buffer] cqe in
       _ = buffer
       return Int(cqe.res)
@@ -533,7 +542,8 @@ private extension IORing {
     buffer: [UInt8],
     count: Int,
     offset: Offset,
-    link: Bool = false
+    link: Bool = false,
+    timeout: Duration? = nil
   ) async throws -> Int {
     try await prepareAndSubmit(
       .write,
@@ -541,7 +551,8 @@ private extension IORing {
       address: buffer,
       length: CUnsignedInt(count),
       offset: offset,
-      flags: IORing.SqeFlags(link: link)
+      flags: IORing.SqeFlags(link: link),
+      timeout: timeout
     ) { [buffer] cqe in
       _ = buffer
       return Int(cqe.res)
@@ -649,7 +660,8 @@ private extension IORing {
     buffer: [UInt8],
     to socketAddress: sockaddr_storage? = nil,
     flags: UInt32 = 0,
-    link: Bool = false
+    link: Bool = false,
+    timeout: Duration? = nil
   ) async throws {
     try await prepareAndSubmit(
       .send,
@@ -659,7 +671,8 @@ private extension IORing {
       offset: 0,
       flags: IORing.SqeFlags(link: link),
       moreFlags: flags,
-      socketAddress: socketAddress
+      socketAddress: socketAddress,
+      timeout: timeout
     ) { [buffer] _ in
       _ = buffer
       return ()
@@ -670,7 +683,8 @@ private extension IORing {
     fd: FileDescriptorRepresentable,
     buffer: inout [UInt8],
     flags: UInt32 = 0,
-    link: Bool = false
+    link: Bool = false,
+    timeout: Duration? = nil
   ) async throws {
     try await prepareAndSubmit(
       .recv,
@@ -679,7 +693,8 @@ private extension IORing {
       length: CUnsignedInt(buffer.count),
       offset: 0,
       flags: IORing.SqeFlags(link: link),
-      moreFlags: flags
+      moreFlags: flags,
+      timeout: timeout
     ) { [buffer] _ in
       _ = buffer
       return ()
@@ -785,13 +800,15 @@ private extension IORing {
   func io_uring_op_accept(
     fd: FileDescriptorRepresentable,
     flags: UInt32 = 0,
-    link: Bool = false
+    link: Bool = false,
+    timeout: Duration? = nil
   ) async throws -> FileDescriptorRepresentable {
     try await prepareAndSubmit(
       .accept,
       fd: fd,
       flags: IORing.SqeFlags(link: link),
-      moreFlags: flags
+      moreFlags: flags,
+      timeout: timeout
     ) { cqe in
       try FileHandle(fileDescriptor: cqe.res, closeOnDealloc: true)
     }
@@ -814,7 +831,8 @@ private extension IORing {
   func io_uring_op_connect(
     fd: FileDescriptorRepresentable,
     address: sockaddr_storage,
-    link: Bool = false
+    link: Bool = false,
+    timeout: Duration? = nil
   ) async throws {
     var address = address
     try await prepareAndSubmit(
@@ -822,7 +840,8 @@ private extension IORing {
       fd: fd,
       address: &address,
       offset: Offset(address.size),
-      flags: IORing.SqeFlags(link: link)
+      flags: IORing.SqeFlags(link: link),
+      timeout: timeout
     ) { [address] _ in
       _ = address
     }
@@ -831,6 +850,8 @@ private extension IORing {
 
 // MARK: - public API
 
+/// A `timeout` on a single-shot request is a linked timeout, which the kernel keeps: when it
+/// passes the request is cancelled and throws `Errno.timedOut`, with no task or timer involved.
 public extension IORing {
   func close(_ fd: FileDescriptorRepresentable) async throws {
     try await io_uring_op_close(fd: fd)
@@ -841,19 +862,25 @@ public extension IORing {
     into buffer: inout [UInt8],
     count: Int? = nil,
     offset: Offset = -1,
-    from fd: FileDescriptorRepresentable
+    from fd: FileDescriptorRepresentable,
+    timeout: Duration? = nil
   ) async throws -> Int {
     try await io_uring_op_read(
       fd: fd,
       buffer: &buffer,
       count: count ?? buffer.count,
-      offset: offset
+      offset: offset,
+      timeout: timeout
     )
   }
 
-  func read(count: Int, from fd: FileDescriptorRepresentable) async throws -> [UInt8] {
+  func read(
+    count: Int,
+    from fd: FileDescriptorRepresentable,
+    timeout: Duration? = nil
+  ) async throws -> [UInt8] {
     var buffer = [UInt8]._unsafelyInitialized(count: count)
-    let nread = try await read(into: &buffer, count: count, from: fd)
+    let nread = try await read(into: &buffer, count: count, from: fd, timeout: timeout)
     // Trim in place rather than `Array(buffer.prefix(nread))`, which would
     // allocate and copy a second buffer. `buffer` is uniquely referenced here,
     // so removeLast() just adjusts the count.
@@ -865,13 +892,15 @@ public extension IORing {
     _ data: [UInt8],
     count: Int? = nil,
     offset: Offset = -1,
-    to fd: FileDescriptorRepresentable
+    to fd: FileDescriptorRepresentable,
+    timeout: Duration? = nil
   ) async throws -> Int {
     try await io_uring_op_write(
       fd: fd,
       buffer: data,
       count: count ?? data.count,
-      offset: offset
+      offset: offset,
+      timeout: timeout
     )
   }
 
@@ -884,14 +913,22 @@ public extension IORing {
       .eraseToAnyAsyncSequence()
   }
 
-  func receive(count: Int, from fd: FileDescriptorRepresentable) async throws -> [UInt8] {
+  func receive(
+    count: Int,
+    from fd: FileDescriptorRepresentable,
+    timeout: Duration? = nil
+  ) async throws -> [UInt8] {
     var buffer = [UInt8]._unsafelyInitialized(count: count)
-    try await io_uring_op_recv(fd: fd, buffer: &buffer)
+    try await io_uring_op_recv(fd: fd, buffer: &buffer, timeout: timeout)
     return buffer
   }
 
-  func send(_ data: [UInt8], to fd: FileDescriptorRepresentable) async throws {
-    try await io_uring_op_send(fd: fd, buffer: data)
+  func send(
+    _ data: [UInt8],
+    to fd: FileDescriptorRepresentable,
+    timeout: Duration? = nil
+  ) async throws {
+    try await io_uring_op_send(fd: fd, buffer: data, timeout: timeout)
   }
 
   /// Cancels the request whose completion block is `token`; returns once the kernel has
@@ -917,9 +954,15 @@ public extension IORing {
   func send(
     _ data: [UInt8],
     to address: [UInt8],
-    from fd: FileDescriptorRepresentable
+    from fd: FileDescriptorRepresentable,
+    timeout: Duration? = nil
   ) async throws {
-    try await io_uring_op_send(fd: fd, buffer: data, to: sockaddr_storage(bytes: address))
+    try await io_uring_op_send(
+      fd: fd,
+      buffer: data,
+      to: sockaddr_storage(bytes: address),
+      timeout: timeout
+    )
   }
 
   func receiveMessages(
@@ -944,10 +987,11 @@ public extension IORing {
     try await io_uring_op_sendmsg(fd: fd, message: message)
   }
 
-  func accept(from fd: FileDescriptorRepresentable) async throws
-    -> any FileDescriptorRepresentable
-  {
-    try await io_uring_op_accept(fd: fd)
+  func accept(
+    from fd: FileDescriptorRepresentable,
+    timeout: Duration? = nil
+  ) async throws -> any FileDescriptorRepresentable {
+    try await io_uring_op_accept(fd: fd, timeout: timeout)
   }
 
   func accept(from fd: FileDescriptorRepresentable) throws
@@ -958,9 +1002,10 @@ public extension IORing {
 
   package func connect(
     _ fd: FileDescriptorRepresentable,
-    to address: sockaddr_storage
+    to address: sockaddr_storage,
+    timeout: Duration? = nil
   ) async throws {
-    try await io_uring_op_connect(fd: fd, address: address)
+    try await io_uring_op_connect(fd: fd, address: address, timeout: timeout)
   }
 
   // FIXME: _XOPEN_SOURCE=500 is implictly defined by liburing.h and is also defined
@@ -972,9 +1017,13 @@ public extension IORing {
   // Provide an escape hatch by encoding sockaddr_storage into [UInt8]. We can provide
   // wrapper APIs in IORingUtils that take the non-X/Open sockaddr layout.
 
-  func connect(_ fd: FileDescriptorRepresentable, to address: [UInt8]) async throws {
+  func connect(
+    _ fd: FileDescriptorRepresentable,
+    to address: [UInt8],
+    timeout: Duration? = nil
+  ) async throws {
     let ss = try sockaddr_storage(bytes: address)
-    try await io_uring_op_connect(fd: fd, address: ss)
+    try await io_uring_op_connect(fd: fd, address: ss, timeout: timeout)
   }
 
   func readFixed<U>(

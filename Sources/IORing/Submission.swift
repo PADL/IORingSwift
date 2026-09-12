@@ -214,6 +214,8 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
   /// the completion, when it came first; all a single-shot completion is judged by
   private var completionResult: Int32 = 0
   private var completionFlags: UInt32 = 0
+  /// the linked timeout's timespec, which the kernel reads when the pair is submitted
+  private let timeout: UnsafeMutablePointer<__kernel_timespec>?
 
   init(
     ring: isolated IORing,
@@ -228,57 +230,95 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
     bufferIndex: UInt16 = 0,
     socketAddress: sockaddr_storage? = nil,
     group: SubmissionGroup<T>? = nil,
+    timeout: Duration? = nil,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) async throws {
     self.group = group
-    try super.init(
-      ring: ring,
-      opcode,
-      fd: fd,
-      address: address,
-      length: length,
-      offset: offset,
-      flags: flags,
-      ioprio: ioprio,
-      moreFlags: moreFlags,
-      bufferIndexOrGroup: bufferIndex,
-      socketAddress: socketAddress,
-      handler: handler
-    )
+    if let timeout {
+      guard timeout >= .zero else { throw Errno.invalidArgument }
+      // two SQEs with no suspension between: once the request's is prepared and linked
+      // to whatever follows, the timeout's must not fail
+      guard ring.sqSpaceLeft >= 2 else { throw Errno.resourceTemporarilyUnavailable }
+    }
+    let timespec = timeout.map { timeout in
+      let (seconds, attoseconds) = timeout.components
+      let timespec = UnsafeMutablePointer<__kernel_timespec>.allocate(capacity: 1)
+      timespec.initialize(to: __kernel_timespec(
+        tv_sec: seconds,
+        tv_nsec: attoseconds / 1_000_000_000
+      ))
+      return timespec
+    }
+    self.timeout = timespec
+    do {
+      try super.init(
+        ring: ring,
+        opcode,
+        fd: fd,
+        address: address,
+        length: length,
+        offset: offset,
+        flags: timespec == nil ? flags : flags.union(.ioLink),
+        ioprio: ioprio,
+        moreFlags: moreFlags,
+        bufferIndexOrGroup: bufferIndex,
+        socketAddress: socketAddress,
+        handler: handler
+      )
+    } catch {
+      timespec?.deallocate()
+      throw error
+    }
+    if let timespec {
+      // the timeout follows its request, taking over any link the request had onward;
+      // nothing awaits its own completion, so it carries no block
+      let sqe = try ring.getSqe()
+      io_uring_prep_link_timeout(sqe, timespec, 0)
+      io_uring_sqe_set_flags(sqe, UInt32(flags.intersection([.ioLink, .ioHardLink]).rawValue))
+      io_uring_sqe_set_data(sqe, nil)
+    }
     if let group {
       handoff.store(Handoff.idle.rawValue, ordering: .relaxed)
       group.enqueue(submission: self, ring: ring)
     }
   }
 
+  deinit {
+    timeout?.deallocate()
+  }
+
   private func _submit(ring: isolated IORing) async throws -> T {
-    try await withTaskCancellationHandler(operation: {
-      try await withUnsafeThrowingContinuation { continuation in
-        // guaranteed to run immediately
-        self.continuation = continuation
-        if handoff.load(ordering: .relaxed) != Handoff.direct.rawValue {
-          if handoff.exchange(Handoff.waiting.rawValue, ordering: .acquiringAndReleasing)
-            == Handoff.completed.rawValue
-          {
-            var cqe = io_uring_cqe()
-            cqe.res = completionResult
-            cqe.flags = completionFlags
-            resume(continuation, with: cqe)
+    do {
+      return try await withTaskCancellationHandler(operation: {
+        try await withUnsafeThrowingContinuation { continuation in
+          // guaranteed to run immediately
+          self.continuation = continuation
+          if handoff.load(ordering: .relaxed) != Handoff.direct.rawValue {
+            if handoff.exchange(Handoff.waiting.rawValue, ordering: .acquiringAndReleasing)
+              == Handoff.completed.rawValue
+            {
+              var cqe = io_uring_cqe()
+              cqe.res = completionResult
+              cqe.flags = completionFlags
+              resume(continuation, with: cqe)
+            }
+            // a group counts every member ready before it submits, this one included;
+            // a group gone before that, its caller having thrown, submits nothing
+            ready()
+            if group == nil { _ = try? ring.submit() }
+          } else {
+            // a failed enter leaves the flushed SQE for the next submit to carry, so its
+            // completion is still coming; failing the continuation now would resume it twice
+            _ = try? ring.submit()
           }
-          // a group counts every member ready before it submits, this one included;
-          // a group gone before that, its caller having thrown, submits nothing
-          ready()
-          if group == nil { _ = try? ring.submit() }
-        } else {
-          // a failed enter leaves the flushed SQE for the next submit to carry, so its
-          // completion is still coming; failing the continuation now would resume it twice
-          _ = try? ring.submit()
         }
-      }
-    }, onCancel: {
-      // if the operation supports it, will cause the operation to fail early
-      Task(executorPreference: ring.executor) { try? await self.cancel(ring: ring) }
-    })
+      }, onCancel: {
+        // if the operation supports it, will cause the operation to fail early
+        Task(executorPreference: ring.executor) { try? await self.cancel(ring: ring) }
+      })
+    } catch let error as Errno where error == .canceled && timeout != nil && !Task.isCancelled {
+      throw Errno.timedOut // the linked timeout cancelled the request
+    }
   }
 
   func submit() async throws -> T {
