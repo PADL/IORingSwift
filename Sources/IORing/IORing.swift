@@ -38,6 +38,10 @@ public actor IORing: CustomStringConvertible {
 
   private var fixedBuffers: FixedBuffer?
   private var nextBufferGroup: UInt16 = 1
+  private var retryPending = false // a submit is scheduled to carry what one left behind
+  #if DEBUG
+  private var injectedSubmitErrors = [Errno]()
+  #endif
   private let entries: Int
   private let ringFd: Int32
 
@@ -346,22 +350,50 @@ public actor IORing: CustomStringConvertible {
   @discardableResult
   func submit() throws -> Int {
     do {
-      return try Int(Errno.throwingErrno {
+      #if DEBUG
+      if !injectedSubmitErrors.isEmpty { throw injectedSubmitErrors.removeFirst() }
+      #endif
+      let submitted = try Int(Errno.throwingErrno {
         self.executor.isCurrentThread ? io_uring_submit(self.ring) : ioring_pool_submit(
           self.executor.pool,
           self.ring
         )
       })
+      // the enter can consume a prefix and leave the rest, when a request allocation fails
+      if io_uring_sq_ready(ring) > 0, ring.pointee.flags & UInt32(IORING_SETUP_SQPOLL) == 0 {
+        retrySubmitLater()
+      }
+      return submitted
     } catch {
       // the SQEs stay flushed for the next submit to carry, and the task awaiting
       // them may be the ring's only one: make sure there is a next submit
-      Task(executorPreference: executor) {
-        try? await Task.sleep(for: .milliseconds(10))
-        _ = try? await self.submit()
-      }
+      retrySubmitLater()
       throw error
     }
   }
+
+  /// A submit that failed, or left SQEs behind, is pending rather than failed: nothing that
+  /// awaits its requests unwinds, and they are carried by a retry, one at a time per ring.
+  private func retrySubmitLater() {
+    guard !retryPending else { return }
+    retryPending = true
+    Task(executorPreference: executor) {
+      try? await Task.sleep(for: .milliseconds(10))
+      await self.retrySubmit()
+    }
+  }
+
+  private func retrySubmit() {
+    retryPending = false
+    _ = try? submit()
+  }
+
+  #if DEBUG
+  /// For tests: the next submits throw these, in order, instead of entering the kernel.
+  func injectSubmitErrors(_ errors: [Errno]) {
+    injectedSubmitErrors = errors
+  }
+  #endif
 
   func withSubmissionGroup<T: Sendable>(_ body: (
     SubmissionGroup<T>
@@ -640,7 +672,7 @@ private extension IORing {
     flags: UInt32 = 0
   ) throws -> AsyncThrowingStream<[UInt8], Error> {
     let buffers = try BufferSubmission<UInt8>(ring: self, size: count, count: capacity)
-    try buffers.submit()
+    buffers.submit()
     return try MultishotSubmission(
       ring: self,
       .recv,

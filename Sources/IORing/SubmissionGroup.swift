@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023-2025 PADL Software Pty Ltd
+// Copyright (c) 2023-2026 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -96,7 +96,9 @@ final class SubmissionGroup<T: Sendable>: Sendable {
   func finish(ring: isolated IORing) async throws -> [T] {
     defer { readinessContinuation?.finish() }
     await allReady()
-    try ring.submit()
+    // a failed submit leaves the SQEs flushed and a retry pending: the completions are
+    // still coming, and the members deliver them through this group, which must wait
+    _ = try? ring.submit()
     return try await allComplete()
   }
 }

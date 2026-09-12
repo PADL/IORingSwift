@@ -325,13 +325,15 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
 
   override func onCompletion(cqe: io_uring_cqe) {}
 
-  private func _submit(ring: isolated IORing) throws {
-    try ring.submit()
+  /// a failed submit leaves the SQE flushed and a retry pending, so the buffers are provided
+  /// either way, before whatever follows them in the queue
+  private func _submit(ring: isolated IORing) {
+    _ = try? ring.submit()
   }
 
-  func submit() throws {
-    try ring.assumeIsolated { ring in
-      try _submit(ring: ring)
+  func submit() {
+    ring.assumeIsolated { ring in
+      _submit(ring: ring)
     }
   }
 
@@ -439,7 +441,7 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
 
   private func _reprovideAndSubmit(ring: isolated IORing, bufferID: Int) throws {
     let submission = try BufferSubmission(ring: ring, reproviding: bufferID, from: self)
-    try submission.submit()
+    submission.submit()
   }
 
   func reprovideAndSubmit(id bufferID: Int) async throws {
@@ -633,29 +635,33 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
     )
   }
 
-  private func _submit(ring: isolated IORing) throws {
-    try ring.submit()
+  /// A failed submit leaves the SQE flushed and a retry pending, so the request is armed
+  /// either way; `current` first, so that ending the stream meanwhile cancels this request.
+  private func _submit(ring: isolated IORing) {
     holder.current = self
+    _ = try? ring.submit()
   }
 
-  func submit() throws -> AsyncThrowingStream<T, Error> {
-    try ring.assumeIsolated { ring in
-      try _submit(ring: ring)
+  func submit() -> AsyncThrowingStream<T, Error> {
+    ring.assumeIsolated { ring in
+      _submit(ring: ring)
     }
     return holder.takeStream()
   }
 
   private func resubmit(ring: isolated IORing) {
     guard !holder.terminated else { return }
+    let resubmission: MultishotSubmission
     do {
       // Create new SQE with same holder (shared stream/continuation)
-      let resubmission = try MultishotSubmission(ring: ring, self)
-      IORing.shared.logger.debug("resubmitting multishot submission \(resubmission)")
-      try resubmission._submit(ring: ring)
+      resubmission = try MultishotSubmission(ring: ring, self)
     } catch {
       IORing.shared.logger.debug("resubmitting multishot submission failed: \(error)")
       holder.continuation.finish(throwing: error)
+      return
     }
+    IORing.shared.logger.debug("resubmitting multishot submission \(resubmission)")
+    resubmission._submit(ring: ring)
   }
 
   override func onCompletion(cqe: io_uring_cqe) {

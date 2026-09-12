@@ -109,7 +109,7 @@ final class MessageHolder: @unchecked Sendable {
       self.storage.msg_name = UnsafeMutableRawPointer($0)
     }
     storage.msg_namelen = socklen_t(MemoryLayout<sockaddr_storage>.size)
-    try bufferSubmission.submit()
+    bufferSubmission.submit()
     storage.msg_flags = Int32(flags)
   }
 
