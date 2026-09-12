@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023-2025 PADL Software Pty Ltd
+// Copyright (c) 2023-2026 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -34,7 +34,8 @@ public actor IORing: CustomStringConvertible {
   private nonisolated static let DefaultIORingQueueEntries = 128
 
   private var ring: io_uring
-  private var cqHandle: UInt = 0
+  let executor: IORingExecutor // reaps the ring's completions
+  private var reaper: UInt = 0 // the ring's registration with it
 
   private var fixedBuffers: FixedBuffer?
   private var nextBufferGroup: UInt16 = 1
@@ -122,7 +123,7 @@ public actor IORing: CustomStringConvertible {
     }
   }
 
-  struct SqeFlags: OptionSet, Sendable {
+  struct SqeFlags: OptionSet {
     typealias RawValue = UInt8
 
     let rawValue: RawValue
@@ -271,10 +272,15 @@ public actor IORing: CustomStringConvertible {
     self.ring = ring
     ringFd = ring.ring_fd
 
-    let error = io_uring_init_cq_handler(&cqHandle, &self.ring)
-    guard error == 0 else {
+    do {
+      executor = try IORingExecutor.install()
+    } catch {
       io_uring_queue_exit(&ring)
-      throw Errno(rawValue: -error)
+      throw error
+    }
+    let error = ioring_pool_add_ring(executor.pool, &self.ring, &reaper)
+    guard error == 0 else {
+      throw Errno(rawValue: -error) // deinit tears the ring down; removing it is a no-op
     }
   }
 
@@ -301,35 +307,20 @@ public actor IORing: CustomStringConvertible {
   }
 
   deinit {
-    // Stop the completion-queue handler FIRST and wait for it to quiesce. This
-    // is synchronous: for the dispatch backend it blocks until the source's
-    // cancel handler has run, for the pthread backend it joins the handler
-    // thread. Afterwards no other thread touches `ring`, so the drain below and
-    // io_uring_queue_exit() cannot race a handler still in io_uring_wait_cqe().
-    io_uring_deinit_cq_handler(cqHandle, &ring)
+    // Stop reaping FIRST: this returns once no executor thread touches `ring`, so
+    // the drain below and io_uring_queue_exit() cannot race a reap in progress.
+    ioring_pool_remove_ring(executor.pool, reaper)
 
-    // Cancel all inflight requests to release their _Block_copy'd closures
-    if let sqe = io_uring_get_sqe(&ring) {
-      io_uring_prep_cancel(sqe, nil, AsyncCancelFlags.any.rawValue)
-      _ = io_uring_sqe_set_block(sqe) { _ in }
-      io_uring_submit(&ring)
-      // Wait for the cancel CQE, then non-blocking drain any remaining
-      var cqe: UnsafeMutablePointer<io_uring_cqe>?
-      if io_uring_wait_cqe_nr(&ring, &cqe, 1) == 0, let c = cqe {
-        io_uring_cqe_seen(&ring, c)
-      }
-      while io_uring_wait_cqe_nr(&ring, &cqe, 0) == 0, let c = cqe {
-        io_uring_cqe_seen(&ring, c)
-      }
-    }
+    // Cancel whatever is in flight and release the blocks its completions carry
+    io_uring_cancel_and_drain(&ring)
     io_uring_unregister_buffers(&ring)
     io_uring_queue_exit(&ring)
     memset(&ring, 0, MemoryLayout<io_uring>.size)
   }
 
-  // important note: caller MUST NOT suspend after calling getSqe() until preparation,
-  // ideally not until submission particularly if linked requests are involved (this
-  // may be impossible)
+  /// important note: caller MUST NOT suspend after calling getSqe() until preparation,
+  /// ideally not until submission particularly if linked requests are involved (this
+  /// may be impossible)
   func getSqe() throws -> UnsafeMutablePointer<io_uring_sqe> {
     let sqe = io_uring_get_sqe(&ring)
     guard let sqe else {
@@ -344,10 +335,16 @@ public actor IORing: CustomStringConvertible {
     return nextBufferGroup
   }
 
+  /// The kernel binds a request to the thread that calls `io_uring_enter`, and cancels it
+  /// if that thread exits; from a thread outside the executor, one of its threads makes
+  /// the call.
   @discardableResult
   func submit() throws -> Int {
     try Int(Errno.throwingErrno {
-      io_uring_submit(&self.ring)
+      self.executor.isCurrentThread ? io_uring_submit(&self.ring) : ioring_pool_submit(
+        self.executor.pool,
+        &self.ring
+      )
     })
   }
 
@@ -619,22 +616,40 @@ private extension IORing {
     }
   }
 
+  /// Multishot receives take their buffers from a provided-buffer group, `capacity` buffers of
+  /// `count` bytes; each completion copies its buffer out and hands it back.
   func io_uring_op_recv_multishot(
     fd: FileDescriptorRepresentable,
     count: Int,
-    link: Bool = false
+    capacity: Int,
+    flags: UInt32 = 0
   ) throws -> AsyncThrowingStream<[UInt8], Error> {
-    var buffer = [UInt8]._unsafelyInitialized(count: count)
-    return try prepareAndSubmitMultishot(
+    let buffers = try BufferSubmission<UInt8>(ring: self, size: count, count: capacity)
+    try buffers.submit()
+    return try MultishotSubmission(
+      ring: self,
       .recv,
       fd: fd,
-      address: &buffer[0],
-      length: CUnsignedInt(count),
-      flags: IORing.SqeFlags(link: link),
-      ioprio: RecvSendIoPrio.multishot
-    ) { [buffer] _ in
-      buffer
-    }
+      flags: SqeFlags.bufferSelect,
+      ioprio: RecvSendIoPrio.multishot,
+      moreFlags: flags,
+      bufferIndexOrGroup: buffers.bufferGroup,
+      handler: { [buffers] cqe in
+        guard cqe.flags & IORING_CQE_F_BUFFER != 0 else { return [] }
+        let slot = try buffers.borrowSlot(id: Int(cqe.flags >> IORING_CQE_BUFFER_SHIFT))
+        return try slot.withUnsafeRawBufferPointer { Array($0.prefix(Int(cqe.res))) }
+      },
+      onTermination: { [buffers] in
+        Task(executorPreference: self.executor) {
+          try? await BufferSubmission<UInt8>(
+            ring: self,
+            removing: capacity,
+            from: buffers.bufferGroup
+          ).submit()
+          buffers.deallocate()
+        }
+      }
+    ).submit()
   }
 
   func io_uring_op_recvmsg(
@@ -796,9 +811,11 @@ public extension IORing {
 
   func receive(
     count: Int,
+    capacity: Int? = nil,
     from fd: FileDescriptorRepresentable
   ) throws -> AnyAsyncSequence<[UInt8]> {
-    try io_uring_op_recv_multishot(fd: fd, count: count).eraseToAnyAsyncSequence()
+    try io_uring_op_recv_multishot(fd: fd, count: count, capacity: capacity ?? 16)
+      .eraseToAnyAsyncSequence()
   }
 
   func receive(count: Int, from fd: FileDescriptorRepresentable) async throws -> [UInt8] {
@@ -809,6 +826,34 @@ public extension IORing {
 
   func send(_ data: [UInt8], to fd: FileDescriptorRepresentable) async throws {
     try await io_uring_op_send(fd: fd, buffer: data)
+  }
+
+  /// Cancels the request whose completion block is `token`; returns once the kernel has
+  /// answered, with `Errno.noSuchFileOrDirectory` if it had already completed.
+  func cancel(userData token: UnsafeMutableRawPointer) async throws {
+    try await prepareAndSubmit(
+      .async_cancel,
+      fd: FileDescriptor(rawValue: -1),
+      address: UnsafeRawPointer(token),
+      moreFlags: UInt32(bitPattern: AsyncCancelFlags.userData.rawValue)
+    ) { _ in }
+  }
+
+  /// Cancels every request on `fd`, each of which completes with `Errno.canceled`.
+  func cancelRequests(on fd: FileDescriptorRepresentable) async throws {
+    try await io_uring_op_cancel(
+      fd: fd,
+      flags: UInt32(AsyncCancelFlags.fd.rawValue | AsyncCancelFlags.all.rawValue)
+    )
+  }
+
+  /// `address` is an encoded `sockaddr_storage`; see `connect(_:to:)`.
+  func send(
+    _ data: [UInt8],
+    to address: [UInt8],
+    from fd: FileDescriptorRepresentable
+  ) async throws {
+    try await io_uring_op_send(fd: fd, buffer: data, to: sockaddr_storage(bytes: address))
   }
 
   func receiveMessages(

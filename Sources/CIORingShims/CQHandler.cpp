@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2023 PADL Software Pty Ltd
+// Copyright (c) 2023-2026 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -23,57 +23,54 @@ void *io_uring_sqe_set_block(struct io_uring_sqe *sqe,
   return cancellationToken;
 }
 
-static void invoke_cqe_block(struct io_uring_cqe *cqe) {
+static void release_cqe_block(struct io_uring_cqe *cqe) {
   auto block = reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
-  assert(block != nullptr);
-  block(cqe);
-  if ((cqe->flags & IORING_CQE_F_MORE) == 0)
+  if (block != nullptr)
     _Block_release(block);
 }
 
-int io_uring_cq_handler(struct io_uring *ring) {
+// For a ring nothing can await any longer, as every submission holds its ring:
+// the blocks are owed a release, not a call. The cancel itself carries no block.
+void io_uring_cancel_and_drain(struct io_uring *ring) {
+  struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
+  if (sqe == nullptr)
+    return;
+  io_uring_prep_cancel(sqe, nullptr, IORING_ASYNC_CANCEL_ANY);
+  io_uring_sqe_set_data(sqe, nullptr);
+  io_uring_submit(ring);
+
   struct io_uring_cqe *cqe;
-  unsigned head, i = 0;
-
-  auto err = io_uring_wait_cqe(ring, &cqe);
-  if (err)
-    return err;
-
-  io_uring_for_each_cqe(ring, head, cqe) {
-    assert(cqe != nullptr);
-#if PTHREAD_IO_URING
-    if (cqe->user_data == ~0ULL) {
-      err = -ECANCELED;
-      break;
-    }
-#endif
-    invoke_cqe_block(cqe);
-    i++;
+  // the cancel's own completion, then whatever it cancelled
+  if (io_uring_wait_cqe_nr(ring, &cqe, 1) == 0) {
+    release_cqe_block(cqe);
+    io_uring_cqe_seen(ring, cqe);
   }
-  io_uring_cq_advance(ring, i);
-
-  if (err == -EAGAIN)
-    err = 0;
-
-  return err;
+  while (io_uring_wait_cqe_nr(ring, &cqe, 0) == 0) {
+    release_cqe_block(cqe);
+    io_uring_cqe_seen(ring, cqe);
+  }
 }
 
-int io_uring_init_cq_handler(uintptr_t *handle, struct io_uring *ring) {
-#if DISPATCH_IO_URING
-  return dispatch_io_uring_init_cq_handler(handle, ring);
-#elif PTHREAD_IO_URING
-  return pthread_io_uring_init_cq_handler(handle, ring);
-#else
-#error implement io_uring_init_cq_handler() for your platform
-#endif
-}
+unsigned io_uring_cq_reap(struct io_uring *ring,
+                          std::vector<io_uring_cqe_block> &finished) {
+  struct io_uring_cqe *cqe;
+  unsigned head, total = 0;
 
-void io_uring_deinit_cq_handler(uintptr_t handle, struct io_uring *ring) {
-#if DISPATCH_IO_URING
-  dispatch_io_uring_deinit_cq_handler(handle, ring);
-#elif PTHREAD_IO_URING
-  pthread_io_uring_deinit_cq_handler(handle, ring);
-#else
-#error implement io_uring_deinit_cq_handler() for your platform
-#endif
+  do {
+    unsigned count = 0;
+    io_uring_for_each_cqe(ring, head, cqe) {
+      auto block = reinterpret_cast<io_uring_cqe_block>(io_uring_cqe_get_data(cqe));
+      assert(block != nullptr);
+      block(cqe);
+      if ((cqe->flags & IORING_CQE_F_MORE) == 0)
+        finished.push_back(block);
+      count++;
+    }
+    io_uring_cq_advance(ring, count);
+    total += count;
+    // completions that overflowed the CQ are posted only when asked for, and
+    // do not signal the eventfd
+  } while (io_uring_cq_has_overflow(ring) && io_uring_get_events(ring) == 0);
+
+  return total;
 }

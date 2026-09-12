@@ -23,8 +23,8 @@ import IORing
 import SocketAddress
 import struct SystemPackage.Errno
 
-// A single classic-BPF instruction (mirrors the C `struct sock_filter`), so callers can build a
-// filter program without touching the C type. See Socket.attachFilter(_:).
+/// A single classic-BPF instruction (mirrors the C `struct sock_filter`), so callers can build a
+/// filter program without touching the C type. See Socket.attachFilter(_:).
 public struct SocketFilter: Sendable, Equatable {
   public var code: UInt16
   public var jt: UInt8
@@ -272,8 +272,8 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     }
   }
 
-  // Attach a classic-BPF program (SO_ATTACH_FILTER). Used with an ETH_P_ALL raw socket to filter in
-  // the kernel, so only matching frames are queued to userspace.
+  /// Attach a classic-BPF program (SO_ATTACH_FILTER). Used with an ETH_P_ALL raw socket to filter in
+  /// the kernel, so only matching frames are queued to userspace.
   public func attachFilter(_ program: [SocketFilter]) throws {
     var instructions = program.map {
       sock_filter(code: $0.code, jt: $0.jt, jf: $0.jf, k: $0.k)
@@ -452,9 +452,11 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     )
   }
 
-  public func receive(count: Int) async throws -> AnyAsyncSequence<[UInt8]> {
+  /// Multishot; `capacity` buffers of `count` bytes are provided to the kernel.
+  public func receive(count: Int, capacity: Int? = nil) async throws -> AnyAsyncSequence<[UInt8]> {
     try await _ring.receive(
       count: count,
+      capacity: capacity,
       from: fileHandle
     )
   }
@@ -464,6 +466,13 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
       data,
       to: fileHandle
     )
+  }
+
+  public func send(_ data: [UInt8], to address: any SocketAddress) async throws {
+    let bytes = address.withSockAddr { sa, size in
+      Array(UnsafeRawBufferPointer(start: sa, count: Int(size)))
+    }
+    try await _ring.send(data, to: bytes, from: fileHandle)
   }
 
   public func receiveMessages(

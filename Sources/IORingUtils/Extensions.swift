@@ -161,7 +161,9 @@ public extension FileDescriptorRepresentable {
 }
 
 extension Errno {
-  static var lastError: Errno { Errno(rawValue: errno) }
+  static var lastError: Errno {
+    Errno(rawValue: errno)
+  }
 
   @discardableResult
   public static func throwingGlobalErrno(_ body: @escaping () throws -> CInt) throws -> CInt {

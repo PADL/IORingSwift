@@ -21,34 +21,40 @@ import IORingUtils
 import struct SystemPackage.Errno
 import XCTest
 
-// Exercises the noncopyable `ProvidedBuffer` slot: each multishot recvmsg
-// completion borrows a slot, copies the payload out, and the slot's deinit
-// reprovides it to the ring. A slot pool smaller than the number of datagrams
-// forces slots to be recycled, so correct contents prove copy-out-then-reprovide
-// works over many borrow/return cycles.
+/// Exercises the noncopyable `ProvidedBuffer` slot: each multishot recvmsg
+/// completion borrows a slot, copies the payload out, and the slot's deinit
+/// reprovides it to the ring. A slot pool smaller than the number of datagrams
+/// forces slots to be recycled, so correct contents prove copy-out-then-reprovide
+/// works over many borrow/return cycles.
 final class ProvidedBufferTests: XCTestCase {
   private func makeDatagramPair(ring: IORing) throws -> (rx: Socket, tx: Socket) {
     var fds = [Int32](repeating: -1, count: 2)
     guard socketpair(AF_UNIX, Int32(SOCK_DGRAM.rawValue), 0, &fds) == 0 else {
       throw Errno(rawValue: errno)
     }
-    let rx = Socket(ring: ring, fileHandle: try FileHandle(fileDescriptor: fds[0], closeOnDealloc: true))
-    let tx = Socket(ring: ring, fileHandle: try FileHandle(fileDescriptor: fds[1], closeOnDealloc: true))
+    let rx = try Socket(
+      ring: ring,
+      fileHandle: FileHandle(fileDescriptor: fds[0], closeOnDealloc: true)
+    )
+    let tx = try Socket(
+      ring: ring,
+      fileHandle: FileHandle(fileDescriptor: fds[1], closeOnDealloc: true)
+    )
     return (rx, tx)
   }
 
-  // Send N distinct datagrams through a pool of only `capacity` slots and assert
-  // every payload arrives byte-for-byte. Since capacity < N, each delivered
-  // message must have been copied out before its slot was reprovided and reused.
+  /// Send N distinct datagrams through a pool of only `capacity` slots and assert
+  /// every payload arrives byte-for-byte. Since capacity < N, each delivered
+  /// message must have been copied out before its slot was reprovided and reused.
   func testProvidedBufferRecyclesWithoutCorruption() async throws {
     let ring = try IORing()
     let (rx, tx) = try makeDatagramPair(ring: ring)
     let messageCount = 40
     let capacity = 4
 
-    // Each datagram carries a unique, self-identifying payload.
+    /// Each datagram carries a unique, self-identifying payload.
     func payload(_ i: Int) -> [UInt8] {
-      Array("msg-\(i)-".utf8) + [UInt8(i & 0xff), UInt8((i >> 8) & 0xff)]
+      Array("msg-\(i)-".utf8) + [UInt8(i & 0xFF), UInt8((i >> 8) & 0xFF)]
     }
 
     let received = try await withThrowingTaskGroup(of: [[UInt8]].self) { group in

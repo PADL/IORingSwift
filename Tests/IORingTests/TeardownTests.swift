@@ -22,12 +22,12 @@ import struct SystemPackage.Errno
 import struct SystemPackage.FileDescriptor
 import XCTest
 
-// Regression coverage for the completion-queue-handler teardown race: IORing.deinit
-// running io_uring_queue_exit() while the (dispatch or pthread) CQ handler was still
-// in io_uring_wait_cqe() on the same ring. Reliably reproduced by spinning up and
-// immediately tearing down many short-lived rings that had a CQ handler active.
-// A regression manifests as a SIGSEGV/SIGABRT or a teardown deadlock, not a failed
-// assertion — so merely completing these loops is the pass condition.
+/// Regression coverage for the completion-queue-handler teardown race: IORing.deinit
+/// running io_uring_queue_exit() while the (dispatch or pthread) CQ handler was still
+/// in io_uring_wait_cqe() on the same ring. Reliably reproduced by spinning up and
+/// immediately tearing down many short-lived rings that had a CQ handler active.
+/// A regression manifests as a SIGSEGV/SIGABRT or a teardown deadlock, not a failed
+/// assertion — so merely completing these loops is the pass condition.
 final class TeardownTests: XCTestCase {
   private var tmpDir: String {
     ProcessInfo.processInfo.environment["RUNNER_TEMP"] ?? "/var/tmp"
@@ -38,14 +38,20 @@ final class TeardownTests: XCTestCase {
     guard socketpair(AF_UNIX, Int32(SOCK_DGRAM.rawValue), 0, &fds) == 0 else {
       throw Errno(rawValue: errno)
     }
-    let rx = Socket(ring: ring, fileHandle: try FileHandle(fileDescriptor: fds[0], closeOnDealloc: true))
-    let tx = Socket(ring: ring, fileHandle: try FileHandle(fileDescriptor: fds[1], closeOnDealloc: true))
+    let rx = try Socket(
+      ring: ring,
+      fileHandle: FileHandle(fileDescriptor: fds[0], closeOnDealloc: true)
+    )
+    let tx = try Socket(
+      ring: ring,
+      fileHandle: FileHandle(fileDescriptor: fds[1], closeOnDealloc: true)
+    )
     return (rx, tx)
   }
 
-  // Rapidly create and drop rings that have just done I/O (so the CQ handler has
-  // been active) — the pure-teardown analogue that produced the SIGABRT in
-  // IORing.deinit.
+  /// Rapidly create and drop rings that have just done I/O (so the CQ handler has
+  /// been active) — the pure-teardown analogue that produced the SIGABRT in
+  /// IORing.deinit.
   func testRapidRingCreateAndTeardown() async throws {
     let tempFile = "\(tmpDir)/ioring_teardown_\(getpid()).txt"
     defer { unlink(tempFile) }
@@ -63,9 +69,9 @@ final class TeardownTests: XCTestCase {
     XCTAssertTrue(true, "completed rapid ring teardown without crashing")
   }
 
-  // Tear down rings while a multishot receive is still armed: the CQ handler is
-  // most likely to be parked in io_uring_wait_cqe() at deinit, which is what
-  // deadlocked the naive synchronous-cancel fix and crashed before any fix.
+  /// Tear down rings while a multishot receive is still armed: the CQ handler is
+  /// most likely to be parked in io_uring_wait_cqe() at deinit, which is what
+  /// deadlocked the naive synchronous-cancel fix and crashed before any fix.
   func testTeardownWithArmedMultishotReceive() async throws {
     for _ in 0..<25 {
       let ring = try IORing()

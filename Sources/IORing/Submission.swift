@@ -19,30 +19,46 @@ import AsyncExtensions
 @_implementationOnly import CIORingShims
 @_implementationOnly import CIOURing
 import Glibc
+import Synchronization
 import SystemPackage
 
+/// A submission is allocated per request, and `SingleshotSubmission` is 120 bytes: the largest
+/// object glibc serves from a fastbin. A byte more and, once the seven-entry tcache is full,
+/// every free consolidates and every malloc searches the unsorted bin, which costs a few percent
+/// of a round trip under load. Fields are laid out in declaration order, so keep the small ones
+/// together in the padding the `Int32`s leave, and check the size when adding one.
 class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
-  // reference to owner which owns ring
+  /// reference to owner which owns ring
   let ring: IORing
   /// user-supplied callback to transform a completion queue entry to a result
   fileprivate let handler: @Sendable (io_uring_cqe) throws -> T
-  /// file descriptor, stored so that it is not closed before the completion handler is run
-  fileprivate let fd: FileDescriptorRepresentable
-
+  /// the file descriptor the request is on
+  fileprivate let fileDescriptor: CInt
   /// opcode, useful for debugging
   fileprivate let opcode: IORingOperation
-  /// assigned submission queue entry for this object
-  private let sqe: UnsafeMutablePointer<io_uring_sqe>
-  private var cancellationToken: UnsafeMutableRawPointer?
+  /// `SingleshotSubmission`'s handoff state (see there)
+  fileprivate let handoff = Atomic<UInt8>(0)
+  /// whether `retained` is the `SocketAddressStorage` of a send to an address
+  private let hasSocketAddress: Bool
+  /// what must outlive the request: the descriptor's owner, if it has one, so that it is not
+  /// closed before the completion handler runs; for a send to an address, the copy of that
+  /// address the kernel reads from the SQE at submission, which holds the owner in turn
+  fileprivate let retained: AnyObject?
+  private(set) var cancellationToken: UnsafeMutableRawPointer?
 
   nonisolated var description: String {
-    "(\(type(of: self)))(fd: \(fd.fileDescriptor), opcode: \(opcode), handler: \(String(describing: handler)))"
+    "(\(type(of: self)))(fd: \(fileDescriptor), opcode: \(opcode), handler: \(String(describing: handler)))"
+  }
+
+  /// The address a send goes to, if any.
+  fileprivate var socketAddress: sockaddr_storage? {
+    hasSocketAddress ? unsafeDowncast(retained!, to: SocketAddressStorage.self).pointer
+      .pointee : nil
   }
 
   private func prepare(
     _ opcode: IORingOperation,
     sqe: UnsafeMutablePointer<io_uring_sqe>,
-    fd: FileDescriptorRepresentable,
     address: UnsafeRawPointer?,
     length: CUnsignedInt,
     offset: IORing.Offset
@@ -50,7 +66,7 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
     io_uring_prep_rw(
       Int32(opcode.rawValue),
       sqe,
-      fd.fileDescriptor,
+      fileDescriptor,
       address,
       length,
       offset == -1 ? UInt64(bitPattern: -1) : UInt64(offset)
@@ -86,7 +102,7 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
   /// because actors are reentrant, `setBlock()` must be called immediately after
   /// the io_uring assigned a SQE (or, at least before any suspension point)
   /// FIXME: `swift_allocObject()` here appears to be a potential performance issue
-  private func setBlock() {
+  private func setBlock(sqe: UnsafeMutablePointer<io_uring_sqe>) {
     cancellationToken = io_uring_sqe_set_block(sqe) { cqe in
       let cqe = cqe.pointee
       self.onCompletion(cqe: cqe)
@@ -122,12 +138,19 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
     socketAddress: sockaddr_storage? = nil,
     handler: @escaping @Sendable (io_uring_cqe) throws -> T
   ) throws {
-    sqe = try ring.getSqe()
+    let sqe = try ring.getSqe()
     self.ring = ring
     self.opcode = opcode
-    self.fd = fd
+    fileDescriptor = fd.fileDescriptor
     self.handler = handler
-    prepare(opcode, sqe: sqe, fd: fd, address: address, length: length, offset: offset)
+    if let socketAddress {
+      hasSocketAddress = true
+      retained = SocketAddressStorage(socketAddress, owner: fd.fileDescriptorOwner)
+    } else {
+      hasSocketAddress = false
+      retained = fd.fileDescriptorOwner
+    }
+    prepare(opcode, sqe: sqe, address: address, length: length, offset: offset)
     setFlags(
       sqe: sqe,
       flags: flags.rawValue,
@@ -135,15 +158,20 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
       moreFlags: moreFlags,
       bufferIndexOrGroup: bufferIndexOrGroup
     )
-    if let socketAddress {
-      try socketAddress.withSockAddr { socketAddress, _ in
-        try setSocketAddress(sqe: sqe, socketAddress: socketAddress)
+    if hasSocketAddress {
+      // a copy that outlives this call: the kernel reads it at submission, not preparation
+      let storage = unsafeDowncast(retained!, to: SocketAddressStorage.self)
+      try UnsafeRawPointer(storage.pointer).withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        try setSocketAddress(sqe: sqe, socketAddress: $0)
       }
     }
-    setBlock()
+    setBlock(sqe: sqe)
   }
 
-  func onCompletion(cqe: io_uring_cqe) { fatalError("must be implemented by concrete class") }
+  func onCompletion(cqe: io_uring_cqe) {
+    fatalError("must be implemented by concrete class")
+  }
+
   func onCancel(cqe: io_uring_cqe) {}
 
   func throwingErrno(
@@ -155,7 +183,7 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
       if error != .brokenPipe {
         IORing.shared.logger
           .debug(
-            "\(type(of: self)) completion fileDescriptor: \(fd) opcode: \(opcode) error: \(Errno(rawValue: -cqe.res))"
+            "\(type(of: self)) completion fileDescriptor: \(fileDescriptor) opcode: \(opcode) error: \(Errno(rawValue: -cqe.res))"
           )
       }
       throw error
@@ -168,7 +196,24 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
   weak var group: SubmissionGroup<T>?
 
   private typealias Continuation = UnsafeContinuation<T, Error>
-  private var continuation: Continuation!
+
+  /// How the continuation and the completion meet. A request submitted by `submit()` itself is
+  /// `direct`: its continuation is registered and its SQE submitted in one go, so the completion
+  /// finds the continuation waiting, and needs nothing more than a load to see that. A linked
+  /// request's SQE is prepared when its group is built but its continuation is registered in a
+  /// later actor job, and any submit in between flushes the SQE, so the completion can come
+  /// first: each side stores its half, then swaps its state into `handoff`, and the side that
+  /// finds the other's state already there resumes the continuation. The swap is an atomic
+  /// read-modify-write on a line the other thread just wrote, a cross-core stall, which is why
+  /// only linked requests pay for it.
+  private enum Handoff: UInt8 {
+    case direct, idle, waiting, completed
+  }
+
+  private var continuation: Continuation?
+  /// the completion, when it came first; all a single-shot completion is judged by
+  private var completionResult: Int32 = 0
+  private var completionFlags: UInt32 = 0
 
   init(
     ring: isolated IORing,
@@ -201,6 +246,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
       handler: handler
     )
     if let group {
+      handoff.store(Handoff.idle.rawValue, ordering: .relaxed)
       group.enqueue(submission: self, ring: ring)
     }
   }
@@ -211,6 +257,15 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
         // guaranteed to run immediately
         self.continuation = continuation
         if group != nil {
+          if handoff.exchange(Handoff.waiting.rawValue, ordering: .acquiringAndReleasing)
+            == Handoff.completed.rawValue
+          {
+            var cqe = io_uring_cqe()
+            cqe.res = completionResult
+            cqe.flags = completionFlags
+            resume(continuation, with: cqe)
+          }
+          // a group counts every member ready before it submits, this one included
           ready()
         } else {
           _ = try? ring.submit()
@@ -218,7 +273,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
       }
     }, onCancel: {
       // if the operation supports it, will cause the operation to fail early
-      Task { try? await cancel(ring: ring) }
+      Task(executorPreference: ring.executor) { try? await self.cancel(ring: ring) }
     })
   }
 
@@ -227,6 +282,20 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
   }
 
   override func onCompletion(cqe: io_uring_cqe) {
+    if handoff.load(ordering: .acquiring) == Handoff.direct.rawValue {
+      resume(continuation!, with: cqe)
+      return
+    }
+    completionResult = cqe.res
+    completionFlags = cqe.flags
+    if handoff.exchange(Handoff.completed.rawValue, ordering: .acquiringAndReleasing)
+      == Handoff.waiting.rawValue
+    {
+      resume(continuation!, with: cqe)
+    }
+  }
+
+  private func resume(_ continuation: Continuation, with cqe: io_uring_cqe) {
     do {
       try continuation.resume(returning: throwingErrno(cqe: cqe, handler))
     } catch {
@@ -245,7 +314,7 @@ struct BufferCount: FileDescriptorRepresentable {
 
 final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
   nonisolated var count: Int {
-    Int(fd.fileDescriptor)
+    Int(fileDescriptor)
   }
 
   let size: Int
@@ -415,22 +484,40 @@ struct ProvidedBuffer<U>: ~Copyable {
     // still has to hop onto the ring actor, matching the previous behaviour.
     let submission = submission
     let id = id
-    Task { try? await submission.reprovideAndSubmit(id: id) }
+    Task(executorPreference: submission.ring.executor) {
+      try? await submission.reprovideAndSubmit(id: id)
+    }
   }
 }
 
 final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable {
-  // Shared holder ensures continuation is accessible across resubmissions
-  private final class _StreamHolder: Sendable {
+  /// Shared holder ensures continuation is accessible across resubmissions. When the stream
+  /// ends, by the consumer leaving it or by the ring finishing it, the request still armed
+  /// is cancelled before `onTermination` runs, which is where its buffers are released.
+  private final class _StreamHolder: @unchecked Sendable {
     let stream: AsyncThrowingStream<T, Error>
     let continuation: AsyncThrowingStream<T, Error>.Continuation
+    // ring-isolated: the request currently armed, and whether the stream has ended
+    nonisolated(unsafe) weak var current: MultishotSubmission?
+    nonisolated(unsafe) var terminated = false
 
-    init(onTermination: (@Sendable () -> ())?) {
+    init(ring: IORing, onTermination: (@Sendable () -> ())?) {
       var continuation: AsyncThrowingStream<T, Error>.Continuation!
       let stream = AsyncThrowingStream<T, Error> { continuation = $0 }
       self.stream = stream
       self.continuation = continuation
-      self.continuation.onTermination = { @Sendable _ in onTermination?() }
+      self.continuation.onTermination = { @Sendable _ in
+        Task(executorPreference: ring.executor) {
+          await self.end(ring: ring)
+          onTermination?()
+        }
+      }
+    }
+
+    func end(ring: isolated IORing) async {
+      terminated = true
+      guard let current, let token = current.cancellationToken else { return }
+      try? await ring.cancel(userData: token) // gone already, if it says so
     }
   }
 
@@ -442,7 +529,8 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
   private let ioprio: UInt16
   private let moreFlags: UInt32
   private let bufferIndexOrGroup: UInt16
-  private let socketAddress: sockaddr_storage?
+  /// as given, for the request made again after each completion
+  private let fd: FileDescriptorRepresentable
   private let holder: _StreamHolder
 
   private init(
@@ -467,7 +555,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
     self.ioprio = ioprio
     self.moreFlags = moreFlags
     self.bufferIndexOrGroup = bufferIndexOrGroup
-    self.socketAddress = socketAddress
+    self.fd = fd
     self.holder = holder
 
     try super.init(
@@ -531,13 +619,14 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
       moreFlags: moreFlags,
       bufferIndexOrGroup: bufferIndexOrGroup,
       socketAddress: socketAddress,
-      holder: _StreamHolder(onTermination: onTermination),
+      holder: _StreamHolder(ring: ring, onTermination: onTermination),
       handler: handler
     )
   }
 
   private func _submit(ring: isolated IORing) throws -> AsyncThrowingStream<T, Error> {
     try ring.submit()
+    holder.current = self
     return holder.stream
   }
 
@@ -548,6 +637,7 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
   }
 
   private func resubmit(ring: isolated IORing) {
+    guard !holder.terminated else { return }
     do {
       // Create new SQE with same holder (shared stream/continuation)
       let resubmission = try MultishotSubmission(ring: ring, self)
@@ -560,22 +650,23 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
   }
 
   override func onCompletion(cqe: io_uring_cqe) {
+    // end of stream: nothing was received, and no provided buffer was selected for the handler
+    if cqe.flags & IORING_CQE_F_MORE == 0, opcode != .accept, cqe.res == 0 {
+      holder.continuation.finish()
+      return
+    }
     do {
       let result = try throwingErrno(cqe: cqe, handler)
       holder.continuation.yield(result) // No suspension point!
       if cqe.flags & IORING_CQE_F_MORE == 0 {
-        if opcode != .accept && cqe.res == 0 {
-          holder.continuation.finish()
-        } else {
-          Task { await resubmit(ring: ring) }
-        }
+        Task(executorPreference: ring.executor) { await self.resubmit(ring: self.ring) }
       }
     } catch let error as Errno where error == .noBufferSpace {
       // provided-buffer pool momentarily exhausted: re-arm after in-flight
       // buffers are reprovided rather than ending the stream (drops overflow)
-      Task {
+      Task(executorPreference: ring.executor) {
         try? await Task.sleep(nanoseconds: 10_000_000)
-        await resubmit(ring: ring)
+        await self.resubmit(ring: self.ring)
       }
     } catch {
       holder.continuation.finish(throwing: error)
@@ -635,14 +726,28 @@ enum IORingOperation: UInt32 {
   case sendmsg_zc
 }
 
+/// A socket address for a send's SQE, alive as long as the submission: the kernel reads it at
+/// submission, after the address given to the send has gone. Holds the file descriptor's owner
+/// too, since a submission keeps one object.
+final class SocketAddressStorage: @unchecked Sendable {
+  let pointer: UnsafeMutablePointer<sockaddr_storage>
+  let owner: AnyObject?
+
+  init(_ address: sockaddr_storage, owner: AnyObject?) {
+    pointer = .allocate(capacity: 1)
+    pointer.initialize(to: address)
+    self.owner = owner
+  }
+
+  deinit {
+    pointer.deallocate()
+  }
+}
+
 struct AsyncCancelFlags: OptionSet {
   typealias RawValue = CInt
 
   let rawValue: RawValue
-
-  init(rawValue: RawValue) {
-    self.rawValue = rawValue
-  }
 
   static let all = AsyncCancelFlags(rawValue: 1 << 0)
   static let fd = AsyncCancelFlags(rawValue: 1 << 1)

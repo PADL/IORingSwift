@@ -20,7 +20,22 @@ IORing may be used as a singleton (`IORing.shared`), or they may be individually
 
 Public API provides structured concurrency wrappers around common operations such as reading and writing. Multishot APIs, such as `accept(2)`, which can return multiple completions over time return an `AsyncThrowingStream`.
 
-Internally, wrappers allocate a concrete instance of `Submission<T>`, representing an initialized Submission Queue Entry (SQE), which is then submitted to the `io_uring`. Completion handlers are handled either by having `libdispatch` monitor an `eventfd(2)` representing available completions, or through a dedicated thread (this can be configured by setting `cqHandlerType` in `Package.swift`; the default is to use Dispatch). The `user_data` in each queue entry is a block, which executes the `onCompletion(cqe:)` method of the `Submission<T>` instance in the ring's isolated context. Care must be taken to manager pointer lifetimes across the event lifecycle.
+Internally, wrappers allocate a concrete instance of `Submission<T>`, representing an initialized Submission Queue Entry (SQE), which is then submitted to the `io_uring`. Completions are reaped by `IORingExecutor`, which the first ring installs: a pool of threads, one per CPU, that never exit (the kernel cancels a request when the thread that submitted it exits, which the default executor's threads do after five idle seconds), with an `epoll(7)` of every ring's `eventfd(2)` that the idle thread waits in, so that the thread which reaps a completion runs the task waiting on it. See the note on the executor policy below. The `user_data` in each queue entry is a block, which executes the `onCompletion(cqe:)` method of the `Submission<T>` instance in the ring's isolated context. Care must be taken to manager pointer lifetimes across the event lifecycle.
+
+Executor policy
+---------------
+
+> **Every program that uses IORingSwift should choose an executor policy, and a program whose work is I/O — a daemon serving sockets, a device driver — should choose `.global`.**
+>
+> ```swift
+> try IORing.installExecutor(policy: .global) // first thing in main, before any ring
+> ```
+>
+> With `.global` the pool replaces Swift's global executor: every task not on the main actor runs there, requests are submitted and their completions reaped on the same persistent threads with no hop between, and no other code needs to change. This is the fast path and what the benchmarks measure. libdispatch itself is untouched — queues, sources and the main queue keep working — but task priorities are not ordered.
+>
+> The default is `.preference`, which leaves the global executor alone and installs the pool as one tasks opt into with `Task(executorPreference: IORing.taskExecutor)` or `withTaskExecutorPreference(IORing.taskExecutor)`, inherited by their child tasks and default actors. It exists for a process that must keep the cooperative pool for other reasons. Nothing breaks in a program that has not chosen: a request from a task that has not opted in is still submitted by a pool thread, so it survives the thread that made it — but that costs a thread switch each way per submit, and even an opted-in task pays the runtime for carrying a preference at every switch. Measured against `.global`, opted-in tasks are within a few percent on four CPUs and 12–23% slower on one; tasks that have not opted in are 30–60% slower.
+>
+> `SWIFT_IORING_EXECUTOR=global|preference` chooses from the environment (an explicit `installExecutor(policy:)` wins), and `SWIFT_IORING_EXECUTOR_THREADS` sets the thread count.
 
 Examples
 --------

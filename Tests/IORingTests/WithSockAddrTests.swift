@@ -32,7 +32,7 @@ final class WithSockAddrTests: XCTestCase {
     addr.sin_addr.s_addr = inet_addr("127.0.0.1")
 
     let (family, port, size) = try addr.withSockAddr { sa, size in
-      (sa.pointee.sa_family, try sa.pointee.port, size)
+      try (sa.pointee.sa_family, sa.pointee.port, size)
     }
 
     XCTAssertEqual(family, sa_family_t(AF_INET))
@@ -40,7 +40,7 @@ final class WithSockAddrTests: XCTestCase {
     XCTAssertEqual(size, socklen_t(MemoryLayout<sockaddr_in>.size))
   }
 
-  func testWithSockAddrIPv4AnyAddress() throws {
+  func testWithSockAddrIPv4AnyAddress() {
     var addr = sockaddr_in()
     addr.sin_family = sa_family_t(AF_INET)
     addr.sin_port = UInt16(9000).bigEndian
@@ -69,11 +69,15 @@ final class WithSockAddrTests: XCTestCase {
       addr.sin_addr.s_addr = inet_addr(ip)
 
       let (family, port, size) = try addr.withSockAddr { sa, size in
-        (sa.pointee.sa_family, try sa.pointee.port, size)
+        try (sa.pointee.sa_family, sa.pointee.port, size)
       }
 
       XCTAssertEqual(family, sa_family_t(AF_INET), "Family mismatch for \(ip)")
-      XCTAssertEqual(port, portNum, "Port mismatch for \(ip):\(portNum)") // port property returns host byte order
+      XCTAssertEqual(
+        port,
+        portNum,
+        "Port mismatch for \(ip):\(portNum)"
+      ) // port property returns host byte order
       XCTAssertEqual(size, socklen_t(MemoryLayout<sockaddr_in>.size), "Size mismatch for \(ip)")
     }
   }
@@ -87,7 +91,7 @@ final class WithSockAddrTests: XCTestCase {
     addr.sin6_addr = in6_addr() // :: (all zeros = IPv6 any address)
 
     let (family, port, size) = try addr.withSockAddr { sa, size in
-      (sa.pointee.sa_family, try sa.pointee.port, size)
+      try (sa.pointee.sa_family, sa.pointee.port, size)
     }
 
     XCTAssertEqual(family, sa_family_t(AF_INET6))
@@ -95,7 +99,7 @@ final class WithSockAddrTests: XCTestCase {
     XCTAssertEqual(size, socklen_t(MemoryLayout<sockaddr_in6>.size))
   }
 
-  func testWithSockAddrIPv6Loopback() throws {
+  func testWithSockAddrIPv6Loopback() {
     var addr = sockaddr_in6()
     addr.sin6_family = sa_family_t(AF_INET6)
     addr.sin6_port = UInt16(3000).bigEndian
@@ -124,7 +128,7 @@ final class WithSockAddrTests: XCTestCase {
     XCTAssertEqual(size, socklen_t(MemoryLayout<sockaddr_in6>.size))
   }
 
-  func testWithSockAddrIPv6WithScopeId() throws {
+  func testWithSockAddrIPv6WithScopeId() {
     var addr = sockaddr_in6()
     addr.sin6_family = sa_family_t(AF_INET6)
     addr.sin6_port = UInt16(5000).bigEndian
@@ -141,7 +145,7 @@ final class WithSockAddrTests: XCTestCase {
 
   // MARK: - Unix Domain Socket Tests
 
-  func testWithSockAddrUnixDomain() throws {
+  func testWithSockAddrUnixDomain() {
     let path = "/tmp/test.sock"
     var addr = sockaddr_un()
     addr.sun_family = sa_family_t(AF_LOCAL)
@@ -167,7 +171,7 @@ final class WithSockAddrTests: XCTestCase {
     XCTAssertGreaterThan(size, 0)
   }
 
-  func testWithSockAddrUnixDomainAbstractNamespace() throws {
+  func testWithSockAddrUnixDomainAbstractNamespace() {
     var addr = sockaddr_un()
     addr.sun_family = sa_family_t(AF_LOCAL)
 
@@ -177,7 +181,7 @@ final class WithSockAddrTests: XCTestCase {
       ptr.withMemoryRebound(to: UInt8.self, capacity: pathSize) { pathPtr in
         pathPtr[0] = 0 // Null byte indicates abstract namespace
         let abstractName = "test-socket"
-        abstractName.utf8.enumerated().forEach { index, byte in
+        for (index, byte) in abstractName.utf8.enumerated() {
           pathPtr[index + 1] = byte
         }
       }
@@ -304,7 +308,7 @@ final class WithSockAddrTests: XCTestCase {
     XCTAssertNotNil(extractedAddress)
   }
 
-  func testWithSockAddrInSocketBind() async throws {
+  func testWithSockAddrInSocketBind() throws {
     let ring = try IORing()
     let socket = try Socket(ring: ring, domain: sa_family_t(AF_INET), type: SOCK_STREAM)
 

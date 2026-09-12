@@ -34,8 +34,14 @@ final class BufferCopyTests: XCTestCase {
     guard socketpair(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0, &fds) == 0 else {
       throw Errno(rawValue: errno)
     }
-    let rx = Socket(ring: ring, fileHandle: try FileHandle(fileDescriptor: fds[0], closeOnDealloc: true))
-    let tx = Socket(ring: ring, fileHandle: try FileHandle(fileDescriptor: fds[1], closeOnDealloc: true))
+    let rx = try Socket(
+      ring: ring,
+      fileHandle: FileHandle(fileDescriptor: fds[0], closeOnDealloc: true)
+    )
+    let tx = try Socket(
+      ring: ring,
+      fileHandle: FileHandle(fileDescriptor: fds[1], closeOnDealloc: true)
+    )
     return (rx, tx)
   }
 
@@ -61,8 +67,8 @@ final class BufferCopyTests: XCTestCase {
     XCTAssertEqual(result, payload)
   }
 
-  // A full read (count == file size) must return every byte unchanged; the trim
-  // branch must not fire when nread == count.
+  /// A full read (count == file size) must return every byte unchanged; the trim
+  /// branch must not fire when nread == count.
   func testReadCountExactReturnsAllBytes() async throws {
     let ring = try IORing()
     let tempFile = "\(tmpDir)/ioring_exact_\(getpid()).txt"
@@ -80,8 +86,8 @@ final class BufferCopyTests: XCTestCase {
     XCTAssertEqual(result, payload)
   }
 
-  // Socket.write with count == buffer.count takes the first-pass no-slice branch;
-  // the receiver must see the whole buffer intact.
+  /// Socket.write with count == buffer.count takes the first-pass no-slice branch;
+  /// the receiver must see the whole buffer intact.
   func testSocketWriteWholeBufferRoundTrips() async throws {
     let ring = try IORing()
     let (rx, tx) = try makeStreamPair(ring: ring)
@@ -97,8 +103,8 @@ final class BufferCopyTests: XCTestCase {
     XCTAssertEqual(received, payload)
   }
 
-  // Socket.write with count < buffer.count must send only the first `count` bytes
-  // from the start of the buffer (the no-slice first pass honours `count`).
+  /// Socket.write with count < buffer.count must send only the first `count` bytes
+  /// from the start of the buffer (the no-slice first pass honours `count`).
   func testSocketWritePartialCountSendsPrefix() async throws {
     let ring = try IORing()
     let (rx, tx) = try makeStreamPair(ring: ring)

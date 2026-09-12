@@ -1,4 +1,4 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.3
 
 import Foundation
 import PackageDescription
@@ -21,13 +21,6 @@ func tryGuessSwiftLibRoot() -> String {
 }
 
 let SwiftLibRoot = EnvSysRoot != nil ? "\(EnvSysRoot!)/usr/lib/swift" : tryGuessSwiftLibRoot()
-
-enum CQHandlerType: String {
-  case dispatch = "DISPATCH_IO_URING"
-  case pthread = "PTHREAD_IO_URING"
-}
-
-let cqHandlerType: CQHandlerType = .dispatch
 
 let package = Package(
   name: "IORingSwift",
@@ -54,7 +47,7 @@ let package = Package(
     .package(url: "https://github.com/dfed/swift-async-queue", from: "1.0.0"),
     .package(url: "https://github.com/apple/swift-log", from: "1.6.2"),
     .package(url: "https://github.com/apple/swift-system", from: "1.0.0"),
-    .package(url: "https://github.com/PADL/SocketAddress", from: "0.4.5"),
+    .package(url: "https://github.com/PADL/SocketAddress", from: "0.5.2"),
   ],
   targets: [
     .systemLibrary(
@@ -67,12 +60,10 @@ let package = Package(
       cSettings: [
         .define("_XOPEN_SOURCE=700"),
         .define("_DEFAULT_SOURCE"),
-        .define("\(cqHandlerType.rawValue)=1"),
       ],
       cxxSettings: [
         .define("_XOPEN_SOURCE=700"),
         .define("_DEFAULT_SOURCE"),
-        .define("\(cqHandlerType.rawValue)=1"),
       ]
     ),
     .target(
@@ -126,6 +117,11 @@ let package = Package(
       name: "IORingCopy",
       dependencies: ["IORing", "IORingUtils"],
       path: "Examples/IORingCopy"
+    ),
+    .executableTarget(
+      name: "IORingSocketBench",
+      dependencies: ["IORing", "IORingUtils"],
+      path: "Examples/IORingSocketBench"
     ),
     .executableTarget(
       name: "IORingTCPEcho",
