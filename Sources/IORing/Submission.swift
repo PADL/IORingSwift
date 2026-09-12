@@ -256,7 +256,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
       try await withUnsafeThrowingContinuation { continuation in
         // guaranteed to run immediately
         self.continuation = continuation
-        if group != nil {
+        if handoff.load(ordering: .relaxed) != Handoff.direct.rawValue {
           if handoff.exchange(Handoff.waiting.rawValue, ordering: .acquiringAndReleasing)
             == Handoff.completed.rawValue
           {
@@ -265,8 +265,10 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
             cqe.flags = completionFlags
             resume(continuation, with: cqe)
           }
-          // a group counts every member ready before it submits, this one included
+          // a group counts every member ready before it submits, this one included;
+          // a group gone before that, its caller having thrown, submits nothing
           ready()
+          if group == nil { _ = try? ring.submit() }
         } else {
           // a failed enter leaves the flushed SQE for the next submit to carry, so its
           // completion is still coming; failing the continuation now would resume it twice

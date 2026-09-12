@@ -119,6 +119,57 @@ final class SubmitRetryTests: XCTestCase {
     XCTAssertGreaterThanOrEqual(ContinuousClock.now - start, .milliseconds(30))
   }
 
+  /// an enter that fails for good fails the requests the ring holds, once each and at once,
+  /// and everything asked of the ring after
+  func testTerminalFailureIsDeliveredOnce() async throws {
+    let ring = try IORing()
+    let (own, peer) = try Self.makePair(ring: ring)
+    await ring.injectSubmitErrors([.permissionDenied])
+    let start = ContinuousClock.now
+    do {
+      _ = try await within(.seconds(2)) { try await own.receive(count: 1) as [UInt8] }
+      XCTFail("received")
+    } catch let error as Errno {
+      XCTAssertEqual(error, .permissionDenied)
+    }
+    XCTAssertLessThan(ContinuousClock.now - start, .milliseconds(100)) // no retry waited for
+    do {
+      _ = try await within(.seconds(2)) { try await own.receive(count: 1) as [UInt8] }
+      XCTFail("received")
+    } catch let error as Errno {
+      XCTAssertEqual(error, .permissionDenied)
+    }
+    _ = peer
+  }
+
+  /// a caller cancelled while its group's members are pending has them cancelled and waits
+  /// for that, so that the descriptors it lent them are its own again when it returns
+  func testCancelledGroupWaitsForItsMembers() async throws {
+    let ring = try IORing()
+    try await ring.registerFixedBuffers(count: 1, size: 4096)
+    var source = [Int32](repeating: -1, count: 2), sink = [Int32](repeating: -1, count: 2)
+    guard pipe(&source) == 0, pipe(&sink) == 0 else { throw Errno(rawValue: errno) }
+    defer { for fd in source + sink { close(fd) } }
+    let (from, to) = (FileDescriptor(rawValue: source[0]), FileDescriptor(rawValue: sink[1]))
+    await ring.injectSubmitErrors([.resourceTemporarilyUnavailable])
+    // nothing to read: the copy waits until it is cancelled
+    let copy = Task { try await ring.copy(count: 5, bufferIndex: 0, from: from, to: to) }
+    try await Task.sleep(for: .milliseconds(2))
+    copy.cancel()
+    let outcome = try await within(.seconds(2)) { await copy.result }
+    guard case let .failure(error) = outcome else { return XCTFail("copied nothing") }
+    XCTAssert(error is CancellationError, "\(error)")
+    // the ring, and the descriptors, are free for the next
+    let bytes: [UInt8] = [1, 2, 3, 4, 5]
+    XCTAssertEqual(bytes.withUnsafeBytes { write(source[1], $0.baseAddress, $0.count) }, 5)
+    try await within(.seconds(2)) {
+      try await ring.copy(count: bytes.count, bufferIndex: 0, from: from, to: to)
+    }
+    var copied = [UInt8](repeating: 0, count: bytes.count)
+    XCTAssertEqual(copied.withUnsafeMutableBytes { read(sink[0], $0.baseAddress, $0.count) }, 5)
+    XCTAssertEqual(copied, bytes)
+  }
+
   /// a group whose submit failed waits for its members' completions rather than unwinding
   /// from under them
   func testGroupWaitsForAStrandedSubmit() async throws {

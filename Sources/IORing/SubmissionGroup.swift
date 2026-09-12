@@ -18,8 +18,8 @@ import AsyncAlgorithms
 import AsyncQueue
 import Glibc
 
-/// The group is gone if its caller's task was cancelled while members were in flight: each
-/// member completes on its own, the request and its buffers being the ring's, not the group's.
+/// The group is gone if its caller threw before `finish()`, leaving members in flight: each
+/// completes on its own, the request and its buffers being the ring's, not the group's.
 extension SingleshotSubmission {
   func enqueue(ring: isolated IORing) async {
     let result: Result<T, Error>
@@ -97,14 +97,25 @@ final class SubmissionGroup<T: Sendable>: Sendable {
   ///
   func finish(ring: isolated IORing) async throws -> [T] {
     defer { readinessContinuation?.finish() }
-    await allReady()
-    // a failed submit leaves the SQEs flushed and a retry pending: the completions are
-    // still coming, and the members deliver them through this group, which must wait
-    _ = try? ring.submit()
-    let results = try await allComplete()
-    // the streams end with the caller's task, short of the members still in flight
-    if results.count < submissions.count { try Task.checkCancellation() }
-    return results
+    // Neither wait ends with the caller's task, as the streams would: the members are in
+    // the kernel's hands, or about to be, and complete regardless. A cancelled caller has
+    // them cancelled and waits for that, its descriptors being free to close once it returns.
+    do {
+      return try await withTaskCancellationHandler {
+        await Task { await self.allReady() }.value
+        // a failed submit leaves the SQEs flushed and a retry pending: the completions are
+        // still coming, and the members deliver them through this group, which must wait
+        _ = try? ring.submit()
+        return try await Task { try await self.allComplete() }.value
+      } onCancel: {
+        for submission in submissions {
+          Task(executorPreference: ring.executor) { try? await submission.cancel(ring: ring) }
+        }
+      }
+    } catch {
+      try Task.checkCancellation() // the cancellation, rather than what it did to a member
+      throw error
+    }
   }
 }
 
