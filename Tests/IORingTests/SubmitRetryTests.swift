@@ -107,12 +107,12 @@ final class SubmitRetryTests: XCTestCase {
     XCTAssertEqual(copied, bytes)
   }
 
-  /// a multishot request whose submit failed is armed by the retry, and is the one that
-  /// ending the stream cancels
+  /// a multishot request whose own submit failed, after the one providing its buffers did, is
+  /// armed by the retry
   func testMultishotArmsAfterAStrandedSubmit() async throws {
     let ring = try IORing()
     let (own, peer) = try Self.makePair(ring: ring)
-    await ring.injectSubmitErrors([.resourceTemporarilyUnavailable])
+    await ring.injectSubmitErrors([.resourceTemporarilyUnavailable, .resourceTemporarilyUnavailable])
     let first = try await within(.seconds(2)) {
       let stream = try await own.receive(count: 64, capacity: 4)
       try await peer.send([9])
@@ -122,7 +122,20 @@ final class SubmitRetryTests: XCTestCase {
       return []
     }
     XCTAssertEqual(first, [9])
-    // the stream is gone: its request is cancelled, and the ring can be torn down after it
+  }
+
+  /// a stream let go while its request is still pending has that request cancelled, before
+  /// its buffers go, so that data arriving later meets a closed request and not freed memory
+  func testMultishotEndedWhilePendingIsCancelled() async throws {
+    let ring = try IORing()
+    let (own, peer) = try Self.makePair(ring: ring)
+    await ring.injectSubmitErrors([.resourceTemporarilyUnavailable, .resourceTemporarilyUnavailable])
+    do {
+      let stream = try await own.receive(count: 64, capacity: 4)
+      _ = stream // let go at once, while pending
+    }
+    try await Task.sleep(for: .milliseconds(50)) // the cancel and the retry have both run
+    try await peer.send([1])
     try await Task.sleep(for: .milliseconds(50))
   }
 }

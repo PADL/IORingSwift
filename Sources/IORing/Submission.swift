@@ -528,7 +528,18 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
     func end(ring: isolated IORing) async {
       terminated = true
       guard let current, let token = current.cancellationToken else { return }
-      try? await ring.cancel(userData: token) // gone already, if it says so
+      // the cancel needs an SQE, which a full queue denies for a moment; the buffers
+      // must not go before it is in, while the request can still be armed
+      while true {
+        do {
+          try await ring.cancel(userData: token)
+          return
+        } catch let error as Errno where error == .resourceTemporarilyUnavailable {
+          try? await Task.sleep(for: .milliseconds(10))
+        } catch {
+          return // gone already, if it says so
+        }
+      }
     }
   }
 
