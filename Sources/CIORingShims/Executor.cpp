@@ -215,10 +215,10 @@ void armTimer(TimerQueue &queue) {
   queue.armed = deadline;
 }
 
-// lock held
+// lock held. The timerfd is not drained: the settime that re-arms or disarms
+// it below resets its count, and the next expiry is a new edge either way.
 void expireTimers(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
                   TimerQueue &queue) {
-  drain(queue.fd);
   uint64_t now = nanoseconds(queue.clock);
   while (!queue.heap.empty() && queue.heap.front().deadline <= now) {
     std::pop_heap(queue.heap.begin(), queue.heap.end(), timerLater);
