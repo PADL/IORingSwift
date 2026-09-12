@@ -72,25 +72,31 @@ final class RegressionTests: XCTestCase {
     XCTAssertEqual(received, chunks.flatMap { $0 })
   }
 
-  /// Leaving a multishot receive cancelled nothing: the request stayed armed on a
-  /// provided-buffer group that had just been freed, and re-armed itself on ENOBUFS.
+  /// Leaving a multishot receive ended nothing: the request stayed armed on a provided-buffer
+  /// group that had just been freed, re-armed itself on ENOBUFS, and kept consuming the socket.
   func testLeavingMultishotReceiveCancelsIt() async throws {
     let ring = try IORing()
     let (rx, tx) = try Self.makePair(SOCK_STREAM, ring: ring)
     let sender = Task {
-      for i in 0..<2000 {
-        try await tx.send(Array(repeating: UInt8(truncatingIfNeeded: i), count: 32))
+      // few enough to fit the socket's send buffer once nothing reads
+      for i in 0..<50 {
+        try await tx.send(Array(repeating: UInt8(i), count: 32))
       }
     }
     for try await _ in try await rx.receive(count: 128, capacity: 2) as AnyAsyncSequence<[UInt8]> {
       break
     }
     try await sender.value
-    // whatever the receive left behind, the socket is still usable and nothing has crashed
-    try await Task.sleep(for: .milliseconds(50))
-    try await tx.send([1])
-    let last = try await rx.receive(count: 1) as [UInt8]
-    XCTAssertEqual(last.count, 1)
+    // the stream cancelled, the rest of the data is still in the socket for a plain receive,
+    // which is how a still-armed multishot would show: by eating it
+    try await tx.send([0xFF])
+    var chunks = 0
+    while chunks < 100 { // the buffer comes back at its full size; look for the sentinel in it
+      let chunk = try await rx.receive(count: 4096) as [UInt8]
+      chunks += 1
+      if chunk.contains(0xFF) { break }
+    }
+    XCTAssertLessThan(chunks, 100, "the sentinel never arrived: a receive is still armed")
   }
 
   /// A linked pair's SQEs were prepared in one actor job and their continuations registered in
