@@ -1224,3 +1224,17 @@ package extension Duration {
     components.seconds * 1000 + Int64(Double(components.attoseconds) * 1e-15)
   }
 }
+
+extension Duration {
+  /// as the kernel takes a timeout, to the nanosecond; the sign is the caller's to refuse
+  var kernelTimespec: __kernel_timespec {
+    let (seconds, attoseconds) = components
+    return __kernel_timespec(tv_sec: seconds, tv_nsec: attoseconds / 1_000_000_000)
+  }
+}
+
+extension __kernel_timespec {
+  var duration: Duration {
+    .seconds(tv_sec) + .nanoseconds(tv_nsec)
+  }
+}

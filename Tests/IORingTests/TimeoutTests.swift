@@ -95,6 +95,14 @@ final class TimeoutTests: XCTestCase {
     _ = a
   }
 
+  /// a duration survives the trip through the kernel's timespec, to the nanosecond
+  func testTimespecRoundTrips() {
+    let duration = Duration.seconds(3) + .nanoseconds(250)
+    XCTAssertEqual(duration.kernelTimespec.duration, duration)
+    XCTAssertEqual(Duration.zero.kernelTimespec.duration, .zero)
+    XCTAssertNotEqual(Duration.nanoseconds(1).kernelTimespec.duration, .zero)
+  }
+
   /// `SingleshotSubmission` is served from glibc's largest fastbin; see its declaration
   func testSingleshotSubmissionFitsAFastbin() async throws {
     let ring = try IORing()

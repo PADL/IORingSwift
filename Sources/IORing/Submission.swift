@@ -241,12 +241,8 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
       guard ring.sqSpaceLeft >= 2 else { throw Errno.resourceTemporarilyUnavailable }
     }
     let timespec = timeout.map { timeout in
-      let (seconds, attoseconds) = timeout.components
       let timespec = UnsafeMutablePointer<__kernel_timespec>.allocate(capacity: 1)
-      timespec.initialize(to: __kernel_timespec(
-        tv_sec: seconds,
-        tv_nsec: attoseconds / 1_000_000_000
-      ))
+      timespec.initialize(to: timeout.kernelTimespec)
       return timespec
     }
     self.timeout = timespec
