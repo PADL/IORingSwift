@@ -344,12 +344,22 @@ public actor IORing: CustomStringConvertible {
   /// the call.
   @discardableResult
   func submit() throws -> Int {
-    try Int(Errno.throwingErrno {
-      self.executor.isCurrentThread ? io_uring_submit(self.ring) : ioring_pool_submit(
-        self.executor.pool,
-        self.ring
-      )
-    })
+    do {
+      return try Int(Errno.throwingErrno {
+        self.executor.isCurrentThread ? io_uring_submit(self.ring) : ioring_pool_submit(
+          self.executor.pool,
+          self.ring
+        )
+      })
+    } catch {
+      // the SQEs stay flushed for the next submit to carry, and the task awaiting
+      // them may be the ring's only one: make sure there is a next submit
+      Task(executorPreference: executor) {
+        try? await Task.sleep(for: .milliseconds(10))
+        _ = try? await self.submit()
+      }
+      throw error
+    }
   }
 
   func withSubmissionGroup<T: Sendable>(_ body: (
