@@ -344,11 +344,18 @@ public actor IORing: CustomStringConvertible {
     return nextBufferGroup
   }
 
+  /// Takes back from the kernel what is left of a group's buffers, which it does as it is
+  /// asked, in the caller's isolation; the group may be gone already, all its buffers out.
+  func removeBuffers(_ count: Int, from bufferGroup: UInt16) async {
+    try? await BufferSubmission<UInt8>(ring: self, removing: count, from: bufferGroup).submit()
+  }
+
   /// The kernel binds a request to the thread that calls `io_uring_enter`, and cancels it
   /// if that thread exits; from a thread outside the executor, one of its threads makes
   /// the call.
   @discardableResult
   func submit() throws -> Int {
+    if let dead { throw dead }
     do {
       #if DEBUG
       if !injectedSubmitErrors.isEmpty { throw injectedSubmitErrors.removeFirst() }
@@ -698,11 +705,7 @@ private extension IORing {
       },
       onTermination: { [buffers] in
         Task(executorPreference: self.executor) {
-          try? await BufferSubmission<UInt8>(
-            ring: self,
-            removing: capacity,
-            from: buffers.bufferGroup
-          ).submit()
+          await self.removeBuffers(capacity, from: buffers.bufferGroup)
           buffers.deallocate()
         }
       }

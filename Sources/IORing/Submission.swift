@@ -321,7 +321,8 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
 
   let size: Int
   let bufferGroup: UInt16
-  let buffer: UnsafeMutablePointer<U>
+  /// none for the request removing a group's buffers
+  let buffer: UnsafeMutablePointer<U>?
 
   override func onCompletion(cqe: io_uring_cqe) {}
 
@@ -339,7 +340,7 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
 
   nonisolated func bufferPointer(id bufferID: Int) -> UnsafeMutablePointer<U> {
     precondition(bufferID < count)
-    return buffer + (bufferID * size)
+    return buffer! + (bufferID * size)
   }
 
   private init(
@@ -351,15 +352,13 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
     flags: IORing.SqeFlags = IORing.SqeFlags(),
     bufferGroup: UInt16
   ) throws {
-    guard let buffer else { throw Errno.invalidArgument }
-
     self.size = size
     self.bufferGroup = bufferGroup
     self.buffer = buffer
 
     try super.init(
       ring: ring,
-      .provide_buffers,
+      buffer == nil ? .remove_buffers : .provide_buffers,
       fd: BufferCount(count: count),
       address: buffer,
       length: UInt32(size),
@@ -449,7 +448,7 @@ final class BufferSubmission<U>: Submission<()>, @unchecked Sendable {
   }
 
   func deallocate() {
-    buffer.deallocate()
+    buffer?.deallocate()
   }
 }
 
