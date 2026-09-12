@@ -113,7 +113,7 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
     do {
       precondition(cancellationToken != nil)
       let sqe = try ring.getSqe()
-      io_uring_prep_cancel(sqe, cancellationToken, AsyncCancelFlags.userData.rawValue)
+      io_uring_prep_cancel(sqe, cancellationToken, 0) // by user data; see `IORing.cancel`
       _ = io_uring_sqe_set_block(sqe) { cqe in
         self.onCancel(cqe: cqe.pointee)
       }

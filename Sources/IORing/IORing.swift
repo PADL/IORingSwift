@@ -886,13 +886,13 @@ public extension IORing {
   }
 
   /// Cancels the request whose completion block is `token`; returns once the kernel has
-  /// answered, with `Errno.noSuchFileOrDirectory` if it had already completed.
+  /// answered, with `Errno.noSuchFileOrDirectory` if it had already completed. Matched by
+  /// user data alone, with no flag to say so: every kernel takes that, not every one the flag.
   func cancel(userData token: UnsafeMutableRawPointer) async throws {
     try await prepareAndSubmit(
       .async_cancel,
       fd: FileDescriptor(rawValue: -1),
-      address: UnsafeRawPointer(token),
-      moreFlags: UInt32(bitPattern: AsyncCancelFlags.userData.rawValue)
+      address: UnsafeRawPointer(token)
     ) { _ in }
   }
 
