@@ -248,9 +248,9 @@ public actor IORing: CustomStringConvertible {
     var flags = flags
 
     flags.remove(.attachWq)
-    // the pool submits from whichever of its threads is current, and the actor registers
-    // from whichever runs it: neither is one issuer, with or without SQPOLL
-    guard flags.isDisjoint(with: [.singleIssuer, .deferTaskRun]) else {
+    // the pool submits and the actor registers from whichever thread is current, so there
+    // is no single issuer, with or without SQPOLL; and nothing here enables a disabled ring
+    guard flags.isDisjoint(with: [.singleIssuer, .deferTaskRun, .rDisabled]) else {
       throw Errno.invalidArgument
     }
 
