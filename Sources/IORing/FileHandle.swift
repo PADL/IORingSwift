@@ -29,16 +29,23 @@ public protocol FileDescriptorRepresentable: Sendable {
 }
 
 public extension FileDescriptorRepresentable {
-  var fileDescriptorOwner: AnyObject? { nil }
+  var fileDescriptorOwner: AnyObject? {
+    nil
+  }
 }
 
 public extension FileDescriptorRepresentable where Self: AnyObject {
-  var fileDescriptorOwner: AnyObject? { self }
+  var fileDescriptorOwner: AnyObject? {
+    self
+  }
 }
 
 /// Include our own FileHandle for accept() so we do not need to import Foundation
 public final class FileHandle: FileDescriptorRepresentable, CustomStringConvertible, Sendable {
-  public var fileDescriptor: CInt { _fileDescriptor.rawValue }
+  public var fileDescriptor: CInt {
+    _fileDescriptor.rawValue
+  }
+
   private let _fileDescriptor: FileDescriptor
   private let closeOnDealloc: Bool
 
@@ -86,5 +93,7 @@ extension FileHandle: Hashable {
 }
 
 extension FileDescriptor: FileDescriptorRepresentable {
-  public var fileDescriptor: CInt { rawValue }
+  public var fileDescriptor: CInt {
+    rawValue
+  }
 }

@@ -23,9 +23,9 @@
 // Environment: BENCH_TRANSPORT (unix or tcp, default unix), BENCH_PAIRS (default
 // "1 4 16 64"), BENCH_SIZE (message bytes, default 64), BENCH_PORT (tcp, default 58800),
 // BENCH_EXECUTOR=preference to install the executor for tasks to opt into rather than as
-// the global one, and then BENCH_ANNOTATE=1 to have the benchmark's tasks opt in. A task
-// with an executor preference, even nil, costs the runtime something at every switch, so
-// the tasks are only given one when asked.
+// the global one (the benchmark selects .global otherwise), and then BENCH_ANNOTATE=1 to
+// have the benchmark's tasks opt in. A task with an executor preference, even nil, costs the
+// runtime something at every switch, so the tasks are only given one when asked.
 //
 // For each pair count prints
 //   RESULT <transport> <pairs> <round trips/s> <ns per round trip> <CPU ns per round trip>
@@ -44,7 +44,9 @@ private func environment(_ name: String) -> String? {
 private func cpuNanoseconds() -> Double {
   var usage = rusage()
   getrusage(Int32(RUSAGE_SELF.rawValue), &usage)
-  func ns(_ tv: timeval) -> Double { Double(tv.tv_sec) * 1e9 + Double(tv.tv_usec) * 1e3 }
+  func ns(_ tv: timeval) -> Double {
+    Double(tv.tv_sec) * 1e9 + Double(tv.tv_usec) * 1e3
+  }
   return ns(usage.ru_utime) + ns(usage.ru_stime)
 }
 
@@ -54,8 +56,14 @@ private func unixPair() throws -> (Socket, Socket) {
     throw Errno(rawValue: errno)
   }
   return try (
-    Socket(ring: IORing.shared, fileHandle: FileHandle(fileDescriptor: fds[0], closeOnDealloc: true)),
-    Socket(ring: IORing.shared, fileHandle: FileHandle(fileDescriptor: fds[1], closeOnDealloc: true))
+    Socket(
+      ring: IORing.shared,
+      fileHandle: FileHandle(fileDescriptor: fds[0], closeOnDealloc: true)
+    ),
+    Socket(
+      ring: IORing.shared,
+      fileHandle: FileHandle(fileDescriptor: fds[1], closeOnDealloc: true)
+    )
   )
 }
 
@@ -84,13 +92,17 @@ private func echo(_ server: Socket, size: Int) async {
   while let message = try? await server.read(count: size, awaitingAllRead: true),
         message.count == size
   {
-    guard (try? await server.write(message, count: size, awaitingAllWritten: true)) != nil else {
+    guard await (try? server.write(message, count: size, awaitingAllWritten: true)) != nil else {
       return
     }
   }
 }
 
-private func roundTrips(_ client: Socket, size: Int, until deadline: ContinuousClock.Instant) async throws -> Int {
+private func roundTrips(
+  _ client: Socket,
+  size: Int,
+  until deadline: ContinuousClock.Instant
+) async throws -> Int {
   let message = [UInt8](repeating: 0x5A, count: size)
   var count = 0
   while ContinuousClock.now < deadline {
@@ -105,13 +117,15 @@ private func roundTrips(_ client: Socket, size: Int, until deadline: ContinuousC
 @main
 enum IORingSocketBench {
   static func main() async throws {
-    if environment("BENCH_EXECUTOR") == "preference" {
-      try IORing.installExecutor(policy: .preference)
-    }
-    let preference: (any TaskExecutor)? = environment("BENCH_ANNOTATE") == "1" ? try IORing.taskExecutor : nil
+    try IORing
+      .installExecutor(policy: environment("BENCH_EXECUTOR") == "preference" ? .preference :
+        .global)
+    let preference: (any TaskExecutor)? = environment("BENCH_ANNOTATE") == "1" ? try IORing
+      .taskExecutor : nil
     let seconds = CommandLine.arguments.count > 1 ? Double(CommandLine.arguments[1]) ?? 5 : 5
     let transport = environment("BENCH_TRANSPORT") ?? "unix"
-    let pairCounts = (environment("BENCH_PAIRS") ?? "1 4 16 64").split(separator: " ").compactMap { Int($0) }
+    let pairCounts = (environment("BENCH_PAIRS") ?? "1 4 16 64").split(separator: " ")
+      .compactMap { Int($0) }
     let size = environment("BENCH_SIZE").flatMap(Int.init) ?? 64
     var port = environment("BENCH_PORT").flatMap(UInt16.init) ?? 58800
 
@@ -154,7 +168,8 @@ enum IORingSocketBench {
         try await measure()
       }
       let elapsed = ContinuousClock.now - start
-      let elapsedNs = Double(elapsed.components.seconds) * 1e9 + Double(elapsed.components.attoseconds) / 1e9
+      let elapsedNs = Double(elapsed.components.seconds) * 1e9 +
+        Double(elapsed.components.attoseconds) / 1e9
       let cpu = cpuNanoseconds() - cpuStart
       print(
         "RESULT \(transport) \(pairCount) \(Int(Double(total) / elapsedNs * 1e9)) " +

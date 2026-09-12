@@ -22,10 +22,10 @@ import IORingUtils
 import struct SystemPackage.Errno
 import XCTest
 
-// The executor is installed when the first ring is created, so every test in the package runs
-// on it, or with SWIFT_IORING_EXECUTOR=preference beside it, where every request from an
-// unannotated task takes the fallback through the pool; these check what it does beyond
-// running jobs.
+/// The executor is installed when the first ring is created: with SWIFT_IORING_EXECUTOR=global
+/// every test in the package runs on it, and by default (`.preference`) beside it, where every
+/// request from an unannotated task takes the submit handoff to the pool; these check what it
+/// does beyond running jobs.
 final class ExecutorTests: XCTestCase {
   private static let threadName = "IORingExecutor"
 
@@ -36,7 +36,9 @@ final class ExecutorTests: XCTestCase {
 
   private final class Box<T>: @unchecked Sendable {
     var value: T
-    init(_ value: T) { self.value = value }
+    init(_ value: T) {
+      self.value = value
+    }
   }
 
   private var threads: Int {
@@ -63,7 +65,9 @@ final class ExecutorTests: XCTestCase {
     let detached = Task.detached { ExecutorTests.currentThreadName() }
     let name = await detached.value
     XCTAssertEqual(name == ExecutorTests.threadName, global)
-    let preferred = Task(executorPreference: try IORing.taskExecutor) { ExecutorTests.currentThreadName() }
+    let preferred = try Task(executorPreference: IORing.taskExecutor) {
+      ExecutorTests.currentThreadName()
+    }
     let preferredName = await preferred.value
     XCTAssertEqual(preferredName, ExecutorTests.threadName)
     // a completion resumes its task on the thread that reaped it
@@ -73,10 +77,10 @@ final class ExecutorTests: XCTestCase {
     XCTAssertEqual(ExecutorTests.currentThreadName() == ExecutorTests.threadName, global)
   }
 
-  // a task that prefers the executor does its I/O without leaving it
+  /// a task that prefers the executor does its I/O without leaving it
   func testPreferredTaskStaysOnItsThreads() async throws {
     let (a, b) = try Self.makePair(ring: IORing.shared)
-    let task = Task(executorPreference: try IORing.taskExecutor) {
+    let task = try Task(executorPreference: IORing.taskExecutor) {
       let before = ExecutorTests.currentThreadName()
       try await a.send([1])
       _ = try await b.receive(count: 1) as [UInt8]
@@ -103,10 +107,10 @@ final class ExecutorTests: XCTestCase {
     XCTAssertLessThan(suspendingElapsed, .seconds(1))
   }
 
-  // timers added out of order fire in deadline order
+  /// timers added out of order fire in deadline order
   func testSleepsFireInOrder() async throws {
     _ = try threads
-    let delays = (1...20).map { Duration.milliseconds(5 * (($0 * 7) % 20 + 1)) }
+    let delays = (1...20).map { Duration.milliseconds(20 * (($0 * 7) % 20 + 1)) }
     let order = await withTaskGroup(of: (Duration, ContinuousClock.Instant).self) { group in
       for delay in delays {
         group.addTask {
@@ -133,8 +137,8 @@ final class ExecutorTests: XCTestCase {
     XCTAssertLessThan(ContinuousClock.now - start, .seconds(1))
   }
 
-  // a task started from a thread the pool knows nothing about
-  func testTaskFromForeignThread() async throws {
+  /// a task started from a thread the pool knows nothing about
+  func testTaskFromForeignThread() throws {
     let global = try policy == .global
     let done = DispatchSemaphore(value: 0)
     let result = Box("")
@@ -149,14 +153,14 @@ final class ExecutorTests: XCTestCase {
     XCTAssertEqual(result.value == ExecutorTests.threadName, global)
   }
 
-  // a job that blocks its thread, as jobs must not, neither stalls a task it started nor,
-  // for long, the completions of tasks doing I/O
+  /// a job that blocks its thread, as jobs must not, neither stalls a task it started nor,
+  /// for long, the completions of tasks doing I/O
   func testBlockedJobDoesNotStallTheRest() async throws {
     guard try threads > 1 else { throw XCTSkip("one thread") }
     let ring = IORing.shared
     let (a, b) = try Self.makePair(ring: ring)
     let released = DispatchSemaphore(value: 0)
-    let blocker = Task(executorPreference: try IORing.taskExecutor) {
+    let blocker = try Task(executorPreference: IORing.taskExecutor) {
       let child = Task { released.signal() }
       // the child runs on another thread while this one is stuck
       XCTAssertEqual(released.wait(timeout: .now() + 5), .success)

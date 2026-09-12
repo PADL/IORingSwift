@@ -98,7 +98,11 @@ final class MessageHolder: @unchecked Sendable {
     }
     // each buffer holds the kernel's recvmsg header and the peer's address before the payload
     self.size = size + MemoryLayout<io_uring_recvmsg_out>.size + MemoryLayout<sockaddr_storage>.size
-    let bufferSubmission = try await BufferSubmission<UInt8>(ring: ring, size: self.size, count: count)
+    let bufferSubmission = try await BufferSubmission<UInt8>(
+      ring: ring,
+      size: self.size,
+      count: count
+    )
     self.bufferSubmission = bufferSubmission
     bufferGroup = bufferSubmission.bufferGroup
     Swift.withUnsafeMutablePointer(to: &address) {

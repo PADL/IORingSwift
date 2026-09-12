@@ -95,8 +95,8 @@ final class IORingExecutor: TaskExecutor, SchedulingExecutor, @unchecked Sendabl
       var executor: IORingExecutor?
       /// the environment's choices, which an argument to install overrides
       var policy: IORing.ExecutorPolicy = getenv("SWIFT_IORING_EXECUTOR").map {
-        String(cString: $0) == "preference" ? .preference : .global
-      } ?? .global
+        String(cString: $0) == "global" ? .global : .preference
+      } ?? .preference
       var threads: Int = getenv("SWIFT_IORING_EXECUTOR_THREADS")
         .map { Int(String(cString: $0)) ?? 0 } ?? 0
     }

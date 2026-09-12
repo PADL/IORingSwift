@@ -27,13 +27,19 @@ final class MultishotReArmTests: XCTestCase {
     guard socketpair(AF_UNIX, Int32(SOCK_DGRAM.rawValue), 0, &fds) == 0 else {
       throw Errno(rawValue: errno)
     }
-    let rx = Socket(ring: ring, fileHandle: try FileHandle(fileDescriptor: fds[0], closeOnDealloc: true))
-    let tx = Socket(ring: ring, fileHandle: try FileHandle(fileDescriptor: fds[1], closeOnDealloc: true))
+    let rx = try Socket(
+      ring: ring,
+      fileHandle: FileHandle(fileDescriptor: fds[0], closeOnDealloc: true)
+    )
+    let tx = try Socket(
+      ring: ring,
+      fileHandle: FileHandle(fileDescriptor: fds[1], closeOnDealloc: true)
+    )
     return (rx, tx)
   }
 
-  // A capacity-1 pool plus a send burst reliably provokes -ENOBUFS; the sentinel
-  // must still arrive, proving the multishot re-armed instead of terminating.
+  /// A capacity-1 pool plus a send burst reliably provokes -ENOBUFS; the sentinel
+  /// must still arrive, proving the multishot re-armed instead of terminating.
   func testMultishotSurvivesBufferExhaustion() async throws {
     let ring = try IORing()
     let (rx, tx) = try makeDatagramPair(ring: ring)
@@ -52,7 +58,9 @@ final class MultishotReArmTests: XCTestCase {
         return false
       }
       try await Task.sleep(nanoseconds: 50_000_000) // let the receiver arm
-      for _ in 0..<64 { try await tx.send([0x01]) }
+      for _ in 0..<64 {
+        try await tx.send([0x01])
+      }
       try await tx.send([sentinel])
       let result = try await group.next() ?? false
       group.cancelAll()
@@ -84,7 +92,7 @@ final class MultishotReArmTests: XCTestCase {
       }
       try await Task.sleep(nanoseconds: 50_000_000) // let the receiver arm
       for i in 0..<count {
-        try await tx.send([UInt8(i & 0xff)])
+        try await tx.send([UInt8(i & 0xFF)])
         try await Task.sleep(nanoseconds: 2_000_000)
       }
       let result = try await group.next() ?? -1

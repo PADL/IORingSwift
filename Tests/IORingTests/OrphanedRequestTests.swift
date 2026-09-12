@@ -22,10 +22,10 @@ import IORingUtils
 import struct SystemPackage.Errno
 import XCTest
 
-// The kernel ties an io_uring request to the thread that submitted it, and completes one still
-// waiting for readiness with -ECANCELED once that thread has exited. The default executor's
-// cooperative pool retires threads after five idle seconds, which is why rings run on the
-// executor's threads instead; each request here waits longer than that.
+/// The kernel ties an io_uring request to the thread that submitted it, and completes one still
+/// waiting for readiness with -ECANCELED once that thread has exited. The default executor's
+/// cooperative pool retires threads after five idle seconds, which is why rings run on the
+/// executor's threads instead; each request here waits longer than that.
 final class OrphanedRequestTests: XCTestCase {
   private static let longerThanPoolThreadIdleTimeout = Duration.seconds(8)
 
@@ -34,7 +34,10 @@ final class OrphanedRequestTests: XCTestCase {
     guard socketpair(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0, &fds) == 0 else {
       throw Errno(rawValue: errno)
     }
-    let socket = try Socket(ring: ring, fileHandle: FileHandle(fileDescriptor: fds[0], closeOnDealloc: true))
+    let socket = try Socket(
+      ring: ring,
+      fileHandle: FileHandle(fileDescriptor: fds[0], closeOnDealloc: true)
+    )
     return (socket, fds[1])
   }
 
@@ -81,7 +84,10 @@ final class OrphanedRequestTests: XCTestCase {
     guard socketpair(AF_UNIX, Int32(SOCK_DGRAM.rawValue), 0, &fds) == 0 else {
       throw Errno(rawValue: errno)
     }
-    let socket = try Socket(ring: ring, fileHandle: FileHandle(fileDescriptor: fds[0], closeOnDealloc: true))
+    let socket = try Socket(
+      ring: ring,
+      fileHandle: FileHandle(fileDescriptor: fds[0], closeOnDealloc: true)
+    )
     let peer = fds[1]
     defer { close(peer) }
     let payload = Array("later".utf8)
@@ -112,7 +118,8 @@ final class OrphanedRequestTests: XCTestCase {
       var address = sockaddr_un()
       address.sun_family = sa_family_t(AF_LOCAL)
       withUnsafeMutableBytes(of: &address.sun_path) { bytes in
-        _ = path.utf8CString.withUnsafeBytes { memcpy(bytes.baseAddress!, $0.baseAddress!, $0.count) }
+        _ = path.utf8CString
+          .withUnsafeBytes { memcpy(bytes.baseAddress!, $0.baseAddress!, $0.count) }
       }
       let result = withUnsafePointer(to: &address) {
         $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {

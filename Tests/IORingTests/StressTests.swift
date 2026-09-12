@@ -21,7 +21,7 @@ import IORingUtils
 import struct SystemPackage.Errno
 import XCTest
 
-// Load rings from many tasks, many rings and cancellation at once, checking every byte.
+/// Load rings from many tasks, many rings and cancellation at once, checking every byte.
 final class StressTests: XCTestCase {
   private static func makeStreamPair(ring: IORing) throws -> (Socket, Socket) {
     var fds = [Int32](repeating: -1, count: 2)

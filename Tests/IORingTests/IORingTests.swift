@@ -11,7 +11,7 @@ final class IORingTests: XCTestCase {
     ProcessInfo.processInfo.environment["RUNNER_TEMP"] ?? "/var/tmp"
   }
 
-  func testIORingInitialization() async throws {
+  func testIORingInitialization() throws {
     let ring = try IORing()
     XCTAssertNotNil(ring)
     XCTAssertEqual(ring.description.contains("IORing"), true)
@@ -172,7 +172,7 @@ final class IORingTests: XCTestCase {
     XCTAssertFalse(combinedFlags.contains(IORing.SqeFlags.ioLink))
   }
 
-  func testMessageCreation() throws {
+  func testMessageCreation() {
     let testData = "Hello, message world!"
     let testBytes = Array(testData.utf8)
 
@@ -197,7 +197,7 @@ final class IORingTests: XCTestCase {
     }
   }
 
-  func testIORingEquality() async throws {
+  func testIORingEquality() throws {
     let ring1 = try IORing()
     let ring2 = try IORing()
 
@@ -205,7 +205,7 @@ final class IORingTests: XCTestCase {
     XCTAssertNotEqual(ring1, ring2)
   }
 
-  func testIORingHashing() async throws {
+  func testIORingHashing() throws {
     let ring = try IORing()
     let hasher1 = ring.hashValue
     let hasher2 = ring.hashValue
@@ -213,7 +213,7 @@ final class IORingTests: XCTestCase {
     XCTAssertEqual(hasher1, hasher2)
   }
 
-  func testIOVecExtensions() throws {
+  func testIOVecExtensions() {
     var iov = iovec()
     XCTAssertEqual(iov.iov_len, 0)
 
