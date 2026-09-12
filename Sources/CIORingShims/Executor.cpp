@@ -23,14 +23,17 @@
 // epoll, which holds each ring's eventfd, a timerfd per clock for delayed jobs,
 // and an eventfd for waking it; at most one worker blocks there (the driver),
 // the others park on a futex each, most recently parked first. The driver reaps
-// the ring whose eventfd fired and runs the first two jobs that reaping resumes
-// itself: a completion and the task waiting on it stay on one thread, and so
-// does the peer of a request that completed with it, whose reply is usually the
-// next thing the first task waits on. Jobs beyond those, and jobs enqueued from
-// a running job, wake a parked worker. A worker that keeps finding jobs looks
-// in on the epoll without blocking every few of them, so that a backlog which
-// never empties cannot starve completions and timers. Each ring's eventfd is
-// edge-triggered, and a ring is reaped by one worker at a time.
+// the ring whose eventfd fired and runs what reaping resumed itself, in order:
+// a completion and the task waiting on it stay on one thread, and so does the
+// peer of a request that completed with it, whose reply is usually the next
+// thing the first task waits on. A job queued by a running job waits for that
+// job likewise. Only a backlog beyond a few brings in a parked worker, one at a
+// time, each bringing in the next while the backlog lasts, so that fan-out
+// costs a wake per burst and not per job; a job queued from outside the pool
+// wakes one at once. A worker that keeps finding jobs looks in on the epoll
+// without blocking every few of them, so that a backlog which never empties
+// cannot starve completions and timers. Each ring's eventfd is edge-triggered,
+// and a ring is reaped by one worker at a time.
 
 #include "CQHandlerInternal.hpp"
 
@@ -59,7 +62,7 @@ struct Worker {
   ioring_pool *pool;
   std::atomic<uint32_t> unparked{0}; // futex word, set by whoever unparks us
   Worker *nextIdle = nullptr;        // under pool->mutex
-  bool reaping = false;              // handling epoll events, on this thread only
+  bool woken = false;                // unparked for a backlog; under pool->mutex
   std::vector<io_uring_cqe_block> finished; // blocks a reap has released to us
 };
 
@@ -133,6 +136,7 @@ struct ioring_pool {
   Worker *idle = nullptr;    // stack of workers parked on their futex
   Worker *timedWaiter = nullptr; // the idle worker whose park has the timeout
   bool driverParked = false; // a worker is blocked in epoll_wait
+  bool waking = false;       // a worker unparked for the backlog has yet to arrive
   int epollFd = -1;
   int wakeFd = -1;
   TimerQueue timers[2] = {{CLOCK_MONOTONIC}, {CLOCK_BOOTTIME}};
@@ -166,8 +170,9 @@ void wakeDriver(ioring_pool *pool) {
   (void)length;
 }
 
-// Jobs a reaper keeps for itself rather than waking a worker for
-constexpr size_t kReaperJobs = 2;
+// Jobs a pool thread leaves queued for itself before one more worker is brought
+// in; the socket benchmark is flat from 16 up, and below 8 the wakes come back
+constexpr size_t kBacklog = 32;
 // Jobs a worker runs between looks at the epoll while no driver is in it
 constexpr size_t kJobsPerPoll = 16;
 // Submits a worker serves in a row while jobs wait, before it runs one
@@ -192,18 +197,35 @@ void wakeAndUnlock(ioring_pool *pool, std::unique_lock<std::mutex> &lock) {
   lock.unlock();
 }
 
+// With the lock held: the worker to unpark for a backlog, if it is beyond
+// kBacklog and none is already on its way, else nullptr.
+Worker *takeIdleForBacklog(ioring_pool *pool) {
+  Worker *worker = pool->idle;
+  if (worker == nullptr || pool->waking || pool->jobs.size() <= kBacklog)
+    return nullptr;
+  pool->idle = worker->nextIdle;
+  worker->nextIdle = nullptr;
+  worker->woken = true;
+  pool->waking = true;
+  worker->unparked.store(1, std::memory_order_relaxed);
+  return worker;
+}
+
 // Adds a job with the lock held, drops the lock, and does whatever waking the
-// job needs.
+// job needs: none, from a pool thread, which runs what it queued when its own
+// job ends, unless the backlog has grown beyond what one thread should keep.
 void enqueueAndUnlock(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
                       void *job) {
   pool->jobs.push_back(job);
   Worker *self = tlsWorker;
-  if (self != nullptr && self->pool == pool && self->reaping &&
-      pool->jobs.size() <= kReaperJobs) {
-    lock.unlock();
+  if (self == nullptr || self->pool != pool) {
+    wakeAndUnlock(pool, lock); // from outside: nobody here would look otherwise
     return;
   }
-  wakeAndUnlock(pool, lock);
+  Worker *worker = takeIdleForBacklog(pool);
+  lock.unlock();
+  if (worker != nullptr)
+    unpark(worker);
 }
 
 void armTimer(TimerQueue &queue) {
@@ -315,6 +337,16 @@ void *workerMain(void *argument) {
 
   std::unique_lock<std::mutex> lock(pool->mutex);
   for (;;) {
+    if (worker->woken) {
+      // in for a backlog: the next is brought in now if it is still one
+      worker->woken = false;
+      pool->waking = false;
+      if (Worker *next = takeIdleForBacklog(pool)) {
+        lock.unlock();
+        unpark(next);
+        lock.lock();
+      }
+    }
     // submits first, their callers being blocked, but not to the exclusion of jobs
     if (!pool->submits.empty() && (pool->jobs.empty() || streak < kSubmitStreak)) {
       SubmitRequest *request = pool->submits.front();
@@ -341,9 +373,7 @@ void *workerMain(void *argument) {
       int count = epoll_wait(pool->epollFd, events, kMaxEvents, -1);
       lock.lock();
       pool->driverParked = false;
-      worker->reaping = true;
       handleEvents(pool, lock, events, count);
-      worker->reaping = false;
       continue;
     } else {
       park(pool, lock, worker);
@@ -355,9 +385,7 @@ void *workerMain(void *argument) {
       lock.unlock();
       int count = epoll_wait(pool->epollFd, events, kMaxEvents, 0);
       lock.lock();
-      worker->reaping = true;
       handleEvents(pool, lock, events, count);
-      worker->reaping = false;
     }
   }
 }
