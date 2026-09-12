@@ -44,7 +44,7 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
   /// closed before the completion handler runs; for a send to an address, the copy of that
   /// address the kernel reads from the SQE at submission, which holds the owner in turn
   fileprivate let retained: AnyObject?
-  private(set) var cancellationToken: UnsafeMutableRawPointer?
+  fileprivate(set) var cancellationToken: UnsafeMutableRawPointer?
 
   nonisolated var description: String {
     "(\(type(of: self)))(fd: \(fileDescriptor), opcode: \(opcode), handler: \(String(describing: handler)))"
@@ -110,10 +110,11 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
   }
 
   func cancel(ring: isolated IORing) throws {
+    // none once the request completed: its block is freed, and the address may be another's
+    guard let token = cancellationToken else { return }
     do {
-      precondition(cancellationToken != nil)
       let sqe = try ring.getSqe()
-      io_uring_prep_cancel(sqe, cancellationToken, 0) // by user data; see `IORing.cancel`
+      io_uring_prep_cancel(sqe, token, 0) // by user data; see `IORing.cancel`
       _ = io_uring_sqe_set_block(sqe) { cqe in
         self.onCancel(cqe: cqe.pointee)
       }
@@ -215,7 +216,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
   private var completionResult: Int32 = 0
   private var completionFlags: UInt32 = 0
   /// the linked timeout's timespec, which the kernel reads when the pair is submitted
-  private let timeout: UnsafeMutablePointer<__kernel_timespec>?
+  private var timeout: UnsafeMutablePointer<__kernel_timespec>?
 
   init(
     ring: isolated IORing,
@@ -240,32 +241,25 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
       // to whatever follows, the timeout's must not fail
       guard ring.sqSpaceLeft >= 2 else { throw Errno.resourceTemporarilyUnavailable }
     }
-    let timespec = timeout.map { timeout in
+    try super.init(
+      ring: ring,
+      opcode,
+      fd: fd,
+      address: address,
+      length: length,
+      offset: offset,
+      flags: timeout == nil ? flags : flags.union(.ioLink),
+      ioprio: ioprio,
+      moreFlags: moreFlags,
+      bufferIndexOrGroup: bufferIndex,
+      socketAddress: socketAddress,
+      handler: handler
+    )
+    if let timeout {
+      // allocated once the object is whole, so that deinit alone owns it whatever throws
       let timespec = UnsafeMutablePointer<__kernel_timespec>.allocate(capacity: 1)
       timespec.initialize(to: timeout.kernelTimespec)
-      return timespec
-    }
-    self.timeout = timespec
-    do {
-      try super.init(
-        ring: ring,
-        opcode,
-        fd: fd,
-        address: address,
-        length: length,
-        offset: offset,
-        flags: timespec == nil ? flags : flags.union(.ioLink),
-        ioprio: ioprio,
-        moreFlags: moreFlags,
-        bufferIndexOrGroup: bufferIndex,
-        socketAddress: socketAddress,
-        handler: handler
-      )
-    } catch {
-      timespec?.deallocate()
-      throw error
-    }
-    if let timespec {
+      self.timeout = timespec
       // the timeout follows its request, taking over any link the request had onward;
       // nothing awaits its own completion, so it carries no block
       let sqe = try ring.getSqe()
@@ -284,44 +278,46 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
   }
 
   private func _submit(ring: isolated IORing) async throws -> T {
-    do {
-      return try await withTaskCancellationHandler(operation: {
-        try await withUnsafeThrowingContinuation { continuation in
-          // guaranteed to run immediately
-          self.continuation = continuation
-          if handoff.load(ordering: .relaxed) != Handoff.direct.rawValue {
-            if handoff.exchange(Handoff.waiting.rawValue, ordering: .acquiringAndReleasing)
-              == Handoff.completed.rawValue
-            {
-              var cqe = io_uring_cqe()
-              cqe.res = completionResult
-              cqe.flags = completionFlags
-              resume(continuation, with: cqe)
-            }
-            // a group counts every member ready before it submits, this one included;
-            // a group gone before that, its caller having thrown, submits nothing
-            ready()
-            if group == nil { _ = try? ring.submit() }
-          } else {
-            // a failed enter leaves the flushed SQE for the next submit to carry, so its
-            // completion is still coming; failing the continuation now would resume it twice
-            _ = try? ring.submit()
+    try await withTaskCancellationHandler(operation: {
+      try await withUnsafeThrowingContinuation { continuation in
+        // guaranteed to run immediately
+        self.continuation = continuation
+        if handoff.load(ordering: .relaxed) != Handoff.direct.rawValue {
+          if handoff.exchange(Handoff.waiting.rawValue, ordering: .acquiringAndReleasing)
+            == Handoff.completed.rawValue
+          {
+            var cqe = io_uring_cqe()
+            cqe.res = completionResult
+            cqe.flags = completionFlags
+            resume(continuation, with: cqe)
           }
+          // a group counts every member ready before it submits, this one included;
+          // a group gone before that, its caller having thrown, submits nothing
+          ready()
+          if group == nil { _ = try? ring.submit() }
+        } else {
+          // a failed enter leaves the flushed SQE for the next submit to carry, so its
+          // completion is still coming; failing the continuation now would resume it twice
+          _ = try? ring.submit()
         }
-      }, onCancel: {
-        // if the operation supports it, will cause the operation to fail early
-        Task(executorPreference: ring.executor) { try? await self.cancel(ring: ring) }
-      })
-    } catch let error as Errno where error == .canceled && timeout != nil && !Task.isCancelled {
-      throw Errno.timedOut // the linked timeout cancelled the request
-    }
+      }
+    }, onCancel: {
+      // if the operation supports it, will cause the operation to fail early
+      Task(executorPreference: ring.executor) { try? await self.cancel(ring: ring) }
+    })
   }
 
   func submit() async throws -> T {
-    try await _submit(ring: ring)
+    do {
+      return try await _submit(ring: ring)
+    } catch let error as Errno where error == .canceled && timeout != nil && !Task.isCancelled {
+      // the linked timeout, or whatever else cancelled a timed request; see `IORing.read`
+      throw Errno.timedOut
+    }
   }
 
   override func onCompletion(cqe: io_uring_cqe) {
+    cancellationToken = nil // a cancel from here on would find the address, not the request
     if handoff.load(ordering: .acquiring) == Handoff.direct.rawValue {
       resume(continuation!, with: cqe)
       return

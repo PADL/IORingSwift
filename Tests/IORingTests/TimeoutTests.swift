@@ -113,13 +113,15 @@ final class TimeoutTests: XCTestCase {
 
 private extension IORing {
   func singleshotSubmissionUsableSize() async throws -> Int {
-    // never submitted: the ring's teardown releases its block without calling it
     let submission = try await SingleshotSubmission<()>(
       ring: self,
       .nop,
       fd: FileDescriptor(rawValue: -1),
       timeout: .seconds(1)
     ) { _ in }
-    return malloc_usable_size(Unmanaged.passUnretained(submission).toOpaque())
+    let size = malloc_usable_size(Unmanaged.passUnretained(submission).toOpaque())
+    // completes at once, and its block, which holds it and the ring, is released with it
+    try await submission.submit()
+    return size
   }
 }

@@ -336,9 +336,15 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     }
   }
 
+  public func accept() async throws -> Socket {
+    let clientFileHandle: FileDescriptorRepresentable = try await _ring.accept(from: fileHandle)
+    return Socket(ring: _ring, fileHandle: clientFileHandle as! FileHandle)
+  }
+
   /// `timeout`, here and below, is a linked timeout the kernel keeps: the request is cancelled
-  /// when it passes and throws `Errno.timedOut`; a request made again is timed again
-  public func accept(timeout: Duration? = nil) async throws -> Socket {
+  /// when it passes and throws `Errno.timedOut`; see `IORing` for what it cannot promise. No
+  /// default here: `accept()` has a multishot twin, which an unlabelled call must not fall to.
+  public func accept(timeout: Duration) async throws -> Socket {
     let clientFileHandle: FileDescriptorRepresentable = try await _ring.accept(
       from: fileHandle,
       timeout: timeout
@@ -376,6 +382,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     try await _ring.read(into: &buffer, count: count, from: fileHandle, timeout: timeout)
   }
 
+  /// `timeout` bounds each read of the loop, not the whole: an idle bound, not a deadline
   public func read(
     count: Int,
     awaitingAllRead: Bool,
@@ -418,6 +425,7 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     return buffer
   }
 
+  /// `timeout` bounds each write of the loop, not the whole: an idle bound, not a deadline
   public func write(
     _ buffer: [UInt8],
     count: Int,

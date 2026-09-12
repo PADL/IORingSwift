@@ -850,8 +850,13 @@ private extension IORing {
 
 // MARK: - public API
 
-/// A `timeout` on a single-shot request is a linked timeout, which the kernel keeps: when it
-/// passes the request is cancelled and throws `Errno.timedOut`, with no task or timer involved.
+/// A `timeout` on a read, write, send, receive, accept or connect is a linked timeout, which
+/// the kernel keeps: when it passes the request is cancelled and throws `Errno.timedOut`, with
+/// no task or timer involved. Anything else that cancels a timed request, `cancelRequests(on:)`
+/// say, reads the same way; only the awaiting task's own cancellation is told apart. Work the
+/// kernel runs on a thread of its own, a read of a regular file, is cancelled as best it can be
+/// and may complete after the deadline. Under SQPOLL, or after an enter that took part of the
+/// queue, the request and its timeout can be submitted apart, and the request then runs untimed.
 public extension IORing {
   func close(_ fd: FileDescriptorRepresentable) async throws {
     try await io_uring_op_close(fd: fd)
