@@ -170,6 +170,8 @@ void wakeDriver(ioring_pool *pool) {
 constexpr size_t kReaperJobs = 2;
 // Jobs a worker runs between looks at the epoll while no driver is in it
 constexpr size_t kJobsPerPoll = 16;
+// Submits a worker serves in a row while jobs wait, before it runs one
+constexpr size_t kSubmitStreak = 8;
 
 // With the lock held, drops it and wakes a worker for what was just queued.
 void wakeAndUnlock(ioring_pool *pool, std::unique_lock<std::mutex> &lock) {
@@ -305,14 +307,16 @@ void *workerMain(void *argument) {
   auto worker = static_cast<Worker *>(argument);
   auto pool = worker->pool;
   struct epoll_event events[kMaxEvents];
-  size_t ran = 0; // submits and jobs, for the poll every kJobsPerPoll
+  size_t ran = 0;    // submits and jobs, for the poll every kJobsPerPoll
+  size_t streak = 0; // submits served since the last job
 
   pthread_setname_np(pthread_self(), "IORingExecutor");
   tlsWorker = worker;
 
   std::unique_lock<std::mutex> lock(pool->mutex);
   for (;;) {
-    if (!pool->submits.empty()) {
+    // submits first, their callers being blocked, but not to the exclusion of jobs
+    if (!pool->submits.empty() && (pool->jobs.empty() || streak < kSubmitStreak)) {
       SubmitRequest *request = pool->submits.front();
       pool->submits.pop_front();
       lock.unlock();
@@ -323,12 +327,14 @@ void *workerMain(void *argument) {
       done->store(1, std::memory_order_release);
       syscall(SYS_futex, done, FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0);
       lock.lock();
+      streak++;
     } else if (!pool->jobs.empty()) {
       void *job = pool->jobs.front();
       pool->jobs.pop_front();
       lock.unlock();
       pool->run(pool->context, job);
       lock.lock();
+      streak = 0;
     } else if (!pool->driverParked) {
       pool->driverParked = true;
       lock.unlock();

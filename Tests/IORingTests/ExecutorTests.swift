@@ -200,16 +200,20 @@ final class ExecutorTests: XCTestCase {
     XCTAssertThrowsError(try IORing(flags: [.singleIssuer, .deferTaskRun])) {
       XCTAssertEqual($0 as? Errno, .invalidArgument)
     }
+    // a ring created disabled has nothing here to enable it
+    XCTAssertThrowsError(try IORing(flags: .rDisabled)) {
+      XCTAssertEqual($0 as? Errno, .invalidArgument)
+    }
   }
 
   /// with every thread running jobs that yield and come straight back, so that the queue never
   /// empties, completions and timers are still served between them
   func testBacklogDoesNotStarveCompletions() async throws {
-    let deadline = ContinuousClock.now + .seconds(3)
     let started = Counter()
     let yielders = try (0..<(threads * 4)).map { _ in
       try Task(executorPreference: IORing.taskExecutor) {
         started.value.add(1, ordering: .relaxed)
+        let deadline = ContinuousClock.now + .seconds(3) // from its start, not the test's
         while !Task.isCancelled, ContinuousClock.now < deadline {
           await Task.yield()
         }
