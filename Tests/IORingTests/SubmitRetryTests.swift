@@ -21,6 +21,7 @@ import class IORing.FileHandle
 import IORingUtils
 import struct SystemPackage.Errno
 import struct SystemPackage.FileDescriptor
+import Synchronization
 import XCTest
 
 /// A submit whose enter fails, or consumes only a prefix, leaves SQEs flushed for the next
@@ -43,21 +44,52 @@ final class SubmitRetryTests: XCTestCase {
     )
   }
 
-  /// `body`, or `Errno.timedOut` after `limit`: a broken retry must not hang the suite
+  /// the first of two results, delivered once
+  private final class Outcome<T: Sendable>: Sendable {
+    private let state = Mutex<(
+      result: Result<T, any Error>?,
+      waiter: CheckedContinuation<T, any Error>?
+    )>((nil, nil))
+
+    func settle(_ result: Result<T, any Error>) {
+      let waiter = state.withLock { state -> CheckedContinuation<T, any Error>? in
+        guard state.result == nil else { return nil }
+        state.result = result
+        defer { state.waiter = nil }
+        return state.waiter
+      }
+      waiter?.resume(with: result)
+    }
+
+    var value: T {
+      get async throws {
+        try await withCheckedThrowingContinuation { continuation in
+          let settled = state.withLock { state -> Result<T, any Error>? in
+            if let result = state.result { return result }
+            state.waiter = continuation
+            return nil
+          }
+          if let settled { continuation.resume(with: settled) }
+        }
+      }
+    }
+  }
+
+  /// `body`, or `Errno.timedOut` after `limit` whether or not `body` can be cancelled: a
+  /// broken retry must not hang the suite, so its task is left behind rather than awaited
   private func within<T: Sendable>(
     _ limit: Duration,
     _ body: @escaping @Sendable () async throws -> T
   ) async throws -> T {
-    try await withThrowingTaskGroup(of: T.self) { group in
-      group.addTask { try await body() }
-      group.addTask {
-        try await Task.sleep(for: limit)
-        throw Errno.timedOut
-      }
-      let result = try await group.next()!
-      group.cancelAll()
-      return result
+    let outcome = Outcome<T>()
+    Task {
+      do { outcome.settle(.success(try await body())) } catch { outcome.settle(.failure(error)) }
     }
+    Task {
+      try? await Task.sleep(for: limit)
+      outcome.settle(.failure(Errno.timedOut))
+    }
+    return try await outcome.value
   }
 
   func testStrandedRequestIsCarried() async throws {
