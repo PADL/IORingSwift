@@ -19,39 +19,50 @@
 import Glibc
 import SystemPackage
 
-/// The global executor `IORing` installs: as many threads as the process has CPUs, none of
-/// which ever exits, that run tasks and reap the completions of every ring.
+/// The executor `IORing` installs: as many threads as the process has CPUs, none of which
+/// ever exits, that run tasks and reap the completions of every ring.
 ///
 /// The kernel cancels an io_uring request when the thread that submitted it exits, and the
 /// default executor's threads exit after five idle seconds. On these threads a request waits
 /// as long as it needs to; and the thread that reaps a completion runs the task waiting on
 /// it, without another thread in between.
 ///
-/// Installed when the first ring is created, or earlier by `IORing.installExecutor()`;
-/// `SWIFT_IORING_EXECUTOR_THREADS` in the environment sets the thread count. Job priorities
-/// are not observed.
+/// Installed when the first ring is created, or earlier by `IORing.installExecutor()`, as
+/// the global executor or, with `IORing.ExecutorPolicy.preference`, as one tasks opt into;
+/// `SWIFT_IORING_EXECUTOR` in the environment chooses (`global` or `preference`) and
+/// `SWIFT_IORING_EXECUTOR_THREADS` sets the thread count. Job priorities are not observed.
 final class IORingExecutor: TaskExecutor, SchedulingExecutor, @unchecked Sendable {
   /// The installed executor, if installing it succeeded
   static var installed: IORingExecutor? { try? _install.result.get() }
 
-  /// Installs the executor, once; throws what stopped it, every time.
+  /// Installs the executor, once; throws what stopped it, every time, and
+  /// `Errno.invalidArgument` for a policy other than the one it was installed with.
   @discardableResult
-  static func install(threads: Int? = nil) throws -> IORingExecutor {
+  static func install(policy: IORing.ExecutorPolicy? = nil, threads: Int? = nil) throws -> IORingExecutor {
     if let threads {
       _install.threads = threads
     }
-    return try _install.result.get()
+    if let policy {
+      _install.policy = policy
+    }
+    let executor = try _install.result.get()
+    if let policy, policy != executor.policy {
+      throw Errno.invalidArgument
+    }
+    return executor
   }
 
   let pool: ioring_pool_t
   let threads: Int
+  let policy: IORing.ExecutorPolicy
   private var unownedExecutor: UnownedTaskExecutor!
   // the executor replaced, which jobs already on it may still refer to
   private let previous: any TaskExecutor
 
-  private init(pool: ioring_pool_t, threads: Int, previous: any TaskExecutor) {
+  private init(pool: ioring_pool_t, threads: Int, policy: IORing.ExecutorPolicy, previous: any TaskExecutor) {
     self.pool = pool
     self.threads = threads
+    self.policy = policy
     self.previous = previous
     unownedExecutor = UnownedTaskExecutor(ordinary: self)
   }
@@ -64,9 +75,14 @@ final class IORingExecutor: TaskExecutor, SchedulingExecutor, @unchecked Sendabl
 
   private enum _install {
     nonisolated(unsafe) static var threads: Int?
+    nonisolated(unsafe) static var policy: IORing.ExecutorPolicy?
 
     static let result: Result<IORingExecutor, Errno> = {
-      var count = threads ?? 0
+      var policy = _install.policy ?? .global
+      if let value = getenv("SWIFT_IORING_EXECUTOR").map({ String(cString: $0) }) {
+        policy = value == "preference" ? .preference : .global
+      }
+      var count = _install.threads ?? 0
       if count <= 0, let value = getenv("SWIFT_IORING_EXECUTOR_THREADS") {
         count = Int(String(cString: value)) ?? 0
       }
@@ -78,13 +94,20 @@ final class IORingExecutor: TaskExecutor, SchedulingExecutor, @unchecked Sendabl
       guard let pool = ioring_pool_create(UInt32(count), runJob, nil) else {
         return .failure(Errno(rawValue: errno))
       }
-      let executor = IORingExecutor(pool: pool, threads: count, previous: previous)
+      let executor = IORingExecutor(pool: pool, threads: count, policy: policy, previous: previous)
       // handed to the pool unretained; the executor lives for the process
       ioring_pool_set_context(pool, Unmanaged.passUnretained(executor).toOpaque())
-      Factory.executor = executor
-      _createExecutors(factory: Factory.self)
+      if policy == .global {
+        Factory.executor = executor
+        _createExecutors(factory: Factory.self)
+      }
       return .success(executor)
     }()
+  }
+
+  /// Whether the calling thread is one of the pool's: a request submitted from it outlives it.
+  var isCurrentThread: Bool {
+    ioring_pool_is_worker(pool)
   }
 
   func enqueue(_ job: consuming ExecutorJob) {
@@ -126,10 +149,32 @@ private let runJob: ioring_job_runner = { context, job in
 }
 
 public extension IORing {
-  /// Installs the global executor whose threads never exit, on which every ring's requests
-  /// are submitted and completions reaped. Creating the first ring does this; call it
-  /// earlier, before tasks start, to have everything run there.
-  nonisolated static func installExecutor(threads: Int? = nil) throws {
-    try IORingExecutor.install(threads: threads)
+  /// How the executor whose threads never exit, on which requests are submitted and
+  /// completions reaped, relates to the rest of the process.
+  enum ExecutorPolicy: Sendable {
+    /// It is the global executor: every task not on the main actor or an executor of its own
+    /// runs there, and nothing needs to change to do so.
+    case global
+    /// It is an executor tasks opt into, with `Task(executorPreference: IORing.taskExecutor)`
+    /// or `withTaskExecutorPreference`, which their child tasks and default actors inherit;
+    /// other tasks stay on the default executor. A request from a task that has not opted in
+    /// is submitted from the pool all the same, at the cost of a thread switch each way.
+    case preference
+  }
+
+  /// Installs the executor, which creating the first ring does with `.global` unless
+  /// `SWIFT_IORING_EXECUTOR=preference` is set; call it earlier to choose, or to have
+  /// tasks run there from the start. Throws `Errno.invalidArgument` once installed with
+  /// another policy.
+  nonisolated static func installExecutor(
+    policy: ExecutorPolicy = .global,
+    threads: Int? = nil
+  ) throws {
+    try IORingExecutor.install(policy: policy, threads: threads)
+  }
+
+  /// The executor, for tasks to prefer under `ExecutorPolicy.preference`.
+  nonisolated static var taskExecutor: any TaskExecutor {
+    get throws { try IORingExecutor.install() }
   }
 }

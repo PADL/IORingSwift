@@ -21,7 +21,9 @@
 //   IORingSocketBench [seconds per pair count]
 //
 // Environment: BENCH_TRANSPORT (unix or tcp, default unix), BENCH_PAIRS (default
-// "1 4 16 64"), BENCH_SIZE (message bytes, default 64), BENCH_PORT (tcp, default 58800).
+// "1 4 16 64"), BENCH_SIZE (message bytes, default 64), BENCH_PORT (tcp, default 58800),
+// BENCH_EXECUTOR=preference to install the executor for tasks to opt into rather than as
+// the global one, and then BENCH_ANNOTATE=1 to have the benchmark's tasks opt in.
 //
 // For each pair count prints
 //   RESULT <transport> <pairs> <round trips/s> <ns per round trip> <CPU ns per round trip>
@@ -101,6 +103,10 @@ private func roundTrips(_ client: Socket, size: Int, until deadline: ContinuousC
 @main
 enum IORingSocketBench {
   static func main() async throws {
+    if environment("BENCH_EXECUTOR") == "preference" {
+      try IORing.installExecutor(policy: .preference)
+    }
+    let preference: (any TaskExecutor)? = environment("BENCH_ANNOTATE") == "1" ? try IORing.taskExecutor : nil
     let seconds = CommandLine.arguments.count > 1 ? Double(CommandLine.arguments[1]) ?? 5 : 5
     let transport = environment("BENCH_TRANSPORT") ?? "unix"
     let pairCounts = (environment("BENCH_PAIRS") ?? "1 4 16 64").split(separator: " ").compactMap { Int($0) }
@@ -116,7 +122,7 @@ enum IORingSocketBench {
       port += 1
 
       for (_, server) in pairs {
-        Task { await echo(server, size: size) }
+        Task(executorPreference: preference) { await echo(server, size: size) }
       }
       // warm up, then measure
       _ = try await roundTrips(pairs[0].0, size: size, until: .now + .milliseconds(200))
@@ -124,15 +130,17 @@ enum IORingSocketBench {
       let cpuStart = cpuNanoseconds()
       let start = ContinuousClock.now
       let deadline = start + .milliseconds(Int(seconds * 1000))
-      let total = try await withThrowingTaskGroup(of: Int.self) { group in
-        for (client, _) in pairs {
-          group.addTask { try await roundTrips(client, size: size, until: deadline) }
+      let total = try await withTaskExecutorPreference(preference) {
+        try await withThrowingTaskGroup(of: Int.self) { group in
+          for (client, _) in pairs {
+            group.addTask { try await roundTrips(client, size: size, until: deadline) }
+          }
+          var total = 0
+          for try await count in group {
+            total += count
+          }
+          return total
         }
-        var total = 0
-        for try await count in group {
-          total += count
-        }
-        return total
       }
       let elapsed = ContinuousClock.now - start
       let elapsedNs = Double(elapsed.components.seconds) * 1e9 + Double(elapsed.components.attoseconds) / 1e9

@@ -56,6 +56,12 @@ ioring_pool_t _Nullable ioring_pool_create(unsigned threads,
 /// Sets the context passed to the job runner
 void ioring_pool_set_context(ioring_pool_t _Nonnull pool, void *_Nullable context);
 
+/// Whether the calling thread is one of the pool's
+bool ioring_pool_is_worker(ioring_pool_t _Nonnull pool);
+
+/// `io_uring_submit(ring)` made by a pool thread, which the requests then belong to
+int ioring_pool_submit(ioring_pool_t _Nonnull pool, struct io_uring *_Nonnull ring);
+
 /// Runs `job` on a pool thread
 void ioring_pool_enqueue(ioring_pool_t _Nonnull pool, void *_Nonnull job);
 

@@ -269,7 +269,7 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
       }
     }, onCancel: {
       // if the operation supports it, will cause the operation to fail early
-      Task { try? await cancel(ring: ring) }
+      Task(executorPreference: ring.executor) { try? await self.cancel(ring: ring) }
     })
   }
 
@@ -480,7 +480,7 @@ struct ProvidedBuffer<U>: ~Copyable {
     // still has to hop onto the ring actor, matching the previous behaviour.
     let submission = submission
     let id = id
-    Task { try? await submission.reprovideAndSubmit(id: id) }
+    Task(executorPreference: submission.ring.executor) { try? await submission.reprovideAndSubmit(id: id) }
   }
 }
 
@@ -635,14 +635,14 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
       let result = try throwingErrno(cqe: cqe, handler)
       holder.continuation.yield(result) // No suspension point!
       if cqe.flags & IORING_CQE_F_MORE == 0 {
-        Task { await resubmit(ring: ring) }
+        Task(executorPreference: ring.executor) { await self.resubmit(ring: self.ring) }
       }
     } catch let error as Errno where error == .noBufferSpace {
       // provided-buffer pool momentarily exhausted: re-arm after in-flight
       // buffers are reprovided rather than ending the stream (drops overflow)
-      Task {
+      Task(executorPreference: ring.executor) {
         try? await Task.sleep(nanoseconds: 10_000_000)
-        await resubmit(ring: ring)
+        await self.resubmit(ring: self.ring)
       }
     } catch {
       holder.continuation.finish(throwing: error)

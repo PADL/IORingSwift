@@ -34,7 +34,7 @@ public actor IORing: CustomStringConvertible {
   private nonisolated static let DefaultIORingQueueEntries = 128
 
   private var ring: io_uring
-  private let executor: IORingExecutor // reaps the ring's completions
+  let executor: IORingExecutor // reaps the ring's completions
   private var reaper: UInt = 0 // the ring's registration with it
 
   private var fixedBuffers: FixedBuffer?
@@ -348,10 +348,13 @@ public actor IORing: CustomStringConvertible {
     return nextBufferGroup
   }
 
+  /// The kernel binds a request to the thread that calls `io_uring_enter`, and cancels it
+  /// if that thread exits; from a thread outside the executor, one of its threads makes
+  /// the call.
   @discardableResult
   func submit() throws -> Int {
     try Int(Errno.throwingErrno {
-      io_uring_submit(&self.ring)
+      self.executor.isCurrentThread ? io_uring_submit(&self.ring) : ioring_pool_submit(self.executor.pool, &self.ring)
     })
   }
 
@@ -647,7 +650,7 @@ private extension IORing {
         return try slot.withUnsafeRawBufferPointer { Array($0.prefix(Int(cqe.res))) }
       },
       onTermination: { [buffers] in
-        Task {
+        Task(executorPreference: self.executor) {
           try? await BufferSubmission<UInt8>(ring: self, removing: capacity, from: buffers.bufferGroup).submit()
           buffers.deallocate()
         }
