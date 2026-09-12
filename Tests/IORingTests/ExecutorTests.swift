@@ -162,6 +162,14 @@ final class ExecutorTests: XCTestCase {
     }
   }
 
+  /// requests are submitted from whichever pool thread is current, which is never one issuer
+  func testSingleIssuerIsRejected() throws {
+    XCTAssertThrowsError(try IORing(flags: .singleIssuer)) {
+      XCTAssertEqual($0 as? Errno, .invalidArgument)
+    }
+    XCTAssertThrowsError(try IORing(flags: .deferTaskRun))
+  }
+
   /// a job that blocks its thread, as jobs must not, neither stalls a task it started nor,
   /// for long, the completions of tasks doing I/O
   func testBlockedJobDoesNotStallTheRest() async throws {

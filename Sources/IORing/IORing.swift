@@ -245,11 +245,14 @@ public actor IORing: CustomStringConvertible {
     sqThreadIdle: Duration = .zero
   ) throws {
     let entries = entries ?? IORing.getIORingQueueEntries()
-    var ring = io_uring()
     var params = io_uring_params()
     var flags = flags
 
     flags.remove(.attachWq)
+    // the pool submits from whichever of its threads is current, never from one issuer
+    guard flags.isDisjoint(with: [.singleIssuer, .deferTaskRun]) else {
+      throw Errno.invalidArgument
+    }
 
     if !shared {
       flags.insert(.attachWq)

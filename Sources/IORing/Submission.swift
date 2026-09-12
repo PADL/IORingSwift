@@ -268,6 +268,8 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
           // a group counts every member ready before it submits, this one included
           ready()
         } else {
+          // a failed enter leaves the flushed SQE for the next submit to carry, so its
+          // completion is still coming; failing the continuation now would resume it twice
           _ = try? ring.submit()
         }
       }
