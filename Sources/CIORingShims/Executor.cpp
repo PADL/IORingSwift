@@ -305,7 +305,7 @@ void *workerMain(void *argument) {
   auto worker = static_cast<Worker *>(argument);
   auto pool = worker->pool;
   struct epoll_event events[kMaxEvents];
-  size_t ran = 0; // jobs, for the poll every kJobsPerPoll
+  size_t ran = 0; // submits and jobs, for the poll every kJobsPerPoll
 
   pthread_setname_np(pthread_self(), "IORingExecutor");
   tlsWorker = worker;
@@ -323,27 +323,13 @@ void *workerMain(void *argument) {
       done->store(1, std::memory_order_release);
       syscall(SYS_futex, done, FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0);
       lock.lock();
-      continue;
-    }
-    if (!pool->jobs.empty()) {
+    } else if (!pool->jobs.empty()) {
       void *job = pool->jobs.front();
       pool->jobs.pop_front();
       lock.unlock();
       pool->run(pool->context, job);
       lock.lock();
-      // with every worker running jobs nobody is in the epoll, and a backlog
-      // that never empties would starve completions and timers: look in on it
-      if (!pool->driverParked && ++ran % kJobsPerPoll == 0) {
-        lock.unlock();
-        int count = epoll_wait(pool->epollFd, events, kMaxEvents, 0);
-        lock.lock();
-        worker->reaping = true;
-        handleEvents(pool, lock, events, count);
-        worker->reaping = false;
-      }
-      continue;
-    }
-    if (!pool->driverParked) {
+    } else if (!pool->driverParked) {
       pool->driverParked = true;
       lock.unlock();
       int count = epoll_wait(pool->epollFd, events, kMaxEvents, -1);
@@ -353,8 +339,20 @@ void *workerMain(void *argument) {
       handleEvents(pool, lock, events, count);
       worker->reaping = false;
       continue;
+    } else {
+      park(pool, lock, worker);
+      continue;
     }
-    park(pool, lock, worker);
+    // with every worker busy nobody is in the epoll, and a backlog that never
+    // empties would starve completions and timers: look in on it now and then
+    if (!pool->driverParked && ++ran % kJobsPerPoll == 0) {
+      lock.unlock();
+      int count = epoll_wait(pool->epollFd, events, kMaxEvents, 0);
+      lock.lock();
+      worker->reaping = true;
+      handleEvents(pool, lock, events, count);
+      worker->reaping = false;
+    }
   }
 }
 
