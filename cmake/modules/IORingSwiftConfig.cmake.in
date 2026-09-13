@@ -1,0 +1,25 @@
+#[[
+This source file is part of the IORingSwift open source project
+
+Copyright (c) 2024 PADL Software Pty Ltd and the IORingSwift project authors
+Licensed under Apache License v2.0
+
+See https://github.com/PADL/IORingSwift/blob/main/LICENSE for license information
+#]]
+
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
+
+find_dependency(SwiftSystem)
+find_dependency(SocketAddress)
+find_dependency(AsyncExtensions)
+find_dependency(AsyncAlgorithms)
+find_dependency(Logging)
+find_dependency(AsyncQueue)
+
+include("${CMAKE_CURRENT_LIST_DIR}/IORingSwiftTargets.cmake")
+
+check_required_components(IORingSwift)
