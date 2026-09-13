@@ -402,11 +402,15 @@ public actor IORing: CustomStringConvertible {
 
   /// A submit that failed, or left SQEs behind, is pending rather than failed: nothing that
   /// awaits its requests unwinds, and they are carried by a retry, one at a time per ring.
+  /// how long a submit that failed, or fell short, waits before it is made again, and so how
+  /// long anything waiting for the queue it flushes should wait between looks
+  static let submitRetryInterval = Duration.milliseconds(10)
+
   private func retrySubmitLater() {
     guard !retryPending else { return }
     retryPending = true
     Task(executorPreference: executor) {
-      try? await Task.sleep(for: .milliseconds(10))
+      try? await Task.sleep(for: Self.submitRetryInterval)
       await self.retrySubmit()
     }
   }
@@ -427,7 +431,14 @@ public actor IORing: CustomStringConvertible {
     SubmissionGroup<T>
   ) async throws -> ()) async throws -> [T] {
     let submissionGroup = try SubmissionGroup<T>(ring: self)
-    try await body(submissionGroup)
+    do {
+      try await body(submissionGroup)
+    } catch {
+      // a member enqueued before this has its SQE prepared and a continuation waiting on a
+      // group about to go: submit, so that its completion comes and resumes it
+      _ = try? submit()
+      throw error
+    }
     return try await submissionGroup.finish(ring: self)
   }
 

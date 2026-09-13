@@ -53,8 +53,12 @@ void io_uring_cancel_and_drain(struct io_uring *ring) {
 
 // For a ring whose enter has failed for good and is not tried again: the SQEs
 // it holds were never taken by the kernel, so their blocks are owed a completion,
-// given here with `error`, after which the queue is empty.
+// given here with `error`, after which the queue is empty. Under SQPOLL they may
+// have been taken all the same, by a kernel thread that needs no enter and reads
+// the queue as we walk it, so there the queue is left alone.
 void io_uring_sq_fail(struct io_uring *ring, int error) {
+  if (ring->flags & IORING_SETUP_SQPOLL)
+    return;
   struct io_uring_sq *sq = &ring->sq;
   unsigned head = *sq->khead;
   unsigned shift = (ring->flags & IORING_SETUP_SQE128) ? 1 : 0;

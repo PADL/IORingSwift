@@ -44,7 +44,14 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
   /// closed before the completion handler runs; for a send to an address, the copy of that
   /// address the kernel reads from the SQE at submission, which holds the owner in turn
   fileprivate let retained: AnyObject?
-  fileprivate(set) var cancellationToken: UnsafeMutableRawPointer?
+  /// the completion block's address, which its request is cancelled by, and zero once the
+  /// block has been released: a reaper thread clears it, the ring's thread reads it
+  private let token = Atomic<UInt>(0)
+
+  /// The block this request is cancelled by, while it has one.
+  var cancellationToken: UnsafeMutableRawPointer? {
+    UnsafeMutableRawPointer(bitPattern: token.load(ordering: .acquiring))
+  }
 
   nonisolated var description: String {
     "(\(type(of: self)))(fd: \(fileDescriptor), opcode: \(opcode), handler: \(String(describing: handler)))"
@@ -103,10 +110,16 @@ class Submission<T: Sendable>: CustomStringConvertible, @unchecked Sendable {
   /// the io_uring assigned a SQE (or, at least before any suspension point)
   /// FIXME: `swift_allocObject()` here appears to be a potential performance issue
   private func setBlock(sqe: UnsafeMutablePointer<io_uring_sqe>) {
-    cancellationToken = io_uring_sqe_set_block(sqe) { cqe in
+    let block = io_uring_sqe_set_block(sqe) { cqe in
       let cqe = cqe.pointee
+      // the reaper releases the block with this completion unless more are coming, and the
+      // token is its address: a cancel after that would find whatever took the address next
+      if cqe.flags & IORING_CQE_F_MORE == 0 {
+        self.token.store(0, ordering: .releasing)
+      }
       self.onCompletion(cqe: cqe)
     }
+    token.store(UInt(bitPattern: block), ordering: .releasing)
   }
 
   func cancel(ring: isolated IORing) throws {
@@ -317,7 +330,6 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
   }
 
   override func onCompletion(cqe: io_uring_cqe) {
-    cancellationToken = nil // a cancel from here on would find the address, not the request
     if handoff.load(ordering: .acquiring) == Handoff.direct.rawValue {
       resume(continuation!, with: cqe)
       return
@@ -527,6 +539,10 @@ struct ProvidedBuffer<U>: ~Copyable {
   }
 }
 
+/// What empties a full submission queue is the ring's own retry, so a cancel that cannot get
+/// an SQE waits one of those between tries; still full after this many and it is not draining.
+private let multishotCancelTries = 100
+
 final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable {
   /// Shared holder ensures continuation is accessible across resubmissions. When the stream
   /// ends, by the consumer leaving it or by the ring finishing it, the request still armed
@@ -560,19 +576,20 @@ final class MultishotSubmission<T: Sendable>: Submission<T>, @unchecked Sendable
 
     func end(ring: isolated IORing) async {
       terminated = true
-      guard let current, let token = current.cancellationToken else { return }
-      // the cancel needs an SQE, which a full queue denies for a moment; the buffers
-      // must not go before it is in, while the request can still be armed
-      while true {
+      guard let current else { return }
+      // the buffers must not go before the cancel is in, while the request can still be armed
+      for _ in 0..<multishotCancelTries {
+        guard let token = current.cancellationToken else { return } // completed meanwhile
         do {
           try await ring.cancel(userData: token)
           return
         } catch let error as Errno where error == .resourceTemporarilyUnavailable {
-          try? await Task.sleep(for: .milliseconds(10))
+          try? await Task.sleep(for: IORing.submitRetryInterval)
         } catch {
           return // gone already, if it says so
         }
       }
+      IORing.shared.logger.debug("gave up cancelling multishot submission \(current)")
     }
   }
 

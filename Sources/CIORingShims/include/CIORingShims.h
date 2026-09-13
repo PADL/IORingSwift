@@ -44,7 +44,8 @@ void *_Nonnull io_uring_sqe_set_block(struct io_uring_sqe *_Nonnull sqe,
 void io_uring_cancel_and_drain(struct io_uring *_Nonnull ring);
 
 /// Completes every request a ring still holds unsubmitted with `-error`, releasing
-/// their blocks, for a ring whose enter has failed for good
+/// their blocks, for a ring whose enter has failed for good; does nothing under
+/// SQPOLL, whose kernel thread may have taken them without an enter
 void io_uring_sq_fail(struct io_uring *_Nonnull ring, int error);
 
 /// A pool of persistent threads that run jobs and reap completions

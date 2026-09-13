@@ -382,7 +382,8 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     try await _ring.read(into: &buffer, count: count, from: fileHandle, timeout: timeout)
   }
 
-  /// `timeout` bounds each read of the loop, not the whole: an idle bound, not a deadline
+  /// `timeout` bounds each read of the loop, not the whole: an idle bound, not a deadline.
+  /// Bytes already read are returned when one times out, as they are at the end of the stream.
   public func read(
     count: Int,
     awaitingAllRead: Bool,
@@ -391,7 +392,12 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     var buffer = [UInt8]()
 
     repeat {
-      let _buffer = try await _ring.read(count: count, from: fileHandle, timeout: timeout)
+      let _buffer: [UInt8]
+      do {
+        _buffer = try await _ring.read(count: count, from: fileHandle, timeout: timeout)
+      } catch let error as Errno where error == .timedOut && !buffer.isEmpty {
+        break // the caller's to keep; reading again times out again
+      }
       if _buffer.count == 0 {
         break // EOF
       }
@@ -425,7 +431,8 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     return buffer
   }
 
-  /// `timeout` bounds each write of the loop, not the whole: an idle bound, not a deadline
+  /// `timeout` bounds each write of the loop, not the whole: an idle bound, not a deadline.
+  /// A timeout after part of the buffer has gone returns that count, the peer having it.
   public func write(
     _ buffer: [UInt8],
     count: Int,
@@ -440,12 +447,16 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
       // buffer (copy-on-write, no allocation) with an explicit count. Only a
       // resumed partial write needs a fresh subrange.
       let chunk = nwritten == 0 ? buffer : Array(buffer[nwritten..<count])
-      nwritten += try await _ring.write(
-        chunk,
-        count: count - nwritten,
-        to: fileHandle,
-        timeout: timeout
-      )
+      do {
+        nwritten += try await _ring.write(
+          chunk,
+          count: count - nwritten,
+          to: fileHandle,
+          timeout: timeout
+        )
+      } catch let error as Errno where error == .timedOut && nwritten > 0 {
+        break // the peer has those, and the caller resumes from the count
+      }
     } while awaitingAllWritten && nwritten < count
 
     return nwritten

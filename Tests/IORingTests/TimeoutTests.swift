@@ -95,6 +95,35 @@ final class TimeoutTests: XCTestCase {
     _ = a
   }
 
+  /// a read of the loop that times out returns what the reads before it got, rather than
+  /// discard bytes the peer has already sent
+  func testPartialReadIsReturnedOnTimeout() async throws {
+    let (a, b) = try Self.makePair(ring: IORing.shared)
+    try await a.send([1, 2, 3])
+    let read = try await b.read(count: 8, awaitingAllRead: true, timeout: .milliseconds(50))
+    XCTAssertEqual(read, [1, 2, 3])
+  }
+
+  /// a stream let go just after a completion, its request released and the next not yet
+  /// armed, cancels nothing that has taken the released block's address. The pair it ran on
+  /// is left alone: its request is armed until the cancel lands, and would eat what is sent.
+  func testStreamDroppedAfterCompletion() async throws {
+    let ring = try IORing()
+    let (a, b) = try Self.makePair(ring: ring)
+    do {
+      let stream = try await b.receive(count: 64, capacity: 4)
+      try await a.send([1])
+      for try await bytes in stream {
+        XCTAssertEqual(bytes, [1])
+        break // let go in the window between the completion and the re-arm
+      }
+    }
+    let (c, d) = try Self.makePair(ring: ring)
+    try await c.send([2])
+    let received: [UInt8] = try await d.receive(count: 1)
+    XCTAssertEqual(received, [2])
+  }
+
   /// a duration survives the trip through the kernel's timespec, to the nanosecond
   func testTimespecRoundTrips() {
     let duration = Duration.seconds(3) + .nanoseconds(250)
