@@ -1,4 +1,4 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.3
 
 import Foundation
 import PackageDescription
@@ -21,6 +21,23 @@ func tryGuessSwiftLibRoot() -> String {
 }
 
 let SwiftLibRoot = EnvSysRoot != nil ? "\(EnvSysRoot!)/usr/lib/swift" : tryGuessSwiftLibRoot()
+
+// CIOURing/CIORingShims must stay `@_implementationOnly`: liburing.h implicitly
+// defines _XOPEN_SOURCE=500, so their `fd_set`/`sockaddr_storage` layouts clash with
+// those seen by dependent targets. CheckImplementationOnly makes the compiler verify
+// that instead of deprecating it, silencing #ImplementationOnlyDeprecated.
+//
+// 6.4 or later only. 6.3 recognises the feature enough to turn the checking on, but
+// its check also rejects private/internal stored properties of public types (a public
+// type is implicitly frozen without library evolution), which breaks the build.
+var IORingSwiftSettings: [SwiftSetting] = [
+  .enableExperimentalFeature("StrictConcurrency"),
+  .enableExperimentalFeature("NonisolatedNonsendingByDefault"),
+]
+
+#if compiler(>=6.4)
+IORingSwiftSettings.append(.enableExperimentalFeature("CheckImplementationOnly"))
+#endif
 
 let package = Package(
   name: "IORingSwift",
@@ -82,10 +99,7 @@ let package = Package(
         .define("_XOPEN_SOURCE=700"),
         .define("_DEFAULT_SOURCE"),
       ],
-      swiftSettings: [
-        .enableExperimentalFeature("StrictConcurrency"),
-        .enableExperimentalFeature("NonisolatedNonsendingByDefault"),
-      ]
+      swiftSettings: IORingSwiftSettings
     ),
     .testTarget(
       name: "IORingTests",
