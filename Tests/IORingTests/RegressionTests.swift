@@ -18,7 +18,9 @@ import AsyncExtensions
 @preconcurrency import Foundation
 @preconcurrency import Glibc
 @testable import IORing
+import class IORing.FileHandle
 import IORingUtils
+import SocketAddress
 import struct SystemPackage.Errno
 import struct SystemPackage.FileDescriptor
 import XCTest
@@ -180,6 +182,36 @@ final class RegressionTests: XCTestCase {
     try await tx.send(Array("short".utf8))
     let received = try await rx.receive(count: 4096) as [UInt8]
     XCTAssertEqual(received, Array("short".utf8))
+  }
+
+  /// A single-shot recvmsg returned its message at full capacity, and the peer's address at the
+  /// size of a sockaddr_storage, whatever arrived.
+  func testReceiveMessageReturnsTheDatagramAndItsSender() async throws {
+    let ring = try IORing()
+    let rxHandle = try FileHandle(
+      fileDescriptor: socket(AF_INET, Int32(SOCK_DGRAM.rawValue), 0),
+      closeOnDealloc: true
+    )
+    let rx = Socket(ring: ring, fileHandle: rxHandle, domain: sa_family_t(AF_INET))
+    try rx.bind(to: sockaddr_in(family: sa_family_t(AF_INET), presentationAddress: "127.0.0.1:0"))
+    let tx = try Socket(ring: ring, domain: sa_family_t(AF_INET), type: SOCK_DGRAM)
+    try tx.bind(to: sockaddr_in(family: sa_family_t(AF_INET), presentationAddress: "127.0.0.1:0"))
+    try await tx.send([1, 2, 3], to: rx.localAddress)
+    try await tx.send([], to: rx.localAddress)
+    try await tx.send(Array(repeating: 9, count: 100), to: rx.localAddress)
+
+    var message = try await ring.receiveMessage(count: 64, from: rxHandle)
+    XCTAssertEqual(message.buffer, [1, 2, 3])
+    XCTAssertEqual(message.name.count, MemoryLayout<sockaddr_in>.size)
+    XCTAssertEqual(try AnySocketAddress(bytes: message.name).port, try tx.localAddress.port)
+
+    message = try await ring.receiveMessage(count: 64, from: rxHandle)
+    XCTAssertEqual(message.buffer, [], "an empty datagram is empty, not 64 bytes")
+
+    // a longer datagram is cut to the buffer, and says so
+    message = try await ring.receiveMessage(count: 64, from: rxHandle)
+    XCTAssertEqual(message.buffer, Array(repeating: 9, count: 64))
+    XCTAssertNotEqual(message.flags & UInt32(MSG_TRUNC), 0)
   }
 
   func testReceiveOverUDPWithTimeout() async throws {

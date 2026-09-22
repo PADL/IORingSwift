@@ -82,6 +82,17 @@ public final class Message: @unchecked Sendable {
   func copy() -> Self {
     Self(name: name, buffer: buffer, flags: flags)
   }
+
+  /// This message after a recvmsg of `count` bytes into it: the payload and the peer's address
+  /// cut to what the kernel wrote, with the flags it set. A new message, so that its `msghdr`
+  /// describes its own arrays.
+  func received(count: Int) -> Message {
+    Message(
+      name: Array(name.prefix(Int(storage.msg_namelen))),
+      buffer: Array(buffer.prefix(count)),
+      flags: flags
+    )
+  }
 }
 
 // TODO: support for CMSG

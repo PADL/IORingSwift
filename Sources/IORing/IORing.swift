@@ -749,7 +749,7 @@ private extension IORing {
     message: inout Message,
     flags: UInt32 = 0,
     link: Bool = false
-  ) async throws {
+  ) async throws -> Int {
     try await message.withUnsafeMutablePointer(ring: self) { pointer in
       try await prepareAndSubmit(
         .recvmsg,
@@ -759,7 +759,9 @@ private extension IORing {
         offset: 0,
         flags: IORing.SqeFlags(link: link),
         moreFlags: flags
-      ) { _ in }
+      ) { cqe in
+        Int(cqe.res)
+      }
     }
   }
 
@@ -998,8 +1000,9 @@ public extension IORing {
 
   func receiveMessage(count: Int, from fd: FileDescriptorRepresentable) async throws -> Message {
     var message = Message(capacity: count)
-    try await io_uring_op_recvmsg(fd: fd, message: &message)
-    return message
+    let nreceived = try await io_uring_op_recvmsg(fd: fd, message: &message)
+    // as receive(count:from:timeout:) does, and the multishot receiveMessages always has
+    return message.received(count: nreceived)
   }
 
   func send(message: Message, to fd: FileDescriptorRepresentable) async throws {
