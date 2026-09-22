@@ -483,6 +483,8 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     return nwritten
   }
 
+  /// Up to `count` bytes, and no more than arrived: one datagram on a datagram socket, cut to
+  /// `count` if it was longer. Empty for an empty datagram, or at the end of a stream.
   public func receive(count: Int, timeout: Duration? = nil) async throws -> [UInt8] {
     try await _ring.receive(
       count: count,

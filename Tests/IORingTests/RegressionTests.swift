@@ -91,10 +91,11 @@ final class RegressionTests: XCTestCase {
     // which is how a still-armed multishot would show: by eating it
     try await tx.send([0xFF])
     var chunks = 0
-    while chunks < 100 { // the buffer comes back at its full size; look for the sentinel in it
-      let chunk = try await rx.receive(count: 4096) as [UInt8]
+    while chunks < 100 {
+      // bounded, so that a receive that eats the sentinel fails the test rather than hangs it
+      let chunk = try await rx.receive(count: 4096, timeout: .seconds(2)) as [UInt8]
       chunks += 1
-      if chunk.contains(0xFF) { break }
+      if chunk.last == 0xFF { break }
     }
     XCTAssertLessThan(chunks, 100, "the sentinel never arrived: a receive is still armed")
   }
@@ -152,6 +153,49 @@ final class RegressionTests: XCTestCase {
     let payload = Array("addressed".utf8)
     try await tx.send(payload, to: address)
     let received = try await rx.receive(count: 64) as [UInt8]
-    XCTAssertEqual(received.prefix(payload.count).map { $0 }, payload)
+    XCTAssertEqual(received, payload)
+  }
+
+  /// A single-shot receive returned its whole buffer whatever arrived, the rest never written,
+  /// so a datagram's length was lost.
+  func testReceiveReturnsTheDatagramAlone() async throws {
+    let ring = try IORing()
+    let (rx, tx) = try Self.makePair(SOCK_DGRAM, ring: ring)
+    try await tx.send([1, 2, 3])
+    try await tx.send([])
+    try await tx.send(Array(repeating: 9, count: 100))
+
+    var received = try await rx.receive(count: 64) as [UInt8]
+    XCTAssertEqual(received, [1, 2, 3])
+    received = try await rx.receive(count: 64) as [UInt8]
+    XCTAssertEqual(received, [], "an empty datagram is empty, not 64 bytes")
+    // a longer datagram is cut to the buffer, and the rest of it discarded
+    received = try await rx.receive(count: 64) as [UInt8]
+    XCTAssertEqual(received, Array(repeating: 9, count: 64))
+  }
+
+  func testReceiveReturnsWhatAStreamHas() async throws {
+    let ring = try IORing()
+    let (rx, tx) = try Self.makePair(SOCK_STREAM, ring: ring)
+    try await tx.send(Array("short".utf8))
+    let received = try await rx.receive(count: 4096) as [UInt8]
+    XCTAssertEqual(received, Array("short".utf8))
+  }
+
+  func testReceiveOverUDPWithTimeout() async throws {
+    let ring = try IORing()
+    let rx = try Socket(ring: ring, domain: sa_family_t(AF_INET), type: SOCK_DGRAM)
+    try rx.bind(to: sockaddr_in(family: sa_family_t(AF_INET), presentationAddress: "127.0.0.1:0"))
+    let tx = try Socket(ring: ring, domain: sa_family_t(AF_INET), type: SOCK_DGRAM)
+    try await tx.send([0x00, 0x04, 0x00, 0x01], to: rx.localAddress)
+
+    let received = try await rx.receive(count: 1500, timeout: .seconds(2)) as [UInt8]
+    XCTAssertEqual(received, [0x00, 0x04, 0x00, 0x01])
+    do {
+      _ = try await rx.receive(count: 1500, timeout: .milliseconds(50)) as [UInt8]
+      XCTFail("nothing was sent, so the receive should time out")
+    } catch let error as Errno {
+      XCTAssertEqual(error, .timedOut)
+    }
   }
 }

@@ -696,7 +696,7 @@ private extension IORing {
     flags: UInt32 = 0,
     link: Bool = false,
     timeout: Duration? = nil
-  ) async throws {
+  ) async throws -> Int {
     try await prepareAndSubmit(
       .recv,
       fd: fd,
@@ -706,9 +706,9 @@ private extension IORing {
       flags: IORing.SqeFlags(link: link),
       moreFlags: flags,
       timeout: timeout
-    ) { [buffer] _ in
+    ) { [buffer] cqe in
       _ = buffer
-      return ()
+      return Int(cqe.res)
     }
   }
 
@@ -935,7 +935,10 @@ public extension IORing {
     timeout: Duration? = nil
   ) async throws -> [UInt8] {
     var buffer = [UInt8]._unsafelyInitialized(count: count)
-    try await io_uring_op_recv(fd: fd, buffer: &buffer, timeout: timeout)
+    let nreceived = try await io_uring_op_recv(fd: fd, buffer: &buffer, timeout: timeout)
+    // Trim to what arrived, as read(count:from:timeout:) does: the rest of the buffer was never
+    // written, and a datagram's length is otherwise lost.
+    if nreceived < count { buffer.removeLast(count - nreceived) }
     return buffer
   }
 
