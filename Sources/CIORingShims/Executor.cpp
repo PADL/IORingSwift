@@ -231,11 +231,13 @@ void armTimer(TimerQueue &queue) {
   queue.armed = deadline;
 }
 
-// lock held. The timerfd is not drained: the settime that re-arms or disarms
-// it below resets its count, and the next expiry is a new edge either way.
+// lock held. The timerfd is not drained: the next expiry is a new edge
+// whatever its count. Nor is it disarmed once nothing is left to wait for: it
+// fires once, so the expiry that brought us here already did that.
 void expireTimers(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
                   TimerQueue &queue) {
   uint64_t now = nanoseconds(queue.clock);
+  bool expired = queue.armed != 0 && queue.armed <= now;
   while (!queue.heap.empty() && queue.heap.front().deadline <= now) {
     std::pop_heap(queue.heap.begin(), queue.heap.end(), timerLater);
     void *job = queue.heap.back().job;
@@ -243,7 +245,10 @@ void expireTimers(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
     enqueueAndUnlock(pool, lock, job);
     lock.lock();
   }
-  armTimer(queue);
+  if (expired && queue.heap.empty())
+    queue.armed = 0;
+  else
+    armTimer(queue);
 }
 
 // lock held
