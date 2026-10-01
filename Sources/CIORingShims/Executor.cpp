@@ -149,14 +149,6 @@ struct ioring_pool {
 
 namespace {
 
-// Resets an eventfd or timerfd; nothing to read means it already was.
-void drain(int fd) {
-  uint64_t count;
-  ssize_t length = read(fd, &count, sizeof(count));
-  assert(length == sizeof(count) || (length < 0 && errno == EAGAIN));
-  (void)length;
-}
-
 void unpark(Worker *worker) {
   // `unparked` was set under the lock by whoever popped the worker
   syscall(SYS_futex, &worker->unparked, FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0);
@@ -269,8 +261,9 @@ void reapRing(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
   entry->busy = true;
   lock.unlock();
 
-  // a completion posted after the drain signals again, so nothing is missed
-  drain(entry->eventFd);
+  // The eventfd is not read: it is edge-triggered in the epoll, where every
+  // signal is a new edge whatever the count, and a completion posted after the
+  // edge that brought us here signals again, so nothing is missed.
   Worker *self = tlsWorker;
   io_uring_cq_reap(entry->ring, self->finished);
 
