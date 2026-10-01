@@ -138,6 +138,11 @@ let package = Package(
       path: "Examples/IORingSocketBench"
     ),
     .executableTarget(
+      name: "IORingWriteBench",
+      dependencies: ["IORing", "IORingUtils"],
+      path: "Examples/IORingWriteBench"
+    ),
+    .executableTarget(
       name: "IORingTCPEcho",
       dependencies: ["IORing", "IORingUtils"],
       path: "Examples/IORingTCPEcho"
