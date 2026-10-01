@@ -25,6 +25,9 @@
 //   BENCH_SIZE      message bytes, default 40 (at least 8: a message starts with its send time)
 //   BENCH_READER    "ring" (default): a task reading through the ring; "thread": a thread in
 //                   read(2), as a peer process would be, whose CPU time is reported apart
+//   BENCH_WRITER    "thread": the writers are threads in write(2), one message every
+//                   BENCH_PACE_US (default 100), and the readers tasks, each read finding
+//                   nothing and completing when its message arrives, as a device's input does
 //   BENCH_PACE_US   if set, a writer sleeps this long between bursts, so each burst starts from
 //                   an idle pool; BENCH_BURST (default 1) writes per burst
 //
@@ -139,6 +142,41 @@ private final class ThreadReader: @unchecked Sendable {
   }
 }
 
+/// a peer that sends a message every `pace` nanoseconds, spinning in between
+private final class ThreadWriter: @unchecked Sendable {
+  let fd: Int32
+  let size: Int
+  let ops: Int
+  let pace: UInt64
+  var cpu: Double = 0
+  var switches: Double = 0
+  var thread = pthread_t()
+
+  init(fd: Int32, size: Int, ops: Int, pace: UInt64) {
+    self.fd = fd
+    self.size = size
+    self.ops = ops
+    self.pace = pace
+  }
+
+  func run() {
+    var message = [UInt8](repeating: 0x5A, count: size)
+    var next = now() + pace
+    for _ in 0..<ops {
+      while now() < next {}
+      next += pace
+      let start = now()
+      message.withUnsafeMutableBytes { $0.storeBytes(of: start, as: UInt64.self) }
+      guard message.withUnsafeBytes({ write(fd, $0.baseAddress!, size) }) == size else { break }
+    }
+    var usage = rusage()
+    getrusage(__rusage_who_t(1), &usage) // RUSAGE_THREAD
+    cpu = Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) * 1e9 +
+      Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) * 1e3
+    switches = Double(usage.ru_nvcsw)
+  }
+}
+
 private func ringReader(_ socket: Socket, size: Int, expected: Int, delivery: Samples) async {
   var buffer = [UInt8](repeating: 0, count: size * 256)
   var received = 0
@@ -190,13 +228,14 @@ enum IORingWriteBench {
       .compactMap { Int($0) }
     let ops = environment("BENCH_OPS").flatMap(Int.init) ?? 200_000
     let size = max(environment("BENCH_SIZE").flatMap(Int.init) ?? 40, 8)
-    let threadReader = environment("BENCH_READER") == "thread"
+    let threadWriter = environment("BENCH_WRITER") == "thread"
+    let threadReader = environment("BENCH_READER") == "thread" && !threadWriter
     let pace = environment("BENCH_PACE_US").flatMap(Int.init).map { Duration.microseconds($0) }
     let burst = pace == nil ? ops : max(environment("BENCH_BURST").flatMap(Int.init) ?? 1, 1)
 
     for writers in writerCounts {
       var sockets = [(Socket, Socket)]()
-      var readerFds = [Int32]()
+      var readerFds = [Int32](), writerFds = [Int32]()
       for _ in 0..<writers {
         var fds = [Int32](repeating: -1, count: 2)
         guard socketpair(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0, &fds) == 0 else {
@@ -213,6 +252,7 @@ enum IORingWriteBench {
           )
         ))
         readerFds.append(fds[1])
+        writerFds.append(fds[0])
       }
 
       let latencies = (0..<writers).map { _ in Samples(capacity: ops) }
@@ -241,7 +281,21 @@ enum IORingWriteBench {
 
       let usageStart = Usage.current()
       let start = now()
+      var threadWriters = [ThreadWriter]()
+      if threadWriter {
+        let paceNs = UInt64(environment("BENCH_PACE_US").flatMap(Int.init) ?? 100) * 1000
+        for fd in writerFds {
+          let writer = ThreadWriter(fd: fd, size: size, ops: ops, pace: paceNs)
+          let context = Unmanaged.passRetained(writer).toOpaque()
+          pthread_create(&writer.thread, nil, { context in
+            Unmanaged<ThreadWriter>.fromOpaque(context!).takeRetainedValue().run()
+            return nil
+          }, context)
+          threadWriters.append(writer)
+        }
+      }
       try await withThrowingTaskGroup(of: Void.self) { group in
+        if threadWriter { return }
         for (index, pair) in sockets.enumerated() {
           let latency = latencies[index]
           group.addTask {
@@ -266,6 +320,11 @@ enum IORingWriteBench {
       for task in readerTasks {
         await task.value
       }
+      for writer in threadWriters {
+        pthread_join(writer.thread, nil)
+        readerCpu += writer.cpu
+        readerSwitches += writer.switches
+      }
       let elapsed = Double(now() - start)
       let usage = Usage.current()
 
@@ -274,7 +333,8 @@ enum IORingWriteBench {
       let write = percentiles(latencies)
       let delivery = percentiles(threadReader ? threadReaders.map(\.delivery) : deliveries)
       let fields: [String] = [
-        "RESULT", threadReader ? "thread" : "ring", String(writers), String(ops),
+        "RESULT", threadWriter ? "recv" : threadReader ? "thread" : "ring", String(writers),
+        String(ops),
         String(Int(elapsed / Double(ops))), String(Int(cpu / total)),
         String(Int((usage.user - usageStart.user) / total)),
         String(Int((usage.system - usageStart.system) / total)),
