@@ -149,14 +149,6 @@ struct ioring_pool {
 
 namespace {
 
-// Resets an eventfd or timerfd; nothing to read means it already was.
-void drain(int fd) {
-  uint64_t count;
-  ssize_t length = read(fd, &count, sizeof(count));
-  assert(length == sizeof(count) || (length < 0 && errno == EAGAIN));
-  (void)length;
-}
-
 void unpark(Worker *worker) {
   // `unparked` was set under the lock by whoever popped the worker
   syscall(SYS_futex, &worker->unparked, FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0);
@@ -239,11 +231,13 @@ void armTimer(TimerQueue &queue) {
   queue.armed = deadline;
 }
 
-// lock held. The timerfd is not drained: the settime that re-arms or disarms
-// it below resets its count, and the next expiry is a new edge either way.
+// lock held. The timerfd is not drained: the next expiry is a new edge
+// whatever its count. Nor is it disarmed once nothing is left to wait for: it
+// fires once, so the expiry that brought us here already did that.
 void expireTimers(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
                   TimerQueue &queue) {
   uint64_t now = nanoseconds(queue.clock);
+  bool expired = queue.armed != 0 && queue.armed <= now;
   while (!queue.heap.empty() && queue.heap.front().deadline <= now) {
     std::pop_heap(queue.heap.begin(), queue.heap.end(), timerLater);
     void *job = queue.heap.back().job;
@@ -251,7 +245,10 @@ void expireTimers(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
     enqueueAndUnlock(pool, lock, job);
     lock.lock();
   }
-  armTimer(queue);
+  if (expired && queue.heap.empty())
+    queue.armed = 0;
+  else
+    armTimer(queue);
 }
 
 // lock held
@@ -269,8 +266,9 @@ void reapRing(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
   entry->busy = true;
   lock.unlock();
 
-  // a completion posted after the drain signals again, so nothing is missed
-  drain(entry->eventFd);
+  // The eventfd is not read: it is edge-triggered in the epoll, where every
+  // signal is a new edge whatever the count, and a completion posted after the
+  // edge that brought us here signals again, so nothing is missed.
   Worker *self = tlsWorker;
   io_uring_cq_reap(entry->ring, self->finished);
 
