@@ -71,6 +71,11 @@ bool ioring_pool_is_worker(ioring_pool_t _Nonnull pool);
 /// `io_uring_submit(ring)` made by a pool thread, which the requests then belong to
 int ioring_pool_submit(ioring_pool_t _Nonnull pool, struct io_uring *_Nonnull ring);
 
+/// `io_uring_submit(ring)` from a pool thread, which then reaps the completions
+/// already posted, the submission's own if the kernel finished it at once
+int ioring_pool_submit_and_reap(ioring_pool_t _Nonnull pool,
+                                struct io_uring *_Nonnull ring, uintptr_t handle);
+
 /// Runs `job` on a pool thread
 void ioring_pool_enqueue(ioring_pool_t _Nonnull pool, void *_Nonnull job);
 
