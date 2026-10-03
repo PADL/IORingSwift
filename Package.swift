@@ -42,7 +42,7 @@ IORingSwiftSettings.append(.enableExperimentalFeature("CheckImplementationOnly")
 let package = Package(
   name: "IORingSwift",
   platforms: [
-    .macOS(.v13),
+    .macOS(.v15),
   ],
   products: [
     .library(
@@ -60,7 +60,7 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-async-algorithms", from: "1.0.0"),
-    .package(url: "https://github.com/lhoward/AsyncExtensions", from: "0.9.0"),
+    .package(url: "https://github.com/lhoward/AsyncExtensions", from: "0.10.0"),
     .package(url: "https://github.com/dfed/swift-async-queue", from: "1.0.0"),
     .package(url: "https://github.com/apple/swift-log", from: "1.6.2"),
     .package(url: "https://github.com/apple/swift-system", from: "1.0.0"),
