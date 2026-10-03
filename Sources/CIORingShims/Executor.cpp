@@ -39,13 +39,13 @@
 
 #include <algorithm>
 #include <atomic>
-#include <condition_variable>
 #include <deque>
 #include <memory>
 #include <mutex>
 #include <vector>
 
 #include <errno.h>
+#include <limits.h>
 #include <linux/futex.h>
 #include <pthread.h>
 #include <sched.h>
@@ -63,8 +63,29 @@ struct Worker {
   std::atomic<uint32_t> unparked{0}; // futex word, set by whoever unparks us
   Worker *nextIdle = nullptr;        // under pool->mutex
   bool woken = false;                // unparked for a backlog; under pool->mutex
+  unsigned inlineReaps = 0;          // submits the running job has reaped itself
   std::vector<io_uring_cqe_block> finished; // blocks a reap has released to us
 };
+
+// Who has a ring's completion queue; a set of flags in one word, which a
+// removal can also wait on with a futex
+enum class Reap : uint32_t {
+  idle = 0,
+  held = 1,   // a thread reaps the ring, which only one does at a time
+  again = 2,  // another came for it meanwhile, for the holder to look again
+  waited = 4, // the ring's removal waits, on this word, for the reap to end
+};
+
+constexpr Reap operator|(Reap a, Reap b) {
+  return Reap(uint32_t(a) | uint32_t(b));
+}
+constexpr Reap operator&(Reap a, Reap b) {
+  return Reap(uint32_t(a) & uint32_t(b));
+}
+constexpr Reap operator~(Reap a) { return Reap(~uint32_t(a)); }
+constexpr bool has(Reap state, Reap flag) {
+  return (state & flag) != Reap::idle;
+}
 
 // A registered ring. Entries are reused, never freed: an epoll_wait that
 // returned before the ring was removed may still hand its event to a worker,
@@ -72,10 +93,17 @@ struct Worker {
 struct RingEntry {
   struct io_uring *ring = nullptr;
   int eventFd = -1;
+  uint32_t index = 0; // in pool->rings
   uint32_t generation = 0;
   bool active = false; // in the epoll; under pool->mutex
-  bool busy = false;   // a worker is reaping it; under pool->mutex
+  std::atomic<Reap> reaping{Reap::idle};
 };
+
+static_assert(sizeof(std::atomic<Reap>) == sizeof(uint32_t), "futex word");
+
+// Submits one job may reap itself before it leaves the completion to the
+// epoll, as every one did before
+constexpr unsigned kInlineReapsPerJob = 16;
 
 // An io_uring_submit a thread outside the pool waits on a worker to make
 struct SubmitRequest {
@@ -130,8 +158,8 @@ template <typename Body> struct ScopeExit {
 
 struct ioring_pool {
   std::mutex mutex;
-  std::condition_variable ringIdle; // a RingEntry's `busy` was cleared
   std::deque<void *> jobs;
+  std::atomic<size_t> queued{0}; // jobs.size(), for a look without the lock
   std::deque<SubmitRequest *> submits; // served before jobs: their callers are blocked
   Worker *idle = nullptr;    // stack of workers parked on their futex
   Worker *timedWaiter = nullptr; // the idle worker whose park has the timeout
@@ -209,6 +237,7 @@ Worker *takeIdleForBacklog(ioring_pool *pool) {
 void enqueueAndUnlock(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
                       void *job) {
   pool->jobs.push_back(job);
+  pool->queued.store(pool->jobs.size(), std::memory_order_relaxed);
   Worker *self = tlsWorker;
   if (self == nullptr || self->pool != pool) {
     wakeAndUnlock(pool, lock); // from outside: nobody here would look otherwise
@@ -251,6 +280,57 @@ void expireTimers(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
     armTimer(queue);
 }
 
+// Whether the caller now reaps the ring; if another thread does, it is told
+// to look again once it is done, and the caller has nothing more to do.
+bool acquireReap(RingEntry *entry) {
+  Reap state = entry->reaping.load(std::memory_order_relaxed);
+  for (;;) {
+    if (has(state, Reap::held)) {
+      if (has(state, Reap::again) ||
+          entry->reaping.compare_exchange_weak(state, state | Reap::again))
+        return false;
+    } else if (entry->reaping.compare_exchange_weak(state, state | Reap::held)) {
+      return true;
+    }
+  }
+}
+
+// Reaps a ring the caller acquired, until nobody has asked for another look,
+// and lets go of it. No lock held: the blocks resume tasks, which takes it.
+void reapAcquired(RingEntry *entry, Worker *self) {
+  // ours while we reap; a reap nested in a block's release finds it empty
+  std::vector<io_uring_cqe_block> finished;
+  finished.swap(self->finished);
+
+  for (;;) {
+    io_uring_cq_reap(entry->ring, finished);
+    Reap state = entry->reaping.load(std::memory_order_relaxed);
+    bool again = false;
+    for (;;) {
+      if (has(state, Reap::again)) {
+        if (entry->reaping.compare_exchange_weak(state, state & ~Reap::again)) {
+          again = true;
+          break;
+        }
+      } else if (entry->reaping.compare_exchange_weak(state, Reap::idle)) {
+        if (has(state, Reap::waited))
+          syscall(SYS_futex, &entry->reaping, FUTEX_WAKE_PRIVATE, INT_MAX,
+                  nullptr, nullptr, 0);
+        break;
+      }
+    }
+    if (!again)
+      break;
+  }
+  // Releasing a finished block may free the last owner of its ring, whose
+  // teardown removes the ring from the pool and so must find it not reaped.
+  for (auto block : finished)
+    _Block_release(block);
+  finished.clear();
+  if (self->finished.capacity() == 0)
+    finished.swap(self->finished); // keep the allocation for the next reap
+}
+
 // lock held
 void reapRing(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
               uint64_t source) {
@@ -258,29 +338,16 @@ void reapRing(ioring_pool *pool, std::unique_lock<std::mutex> &lock,
   if (index >= pool->rings.size())
     return;
   RingEntry *entry = pool->rings[index];
-  // another worker got an earlier edge and is still reaping
-  while (entry->busy && entry->active && entry->generation == generation)
-    pool->ringIdle.wait(lock);
   if (!entry->active || entry->generation != generation)
     return;
-  entry->busy = true;
+  // if another thread is reaping, it looks again for what this edge announced
+  if (!acquireReap(entry))
+    return;
   lock.unlock();
-
   // The eventfd is not read: it is edge-triggered in the epoll, where every
   // signal is a new edge whatever the count, and a completion posted after the
   // edge that brought us here signals again, so nothing is missed.
-  Worker *self = tlsWorker;
-  io_uring_cq_reap(entry->ring, self->finished);
-
-  lock.lock();
-  entry->busy = false;
-  pool->ringIdle.notify_all();
-  // Releasing a finished block may free the last owner of its ring, whose
-  // teardown removes the ring from the pool and so must find it no longer busy.
-  lock.unlock();
-  for (auto block : self->finished)
-    _Block_release(block);
-  self->finished.clear();
+  reapAcquired(entry, tlsWorker);
   lock.lock();
 }
 
@@ -361,7 +428,9 @@ void *workerMain(void *argument) {
     } else if (!pool->jobs.empty()) {
       void *job = pool->jobs.front();
       pool->jobs.pop_front();
+      pool->queued.store(pool->jobs.size(), std::memory_order_relaxed);
       lock.unlock();
+      worker->inlineReaps = 0;
       pool->run(pool->context, job);
       lock.lock();
       streak = 0;
@@ -475,6 +544,65 @@ int ioring_pool_submit(ioring_pool_t pool, struct io_uring *ring) {
   return request.result;
 }
 
+namespace {
+
+// Whether completions are kept from signalling the ring's eventfd. The flag is
+// the ring's, written by one thread at a time: whichever has its submission
+// queue, which the ring's owner sees to.
+void setEventfdQuiet(struct io_uring *ring, bool quiet) {
+  unsigned *flags = ring->cq.kflags;
+  if (flags == nullptr)
+    return;
+  unsigned value = __atomic_load_n(flags, __ATOMIC_RELAXED);
+  value = quiet ? value | IORING_CQ_EVENTFD_DISABLED
+                : value & ~IORING_CQ_EVENTFD_DISABLED;
+  __atomic_store_n(flags, value, __ATOMIC_RELAXED);
+  // The kernel posts a completion, then a full barrier, then reads the flag:
+  // with one here before the queue is read, whichever of the two is second
+  // sees the other, and a completion is either signalled or reaped by us.
+  if (!quiet)
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+}
+
+} // namespace
+
+// A request the kernel can finish at once, a write to a socket with room say,
+// has its completion posted before the enter returns: the submitting thread
+// reaps it there and then, and the task that awaits it never suspends, rather
+// than leave it to the eventfd, the epoll and whichever worker is in it.
+int ioring_pool_submit_and_reap(ioring_pool_t pool, struct io_uring *ring,
+                                uintptr_t handle) {
+  Worker *self = tlsWorker;
+  assert(self != nullptr && self->pool == pool);
+  auto entry = reinterpret_cast<RingEntry *>(handle);
+  // Not while jobs wait for this thread, which they do until the running one
+  // suspends, as it would not; and not without end, for the epoll's sake. Nor
+  // on an IOPOLL ring, whose completions the kernel posts with no barrier
+  // before it reads the flag, so that one could be neither signalled nor seen.
+  if (entry == nullptr || (ring->flags & IORING_SETUP_IOPOLL) ||
+      self->inlineReaps >= kInlineReapsPerJob ||
+      pool->queued.load(std::memory_order_relaxed) != 0)
+    return io_uring_submit(ring);
+  self->inlineReaps++;
+
+  // quiet for the enter: what it completes is reaped here, and a signal would
+  // only wake the worker in the epoll for nothing
+  setEventfdQuiet(ring, true);
+  int result = io_uring_submit(ring);
+  setEventfdQuiet(ring, false);
+  if (acquireReap(entry))
+    reapAcquired(entry, self);
+  // What the reap resumed besides the submitter is queued for this thread,
+  // which has the running job until it suspends; the epoll's reaper would
+  // have run them at once, so another is woken for them, as from outside.
+  if (pool->queued.load(std::memory_order_relaxed) != 0) {
+    std::unique_lock<std::mutex> lock(pool->mutex);
+    if (!pool->jobs.empty())
+      wakeAndUnlock(pool, lock);
+  }
+  return result;
+}
+
 void ioring_pool_enqueue(ioring_pool_t pool, void *job) {
   std::unique_lock<std::mutex> lock(pool->mutex);
   enqueueAndUnlock(pool, lock, job);
@@ -513,6 +641,7 @@ int ioring_pool_add_ring(ioring_pool_t pool, struct io_uring *ring,
     pool->rings.push_back(new RingEntry);
   }
   RingEntry *entry = pool->rings[index];
+  entry->index = index;
   entry->ring = ring;
   entry->eventFd = fd;
   entry->active = true;
@@ -529,29 +658,40 @@ int ioring_pool_add_ring(ioring_pool_t pool, struct io_uring *ring,
     close(fd);
     return error;
   }
-  *handle = uintptr_t(index) + 1;
+  *handle = uintptr_t(entry); // entries are never freed
   return 0;
 }
 
 void ioring_pool_remove_ring(ioring_pool_t pool, uintptr_t handle) {
   if (handle == 0)
     return;
-  uint32_t index = uint32_t(handle - 1);
+  auto entry = reinterpret_cast<RingEntry *>(handle);
 
   std::unique_lock<std::mutex> lock(pool->mutex);
-  RingEntry *entry = pool->rings[index];
   entry->active = false;
   epoll_ctl(pool->epollFd, EPOLL_CTL_DEL, entry->eventFd, nullptr);
-  // a reaper that has the ring in hand finishes with it before clearing `busy`;
-  // after that nothing touches the ring or the fd
-  while (entry->busy)
-    pool->ringIdle.wait(lock);
+  // A reaper that has the ring in hand finishes with it before letting go;
+  // after that nothing touches the ring or the fd, a ring that is not active
+  // being acquired by nobody. The lock is not held meanwhile: the reaper's
+  // blocks take it.
+  lock.unlock();
+  Reap state = entry->reaping.load();
+  while (has(state, Reap::held)) {
+    if (has(state, Reap::waited) ||
+        entry->reaping.compare_exchange_weak(state, state | Reap::waited)) {
+      state = state | Reap::waited;
+      syscall(SYS_futex, &entry->reaping, FUTEX_WAIT_PRIVATE, uint32_t(state),
+              nullptr, nullptr, 0);
+      state = entry->reaping.load();
+    }
+  }
+  lock.lock();
   struct io_uring *ring = entry->ring;
   int fd = entry->eventFd;
   entry->ring = nullptr;
   entry->eventFd = -1;
   entry->generation++;
-  pool->freeRings.push_back(index);
+  pool->freeRings.push_back(entry->index);
   lock.unlock();
 
   io_uring_unregister_eventfd(ring);
