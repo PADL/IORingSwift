@@ -336,6 +336,30 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     }
   }
 
+  /// The side of a connection `shutdown(_:)` ends, as `shutdown(2)` names them.
+  public enum ShutdownHow: Sendable {
+    case read
+    case write
+    case readWrite
+
+    fileprivate var rawValue: CInt {
+      switch self {
+      case .read: CInt(SHUT_RD)
+      case .write: CInt(SHUT_WR)
+      case .readWrite: CInt(SHUT_RDWR)
+      }
+    }
+  }
+
+  /// Ends the connection without closing the descriptor, as `shutdown(2)` does: the peer reads
+  /// EOF, and writes here fail with `Errno.brokenPipe` (raising SIGPIPE unless ignored), pending
+  /// ones included. For letting a peer go while another task's write still holds the socket.
+  public func shutdown(_ how: ShutdownHow = .readWrite) throws {
+    _ = try Errno.throwingGlobalErrno {
+      try SwiftGlibc.shutdown(fileDescriptor, how.rawValue)
+    }
+  }
+
   public func accept() async throws -> Socket {
     let clientFileHandle: FileDescriptorRepresentable = try await _ring.accept(from: fileHandle)
     return Socket(ring: _ring, fileHandle: clientFileHandle as! FileHandle)
