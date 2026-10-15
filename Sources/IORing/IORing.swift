@@ -368,10 +368,9 @@ public actor IORing: CustomStringConvertible {
       if !injectedSubmitErrors.isEmpty { throw injectedSubmitErrors.removeFirst() }
       #endif
       let submitted = try Int(Errno.throwingErrno {
-        self.executor.isCurrentThread ? io_uring_submit(self.ring) : ioring_pool_submit(
-          self.executor.pool,
-          self.ring
-        )
+        self.executor.isCurrentThread
+          ? ioring_pool_submit_and_reap(self.executor.pool, self.ring, self.reaper)
+          : ioring_pool_submit(self.executor.pool, self.ring)
       })
       // the enter can consume a prefix and leave the rest, when a request allocation fails
       if io_uring_sq_ready(ring) > 0, ring.pointee.flags & UInt32(IORING_SETUP_SQPOLL) == 0 {

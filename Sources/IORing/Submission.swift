@@ -211,15 +211,12 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
 
   private typealias Continuation = UnsafeContinuation<T, Error>
 
-  /// How the continuation and the completion meet. A request submitted by `submit()` itself is
-  /// `direct`: its continuation is registered and its SQE submitted in one go, so the completion
-  /// finds the continuation waiting, and needs nothing more than a load to see that. A linked
-  /// request's SQE is prepared when its group is built but its continuation is registered in a
-  /// later actor job, and any submit in between flushes the SQE, so the completion can come
-  /// first: each side stores its half, then swaps its state into `handoff`, and the side that
-  /// finds the other's state already there resumes the continuation. The swap is an atomic
-  /// read-modify-write on a line the other thread just wrote, a cross-core stall, which is why
-  /// only linked requests pay for it.
+  /// How the continuation and the completion meet. Either can come first: a request submitted
+  /// by `submit()` itself is entered before anything waits for it, since the kernel may finish
+  /// it during the enter and the submit reap it; a linked request's SQE is prepared when its
+  /// group is built and flushed by any submit after that. Each side stores its half, then
+  /// swaps its state into `handoff`, and the side that finds the other's state already there
+  /// resumes the continuation. `direct` is a request not yet submitted, and not in a group.
   private enum Handoff: UInt8 {
     case direct, idle, waiting, completed
   }
@@ -291,27 +288,32 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
   }
 
   private func _submit(ring: isolated IORing) async throws -> T {
-    try await withTaskCancellationHandler(operation: {
+    let direct = handoff.load(ordering: .relaxed) == Handoff.direct.rawValue
+    if direct {
+      // Enter first. A request the kernel finishes during the enter is reaped by the submit
+      // itself, on a pool thread, and its completion is here before anything waits for it:
+      // no continuation, no cancellation handler, no suspension. A failed enter leaves the
+      // flushed SQE for the next submit to carry, so its completion is still coming.
+      handoff.store(Handoff.idle.rawValue, ordering: .relaxed)
+      _ = try? ring.submit()
+      if handoff.load(ordering: .acquiring) == Handoff.completed.rawValue {
+        return try throwingErrno(cqe: completion, handler)
+      }
+    }
+    return try await withTaskCancellationHandler(operation: {
       try await withUnsafeThrowingContinuation { continuation in
         // guaranteed to run immediately
         self.continuation = continuation
-        if handoff.load(ordering: .relaxed) != Handoff.direct.rawValue {
-          if handoff.exchange(Handoff.waiting.rawValue, ordering: .acquiringAndReleasing)
-            == Handoff.completed.rawValue
-          {
-            var cqe = io_uring_cqe()
-            cqe.res = completionResult
-            cqe.flags = completionFlags
-            resume(continuation, with: cqe)
-          }
+        if handoff.exchange(Handoff.waiting.rawValue, ordering: .acquiringAndReleasing)
+          == Handoff.completed.rawValue
+        {
+          resume(continuation, with: completion)
+        }
+        if !direct {
           // a group counts every member ready before it submits, this one included;
           // a group gone before that, its caller having thrown, submits nothing
           ready()
           if group == nil { _ = try? ring.submit() }
-        } else {
-          // a failed enter leaves the flushed SQE for the next submit to carry, so its
-          // completion is still coming; failing the continuation now would resume it twice
-          _ = try? ring.submit()
         }
       }
     }, onCancel: {
@@ -329,11 +331,15 @@ final class SingleshotSubmission<T: Sendable>: Submission<T>, @unchecked Sendabl
     }
   }
 
+  /// the completion that came before anything waited for it
+  private var completion: io_uring_cqe {
+    var cqe = io_uring_cqe()
+    cqe.res = completionResult
+    cqe.flags = completionFlags
+    return cqe
+  }
+
   override func onCompletion(cqe: io_uring_cqe) {
-    if handoff.load(ordering: .acquiring) == Handoff.direct.rawValue {
-      resume(continuation!, with: cqe)
-      return
-    }
     completionResult = cqe.res
     completionFlags = cqe.flags
     if handoff.exchange(Handoff.completed.rawValue, ordering: .acquiringAndReleasing)
