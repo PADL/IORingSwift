@@ -352,8 +352,8 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
   }
 
   /// Ends the connection without closing the descriptor, as `shutdown(2)` does: the peer reads
-  /// EOF, and writes here fail with `Errno.brokenPipe` (raising SIGPIPE unless ignored), pending
-  /// ones included. For letting a peer go while another task's write still holds the socket.
+  /// EOF, and writes here fail with `Errno.brokenPipe`, pending ones included; `writeFixed`,
+  /// whose op takes no flags, raises SIGPIPE too, unless it is ignored. For letting a peer go while another task's write still holds the socket.
   public func shutdown(_ how: ShutdownHow = .readWrite) throws {
     _ = try Errno.throwingGlobalErrno {
       try SwiftGlibc.shutdown(fileDescriptor, how.rawValue)
@@ -457,25 +457,29 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
 
   /// `timeout` bounds each write of the loop, not the whole: an idle bound, not a deadline.
   /// A timeout after part of the buffer has gone returns that count, the peer having it.
+  /// `flags` are `send(2)`'s; by default `MSG_NOSIGNAL`, so a write to a peer that has gone
+  /// throws `Errno.brokenPipe` rather than raising SIGPIPE.
   public func write(
     _ buffer: [UInt8],
     count: Int,
     awaitingAllWritten: Bool,
+    flags: CInt = CInt(MSG_NOSIGNAL),
     timeout: Duration? = nil
   ) async throws -> Int {
     var nwritten = 0
 
     repeat {
-      // Avoid slicing on the first pass (the common case): the ring write API
-      // writes `count` bytes from the start of the array, so pass the whole
+      // Avoid slicing on the first pass (the common case): the ring send API
+      // sends `count` bytes from the start of the array, so pass the whole
       // buffer (copy-on-write, no allocation) with an explicit count. Only a
       // resumed partial write needs a fresh subrange.
       let chunk = nwritten == 0 ? buffer : Array(buffer[nwritten..<count])
       do {
-        nwritten += try await _ring.write(
+        nwritten += try await _ring.send(
           chunk,
           count: count - nwritten,
           to: fileHandle,
+          flags: flags,
           timeout: timeout
         )
       } catch let error as Errno where error == .timedOut && nwritten > 0 {
@@ -526,23 +530,34 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     )
   }
 
-  public func send(_ data: [UInt8], timeout: Duration? = nil) async throws {
+  /// Returns how many bytes went, which on a stream socket may be fewer than all; `write`
+  /// sends the rest. `flags` are `send(2)`'s, here and below; by default `MSG_NOSIGNAL`, as
+  /// for `write`.
+  @discardableResult
+  public func send(
+    _ data: [UInt8],
+    flags: CInt = CInt(MSG_NOSIGNAL),
+    timeout: Duration? = nil
+  ) async throws -> Int {
     try await _ring.send(
       data,
       to: fileHandle,
+      flags: flags,
       timeout: timeout
     )
   }
 
+  @discardableResult
   public func send(
     _ data: [UInt8],
     to address: any SocketAddress,
+    flags: CInt = CInt(MSG_NOSIGNAL),
     timeout: Duration? = nil
-  ) async throws {
+  ) async throws -> Int {
     let bytes = address.withSockAddr { sa, size in
       Array(UnsafeRawBufferPointer(start: sa, count: Int(size)))
     }
-    try await _ring.send(data, to: bytes, from: fileHandle, timeout: timeout)
+    return try await _ring.send(data, to: bytes, from: fileHandle, flags: flags, timeout: timeout)
   }
 
   public func receiveMessages(
@@ -556,10 +571,11 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     )
   }
 
-  public func sendMessage(_ message: Message) async throws {
+  public func sendMessage(_ message: Message, flags: CInt = CInt(MSG_NOSIGNAL)) async throws {
     try await _ring.send(
       message: message,
-      to: fileHandle
+      to: fileHandle,
+      flags: flags
     )
   }
 

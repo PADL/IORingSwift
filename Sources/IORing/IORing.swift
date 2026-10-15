@@ -669,24 +669,28 @@ private extension IORing {
   func io_uring_op_send(
     fd: FileDescriptorRepresentable,
     buffer: [UInt8],
+    count: Int? = nil,
     to socketAddress: sockaddr_storage? = nil,
     flags: UInt32 = 0,
     link: Bool = false,
     timeout: Duration? = nil
-  ) async throws {
-    try await prepareAndSubmit(
+  ) async throws -> Int {
+    let count = count ?? buffer.count
+    // the kernel reads `count` bytes from the array's storage, and no further
+    precondition((0...buffer.count).contains(count), "count \(count) outside 0...\(buffer.count)")
+    return try await prepareAndSubmit(
       .send,
       fd: fd,
       address: buffer,
-      length: CUnsignedInt(buffer.count),
+      length: CUnsignedInt(count),
       offset: 0,
       flags: IORing.SqeFlags(link: link),
       moreFlags: flags,
       socketAddress: socketAddress,
       timeout: timeout
-    ) { [buffer] _ in
+    ) { [buffer] cqe in
       _ = buffer
-      return ()
+      return Int(cqe.res)
     }
   }
 
@@ -944,12 +948,25 @@ public extension IORing {
     return buffer
   }
 
+  /// Sends the first `count` bytes of `data` (all of it by default), returning how many went;
+  /// on a stream socket that may be fewer. `flags` are `send(2)`'s, here and below. Their
+  /// default, `MSG_NOSIGNAL`, has a send to a peer that has gone throw `Errno.brokenPipe`
+  /// rather than raise SIGPIPE: some kernels add it to every io_uring send, not all may.
+  @discardableResult
   func send(
     _ data: [UInt8],
+    count: Int? = nil,
     to fd: FileDescriptorRepresentable,
+    flags: CInt = CInt(Glibc.MSG_NOSIGNAL),
     timeout: Duration? = nil
-  ) async throws {
-    try await io_uring_op_send(fd: fd, buffer: data, timeout: timeout)
+  ) async throws -> Int {
+    try await io_uring_op_send(
+      fd: fd,
+      buffer: data,
+      count: count,
+      flags: UInt32(bitPattern: flags),
+      timeout: timeout
+    )
   }
 
   /// Cancels the request whose completion block is `token`; returns once the kernel has
@@ -972,16 +989,19 @@ public extension IORing {
   }
 
   /// `address` is an encoded `sockaddr_storage`; see `connect(_:to:)`.
+  @discardableResult
   func send(
     _ data: [UInt8],
     to address: [UInt8],
     from fd: FileDescriptorRepresentable,
+    flags: CInt = CInt(Glibc.MSG_NOSIGNAL),
     timeout: Duration? = nil
-  ) async throws {
+  ) async throws -> Int {
     try await io_uring_op_send(
       fd: fd,
       buffer: data,
       to: sockaddr_storage(bytes: address),
+      flags: UInt32(bitPattern: flags),
       timeout: timeout
     )
   }
@@ -1005,8 +1025,12 @@ public extension IORing {
     return message.received(count: nreceived)
   }
 
-  func send(message: Message, to fd: FileDescriptorRepresentable) async throws {
-    try await io_uring_op_sendmsg(fd: fd, message: message)
+  func send(
+    message: Message,
+    to fd: FileDescriptorRepresentable,
+    flags: CInt = CInt(Glibc.MSG_NOSIGNAL)
+  ) async throws {
+    try await io_uring_op_sendmsg(fd: fd, message: message, flags: UInt32(bitPattern: flags))
   }
 
   func accept(
