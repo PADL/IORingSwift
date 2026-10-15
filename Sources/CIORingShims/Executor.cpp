@@ -564,6 +564,29 @@ void setEventfdQuiet(struct io_uring *ring, bool quiet) {
     std::atomic_thread_fence(std::memory_order_seq_cst);
 }
 
+// Whether the kernel has the barrier setEventfdQuiet leans on. Before 6.6
+// (54927baf6c19) it read the flag before io_cqring_wake()'s smp_mb(), so a
+// completion posted in the quiet window could be neither signalled nor seen.
+// There is no version to ask for, but IORING_SETUP_NO_SQARRAY came in the
+// same release, and a kernel that does not know a setup flag refuses it
+// before it allocates anything.
+#ifndef IORING_SETUP_NO_SQARRAY
+#define IORING_SETUP_NO_SQARRAY (1U << 16)
+#endif
+
+bool kernelOrdersEventfdQuiet() {
+  static const bool ordered = [] {
+    struct io_uring_params params = {};
+    params.flags = IORING_SETUP_NO_SQARRAY;
+    int fd = int(syscall(SYS_io_uring_setup, 1, &params));
+    if (fd < 0)
+      return false;
+    close(fd);
+    return true;
+  }();
+  return ordered;
+}
+
 } // namespace
 
 // A request the kernel can finish at once, a write to a socket with room say,
@@ -578,8 +601,10 @@ int ioring_pool_submit_and_reap(ioring_pool_t pool, struct io_uring *ring,
   // Not while jobs wait for this thread, which they do until the running one
   // suspends, as it would not; and not without end, for the epoll's sake. Nor
   // on an IOPOLL ring, whose completions the kernel posts with no barrier
-  // before it reads the flag, so that one could be neither signalled nor seen.
+  // before it reads the flag, so that one could be neither signalled nor seen;
+  // nor on a kernel older than 6.6, which reads it before the barrier anyway.
   if (entry == nullptr || (ring->flags & IORING_SETUP_IOPOLL) ||
+      !kernelOrdersEventfdQuiet() ||
       self->inlineReaps >= kInlineReapsPerJob ||
       pool->queued.load(std::memory_order_relaxed) != 0)
     return io_uring_submit(ring);
