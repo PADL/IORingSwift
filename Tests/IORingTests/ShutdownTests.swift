@@ -46,7 +46,6 @@ final class ShutdownTests: XCTestCase {
   /// a write waiting for buffer space fails when the socket is shut down under it, rather than
   /// waiting for a peer that has stopped reading
   func testPendingWriteFailsAfterShutdown() async throws {
-    signal(SIGPIPE, SIG_IGN) // the failing write raises it, as any socket write does
     let ring = try IORing()
     let (own, peer, ownFd) = try Self.makePair(ring: ring)
     let filler = [UInt8](repeating: 0, count: 65536)

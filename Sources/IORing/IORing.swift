@@ -669,24 +669,25 @@ private extension IORing {
   func io_uring_op_send(
     fd: FileDescriptorRepresentable,
     buffer: [UInt8],
+    count: Int? = nil,
     to socketAddress: sockaddr_storage? = nil,
     flags: UInt32 = 0,
     link: Bool = false,
     timeout: Duration? = nil
-  ) async throws {
+  ) async throws -> Int {
     try await prepareAndSubmit(
       .send,
       fd: fd,
       address: buffer,
-      length: CUnsignedInt(buffer.count),
+      length: CUnsignedInt(count ?? buffer.count),
       offset: 0,
       flags: IORing.SqeFlags(link: link),
       moreFlags: flags,
       socketAddress: socketAddress,
       timeout: timeout
-    ) { [buffer] _ in
+    ) { [buffer] cqe in
       _ = buffer
-      return ()
+      return Int(cqe.res)
     }
   }
 
@@ -944,12 +945,24 @@ public extension IORing {
     return buffer
   }
 
+  /// Sends the first `count` bytes of `data` (all of it by default), returning how many went.
+  /// `flags` are `send(2)`'s, such as `MSG_NOSIGNAL`, without which a send on a stream socket
+  /// whose peer has gone raises SIGPIPE.
+  @discardableResult
   func send(
     _ data: [UInt8],
+    count: Int? = nil,
+    flags: CInt = 0,
     to fd: FileDescriptorRepresentable,
     timeout: Duration? = nil
-  ) async throws {
-    try await io_uring_op_send(fd: fd, buffer: data, timeout: timeout)
+  ) async throws -> Int {
+    try await io_uring_op_send(
+      fd: fd,
+      buffer: data,
+      count: count,
+      flags: UInt32(bitPattern: flags),
+      timeout: timeout
+    )
   }
 
   /// Cancels the request whose completion block is `token`; returns once the kernel has
@@ -972,16 +985,19 @@ public extension IORing {
   }
 
   /// `address` is an encoded `sockaddr_storage`; see `connect(_:to:)`.
+  @discardableResult
   func send(
     _ data: [UInt8],
     to address: [UInt8],
+    flags: CInt = 0,
     from fd: FileDescriptorRepresentable,
     timeout: Duration? = nil
-  ) async throws {
+  ) async throws -> Int {
     try await io_uring_op_send(
       fd: fd,
       buffer: data,
       to: sockaddr_storage(bytes: address),
+      flags: UInt32(bitPattern: flags),
       timeout: timeout
     )
   }
@@ -1005,8 +1021,8 @@ public extension IORing {
     return message.received(count: nreceived)
   }
 
-  func send(message: Message, to fd: FileDescriptorRepresentable) async throws {
-    try await io_uring_op_sendmsg(fd: fd, message: message)
+  func send(message: Message, flags: CInt = 0, to fd: FileDescriptorRepresentable) async throws {
+    try await io_uring_op_sendmsg(fd: fd, message: message, flags: UInt32(bitPattern: flags))
   }
 
   func accept(
