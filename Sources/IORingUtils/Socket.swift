@@ -352,8 +352,8 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
   }
 
   /// Ends the connection without closing the descriptor, as `shutdown(2)` does: the peer reads
-  /// EOF, and writes here fail with `Errno.brokenPipe` (without SIGPIPE unless asked), pending
-  /// ones included. For letting a peer go while another task's write still holds the socket.
+  /// EOF, and writes here fail with `Errno.brokenPipe`, pending ones included; `writeFixed`,
+  /// whose op takes no flags, raises SIGPIPE too, unless it is ignored. For letting a peer go while another task's write still holds the socket.
   public func shutdown(_ how: ShutdownHow = .readWrite) throws {
     _ = try Errno.throwingGlobalErrno {
       try SwiftGlibc.shutdown(fileDescriptor, how.rawValue)
@@ -478,8 +478,8 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
         nwritten += try await _ring.send(
           chunk,
           count: count - nwritten,
-          flags: flags,
           to: fileHandle,
+          flags: flags,
           timeout: timeout
         )
       } catch let error as Errno where error == .timedOut && nwritten > 0 {
@@ -530,30 +530,34 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     )
   }
 
-  /// `flags` are `send(2)`'s, here and below; by default `MSG_NOSIGNAL`, as for `write`.
+  /// Returns how many bytes went, which on a stream socket may be fewer than all; `write`
+  /// sends the rest. `flags` are `send(2)`'s, here and below; by default `MSG_NOSIGNAL`, as
+  /// for `write`.
+  @discardableResult
   public func send(
     _ data: [UInt8],
     flags: CInt = CInt(MSG_NOSIGNAL),
     timeout: Duration? = nil
-  ) async throws {
+  ) async throws -> Int {
     try await _ring.send(
       data,
-      flags: flags,
       to: fileHandle,
+      flags: flags,
       timeout: timeout
     )
   }
 
+  @discardableResult
   public func send(
     _ data: [UInt8],
     to address: any SocketAddress,
     flags: CInt = CInt(MSG_NOSIGNAL),
     timeout: Duration? = nil
-  ) async throws {
+  ) async throws -> Int {
     let bytes = address.withSockAddr { sa, size in
       Array(UnsafeRawBufferPointer(start: sa, count: Int(size)))
     }
-    try await _ring.send(data, to: bytes, flags: flags, from: fileHandle, timeout: timeout)
+    return try await _ring.send(data, to: bytes, from: fileHandle, flags: flags, timeout: timeout)
   }
 
   public func receiveMessages(
@@ -570,8 +574,8 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
   public func sendMessage(_ message: Message, flags: CInt = CInt(MSG_NOSIGNAL)) async throws {
     try await _ring.send(
       message: message,
-      flags: flags,
-      to: fileHandle
+      to: fileHandle,
+      flags: flags
     )
   }
 

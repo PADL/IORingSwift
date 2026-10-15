@@ -675,11 +675,14 @@ private extension IORing {
     link: Bool = false,
     timeout: Duration? = nil
   ) async throws -> Int {
-    try await prepareAndSubmit(
+    let count = count ?? buffer.count
+    // the kernel reads `count` bytes from the array's storage, and no further
+    precondition((0...buffer.count).contains(count), "count \(count) outside 0...\(buffer.count)")
+    return try await prepareAndSubmit(
       .send,
       fd: fd,
       address: buffer,
-      length: CUnsignedInt(count ?? buffer.count),
+      length: CUnsignedInt(count),
       offset: 0,
       flags: IORing.SqeFlags(link: link),
       moreFlags: flags,
@@ -945,15 +948,16 @@ public extension IORing {
     return buffer
   }
 
-  /// Sends the first `count` bytes of `data` (all of it by default), returning how many went.
-  /// `flags` are `send(2)`'s, such as `MSG_NOSIGNAL`, without which a send on a stream socket
-  /// whose peer has gone raises SIGPIPE.
+  /// Sends the first `count` bytes of `data` (all of it by default), returning how many went;
+  /// on a stream socket that may be fewer. `flags` are `send(2)`'s, here and below. Their
+  /// default, `MSG_NOSIGNAL`, has a send to a peer that has gone throw `Errno.brokenPipe`
+  /// rather than raise SIGPIPE: some kernels add it to every io_uring send, not all may.
   @discardableResult
   func send(
     _ data: [UInt8],
     count: Int? = nil,
-    flags: CInt = 0,
     to fd: FileDescriptorRepresentable,
+    flags: CInt = CInt(Glibc.MSG_NOSIGNAL),
     timeout: Duration? = nil
   ) async throws -> Int {
     try await io_uring_op_send(
@@ -989,8 +993,8 @@ public extension IORing {
   func send(
     _ data: [UInt8],
     to address: [UInt8],
-    flags: CInt = 0,
     from fd: FileDescriptorRepresentable,
+    flags: CInt = CInt(Glibc.MSG_NOSIGNAL),
     timeout: Duration? = nil
   ) async throws -> Int {
     try await io_uring_op_send(
@@ -1021,7 +1025,11 @@ public extension IORing {
     return message.received(count: nreceived)
   }
 
-  func send(message: Message, flags: CInt = 0, to fd: FileDescriptorRepresentable) async throws {
+  func send(
+    message: Message,
+    to fd: FileDescriptorRepresentable,
+    flags: CInt = CInt(Glibc.MSG_NOSIGNAL)
+  ) async throws {
     try await io_uring_op_sendmsg(fd: fd, message: message, flags: UInt32(bitPattern: flags))
   }
 

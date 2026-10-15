@@ -27,27 +27,37 @@ private let sigpipes = Atomic<Int>(0)
 /// Socket writes and sends ask for MSG_NOSIGNAL unless told otherwise, so one to a peer that
 /// has gone throws rather than raising SIGPIPE, which by default ends the process.
 final class NoSignalTests: XCTestCase {
+  private var previousHandler: __sighandler_t?
+
   /// SIGPIPE is counted rather than fatal for the test's duration; another test may have
   /// ignored it, which would hide a send that raised it.
   override func setUp() async throws {
     try await super.setUp()
     sigpipes.store(0, ordering: .relaxed)
-    signal(SIGPIPE) { _ in sigpipes.add(1, ordering: .relaxed) }
+    previousHandler = signal(SIGPIPE) { _ in sigpipes.add(1, ordering: .relaxed) }
   }
 
   override func tearDown() async throws {
-    signal(SIGPIPE, SIG_DFL)
+    signal(SIGPIPE, previousHandler)
     try await super.tearDown()
   }
 
-  /// A stream socket whose peer has been closed.
-  private static func makeOrphan(ring: IORing) throws -> Socket {
+  /// Both ends of a stream socket pair, with the descriptor of the first.
+  private static func makePair(ring: IORing) throws -> (own: Socket, peer: Socket, ownFd: Int32) {
     var fds = [Int32](repeating: -1, count: 2)
     guard socketpair(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0, &fds) == 0 else {
       throw Errno(rawValue: errno)
     }
-    close(fds[1])
-    return try Socket(ring: ring, fileHandle: FileHandle(fileDescriptor: fds[0], closeOnDealloc: true))
+    return try (
+      Socket(ring: ring, fileHandle: FileHandle(fileDescriptor: fds[0], closeOnDealloc: true)),
+      Socket(ring: ring, fileHandle: FileHandle(fileDescriptor: fds[1], closeOnDealloc: true)),
+      fds[0]
+    )
+  }
+
+  /// A stream socket whose peer has been closed.
+  private static func makeOrphan(ring: IORing) throws -> Socket {
+    try makePair(ring: ring).own // the peer is closed as it goes
   }
 
   private func assertBrokenPipe(_ body: () async throws -> ()) async {
@@ -78,28 +88,20 @@ final class NoSignalTests: XCTestCase {
   /// What the ring's write op does, which is why `Socket.write` sends instead: the kernel
   /// raises SIGPIPE for it, having no flags to take. This also shows the counting sees one.
   func testRingWriteRaisesSignal() async throws {
-    var fds = [Int32](repeating: -1, count: 2)
-    guard socketpair(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0, &fds) == 0 else {
-      throw Errno(rawValue: errno)
-    }
-    close(fds[1])
-    let fileHandle = try FileHandle(fileDescriptor: fds[0], closeOnDealloc: true)
     let ring = try IORing()
+    let (own, peer, ownFd) = try Self.makePair(ring: ring)
+    _ = consume peer
+    let fileHandle = try FileHandle(fileDescriptor: dup(ownFd), closeOnDealloc: true)
     await assertBrokenPipe { _ = try await ring.write([1, 2, 3], to: fileHandle) }
     XCTAssertEqual(sigpipes.load(ordering: .relaxed), 1)
+    _ = own
   }
 
   /// The flags reach the kernel: MSG_DONTWAIT on a full socket fails at once.
   func testSendFlagsArePassed() async throws {
-    var fds = [Int32](repeating: -1, count: 2)
-    guard socketpair(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0, &fds) == 0 else {
-      throw Errno(rawValue: errno)
-    }
-    let ring = try IORing()
-    let own = try Socket(ring: ring, fileHandle: FileHandle(fileDescriptor: fds[0], closeOnDealloc: true))
-    let peer = try Socket(ring: ring, fileHandle: FileHandle(fileDescriptor: fds[1], closeOnDealloc: true))
+    let (own, peer, ownFd) = try Self.makePair(ring: IORing())
     let filler = [UInt8](repeating: 0, count: 65536)
-    while filler.withUnsafeBytes({ send(fds[0], $0.baseAddress, $0.count, Int32(MSG_DONTWAIT)) }) > 0 {}
+    while filler.withUnsafeBytes({ send(ownFd, $0.baseAddress, $0.count, Int32(MSG_DONTWAIT)) }) > 0 {}
     do {
       try await own.send([1], flags: CInt(MSG_DONTWAIT | MSG_NOSIGNAL))
       XCTFail("sent to a full socket without waiting")
@@ -109,19 +111,15 @@ final class NoSignalTests: XCTestCase {
     _ = peer // kept open, so the socket is full rather than orphaned
   }
 
-  /// A partial write resumes through the same path, so its count still comes back.
-  func testWriteReturnsCount() async throws {
-    var fds = [Int32](repeating: -1, count: 2)
-    guard socketpair(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0, &fds) == 0 else {
-      throw Errno(rawValue: errno)
-    }
-    let ring = try IORing()
-    let own = try Socket(ring: ring, fileHandle: FileHandle(fileDescriptor: fds[0], closeOnDealloc: true))
-    let peer = try Socket(ring: ring, fileHandle: FileHandle(fileDescriptor: fds[1], closeOnDealloc: true))
+  /// Writes and sends say how much went; a write resumes a short send through the same path.
+  func testCountsAreReturned() async throws {
+    let (own, peer, _) = try Self.makePair(ring: IORing())
     let payload = [UInt8](0..<200)
     let written = try await own.write(payload, count: 150, awaitingAllWritten: true)
     XCTAssertEqual(written, 150)
-    let received = try await peer.read(count: 150, awaitingAllRead: true)
-    XCTAssertEqual(received, Array(payload[0..<150]))
+    let sent = try await own.send(Array(payload[150...]))
+    XCTAssertEqual(sent, 50)
+    let received = try await peer.read(count: 200, awaitingAllRead: true)
+    XCTAssertEqual(received, payload)
   }
 }
