@@ -43,6 +43,26 @@ final class ShutdownTests: XCTestCase {
     XCTAssertFalse(own.isClosed) // the descriptor stays the caller's to close
   }
 
+  /// a read waiting for data ends at EOF when the socket's reading side is shut down, rather
+  /// than waiting for a peer that stays open; so do reads after it
+  func testPendingReadEndsAfterReadShutdown() async throws {
+    let ring = try IORing()
+    let (own, peer, _) = try Self.makePair(ring: ring)
+    let read = Task { try await own.read(count: 1, awaitingAllRead: true) }
+    let watchdog = Task { // so a read that outlives the shutdown fails the test, not the suite
+      try await Task.sleep(for: .seconds(5))
+      read.cancel()
+    }
+    defer { watchdog.cancel() }
+    try await Task.sleep(for: .milliseconds(50))
+    try own.shutdown(.read)
+    let bytes = try await read.value
+    XCTAssertEqual(bytes, [])
+    let after = try await own.read(count: 1, awaitingAllRead: true)
+    XCTAssertEqual(after, [])
+    _ = peer // kept open: the read must end by the shutdown, not by a closed peer
+  }
+
   /// a write waiting for buffer space fails when the socket is shut down under it, rather than
   /// waiting for a peer that has stopped reading
   func testPendingWriteFailsAfterShutdown() async throws {

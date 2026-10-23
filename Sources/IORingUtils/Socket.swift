@@ -384,14 +384,19 @@ public struct Socket: CustomStringConvertible, Equatable, Hashable, Sendable {
     .eraseToAnyAsyncSequence()
   }
 
+  /// Connects without blocking, so an address that cannot be reached at once throws (for a
+  /// stream socket of a family that connects in the background, `Errno.nowInProgress`); the
+  /// socket's blocking mode is restored afterwards, whether or not it connected.
   public func connect(to address: any SocketAddress) throws {
+    let fileHandle = try fileHandle
+    let wasBlocking = try fileHandle.isBlocking
     try fileHandle.setBlocking(false)
+    defer { try? fileHandle.setBlocking(wasBlocking) }
     _ = try address.withSockAddr { sa, size in
       try Errno.throwingGlobalErrno {
-        try SwiftGlibc.connect(fileDescriptor, sa, size)
+        try SwiftGlibc.connect(fileHandle.fileDescriptor, sa, size)
       }
     }
-    try fileHandle.setBlocking(true)
   }
 
   public func connect(to address: any SocketAddress, timeout: Duration? = nil) async throws {
