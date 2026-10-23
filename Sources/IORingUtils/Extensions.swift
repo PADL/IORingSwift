@@ -123,11 +123,12 @@ extension IORing {
 }
 
 public extension FileDescriptorRepresentable {
+  /// Sets the file status flags under `mask` to those in `flags`, leaving the rest.
   func set(flags: Int32, mask: Int32) throws {
-    var flags = try Errno.throwingGlobalErrno { fcntl(self.fileDescriptor, F_GETFL, 0) }
-    flags &= ~mask
-    flags |= mask
-    try Errno.throwingGlobalErrno { fcntl(self.fileDescriptor, F_SETFL, flags) }
+    var newFlags = try Errno.throwingGlobalErrno { fcntl(self.fileDescriptor, F_GETFL, 0) }
+    newFlags &= ~mask
+    newFlags |= flags & mask
+    try Errno.throwingGlobalErrno { fcntl(self.fileDescriptor, F_SETFL, newFlags) }
   }
 
   func get(flag: Int32) throws -> Bool {
@@ -140,12 +141,12 @@ public extension FileDescriptorRepresentable {
   }
 
   func setBlocking(_ enabled: Bool) throws {
-    try set(flag: O_NONBLOCK, to: enabled)
+    try set(flag: O_NONBLOCK, to: !enabled)
   }
 
   var isBlocking: Bool {
     get throws {
-      try get(flag: O_NONBLOCK)
+      try !get(flag: O_NONBLOCK)
     }
   }
 
